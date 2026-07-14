@@ -24,9 +24,11 @@ jobs:
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
-      PYTHONPYCACHEPREFIX: ${{ runner.temp }}/gpu-suite-pycache-${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Configure Python byte-code cache
+        run: echo "PYTHONPYCACHEPREFIX=${RUNNER_TEMP}/gpu-suite-pycache-${{ matrix.name }}" >> "$GITHUB_ENV"
 
       - name: Configure strict CPU-only tree
         run: >-
