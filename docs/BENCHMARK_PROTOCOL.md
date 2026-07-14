@@ -56,6 +56,8 @@ Every benchmark supports:
 | `--seed` | Explicit seed where the workload uses randomness. |
 | `--cpu-threads` | Requested CPU thread count. |
 | `--implementation-order <list>` | Runner-computed comma-separated list such as `cpu,cuda,openacc`. |
+| `--abs-tolerance` | Non-negative absolute verification tolerance from the effective configuration. |
+| `--rel-tolerance` | Non-negative relative verification tolerance from the effective configuration. |
 | `--help` | Usage and option constraints. |
 
 `--verify` accepts only lowercase `true` or `false`. `--format` accepts only
@@ -85,15 +87,30 @@ file. The runner must:
 - write a CSV header exactly once;
 - append each valid row to the new node raw file;
 - reject any human-readable stdout content;
-- synthesize a schema-valid failure row for a subprocess crash, signal
-  termination, invalid output, or missing output; and
+- preserve every validated completed trial;
+- synthesize one schema-valid attempted failure row for the first unresolved
+  trial after a subprocess crash, signal termination, invalid output, or
+  missing output;
+- synthesize schema-valid unattempted skipped rows for later trials that did not
+  start because of that failure; and
 - create the node raw file exclusively and never overwrite an existing file.
+
+The runner rejects duplicate and out-of-range trial indices and materializes
+each expected index exactly once. It never replaces a validated completed row
+with a synthetic row.
+
+`run_suite.py --dry-run` validates and prints the resolved configuration,
+selected manifest entries, implementation/size order, and argv arrays as one
+deterministic JSON document. A dry run creates no directory, metadata, result,
+or log file and starts no benchmark subprocess.
 
 ### Library-specific options and `--size`
 
 #### cuFFT
 
 - Options: `--batch`, `--transform`, `--cpu-backend`.
+- `--rel-tolerance` applies to the DC relative error and
+  `--abs-tolerance` applies to the maximum non-DC absolute error.
 - `--size` is `nfft`.
 - `--batch` may be combined with `--size`.
 - Initial accepted values are `--transform c2c-forward` and
@@ -129,6 +146,9 @@ file. The runner must:
 #### cuRAND
 
 - Options: `--generator`, `--distribution`, `--offset`, `--order`.
+- Statistical operands are passed explicitly as `--sigma-multiplier`,
+  `--expected-mean`, and `--expected-second-central-moment` from the effective
+  configuration.
 - `--size` is the generated element count.
 - Initial accepted values are `--generator pseudo-default`,
   `--distribution uniform-double`, and `--order default`.
@@ -142,6 +162,64 @@ file. The runner must:
 
 Ambiguous, incomplete, or contradictory dimension arguments are errors. No
 option silently overrides another.
+
+## Configuration scope and initial calibration
+
+Each benchmark configuration contains normalized cases. A case has one
+`parameters` object and a `scopes` object with separate `compute` and
+`end-to-end` entries. Each scope entry contains `warmup`, `repeat`, and
+`trials`. Implementations cannot override those values.
+
+CPU, direct CUDA, and OpenACC must have the same values for one
+benchmark/normalized problem/scope. Compute and end-to-end settings are
+independent and need not have the same repeat or warm-up. cuSOLVER requires
+`repeat = 1` in every scope.
+
+The initial `configs/pilot.json` calibration cases are:
+
+| Benchmark | Problem |
+| --- | --- |
+| cuFFT | `nfft=256`, `batch=8` |
+| cuBLAS | `size=128` |
+| cuSPARSE | `size=4096` |
+| cuSOLVER | `size=64`, `nrhs=2` |
+| cuRAND | `size=65536` |
+| Thrust | `size=65536` |
+
+Pilot compute uses `warmup=1`, `trials=1`, and `repeat=2`; end-to-end uses
+`warmup=1`, `trials=1`, and `repeat=1`. cuSOLVER overrides the compute repeat to
+1.
+
+The initial `configs/benchmark.json` calibration cases are:
+
+| Benchmark | Problem sizes | Compute repeat |
+| --- | --- | --- |
+| cuFFT | `nfft=[256,1024,4096,16384]`, `batch=4096` | 3 |
+| cuBLAS | `size=[512,1024,2048,4096]` | 3 |
+| cuSPARSE | `size=[65536,262144,1048576,4194304]` | 10 |
+| cuSOLVER | `size=[256,512,1024,2048]`, `nrhs=16` | 1 |
+| cuRAND | `size=[1048576,4194304,16777216,67108864]` | 3 |
+| Thrust | `size=[1048576,4194304,16777216,67108864]` | 10 |
+
+Benchmark compute uses `warmup=1` and `trials=5`. Every end-to-end case uses
+`warmup=1`, `repeat=1`, and `trials=5`.
+
+These values begin calibration; they are not fixed production values. After a
+pilot, update the same canonical `configs/benchmark.json` without renaming it or
+incrementing `config_schema_version`.
+
+## Trial attempt, failure, and skip behavior
+
+A trial that starts and then fails has `attempted=true` and `status=failure`.
+An unstarted trial skipped because of a preceding fatal failure has
+`attempted=false` and `status=skipped`. A missing executable or other
+prerequisite also produces an unattempted skipped row. Exact fields and null
+rules are owned by `RESULT_SCHEMA.md`.
+
+Recoverable verification failures may be followed by later trials after full
+canonical restoration. A fatal setup or execution failure stops that benchmark
+invocation and marks only the remaining unstarted trials skipped. Failures and
+skips remain visible and are never performance samples.
 
 ## CPU backends and parallelism
 
@@ -189,6 +267,11 @@ FFTW serial and threaded series use distinct names, for example
 `cpu-fftw-serial` and `cpu-fftw-threaded`. oneMKL and OpenBLAS series also use
 implementation-specific names such as `cpu-onemkl` and `cpu-openblas`.
 `cpu-reference-csr` is a reference backend.
+
+On Pegasus, cuFFT uses `cpu-fftw-threaded` as its primary production CPU
+backend. `cpu-fftw-serial` is auxiliary or teaching-correspondence only. If the
+threaded backend is unavailable, the serial series does not replace it and no
+primary cuFFT speedup is emitted.
 
 The canonical cuRAND CPU benchmark is `cpu-std-random-serial`, role
 `production`, using `std::mt19937_64` and
@@ -419,11 +502,36 @@ in raw results but is excluded from performance aggregation.
 - CPU and GPU range sanity checks both permit `0.0 <= x <= 1.0`; record each
   backend's precise interval contract in `verification_thresholds` or
   `parameters`.
-- Store separate range, mean, and variance evidence. At minimum, metrics retain
-  observed minimum, maximum, mean, and variance, while threshold objects define
-  the permitted uniform range and deviations from expected mean and variance.
-- Plots and future user-facing documentation must state the equivalent of:
-  **Same output distribution and type; different RNG algorithms.**
+- Record the CPU standard-distribution contract as `[0,1)` and the cuRAND
+  contract as `(0,1]` while applying the common inclusive sanity range.
+- Configuration stores `sigma_multiplier`, `expected_mean`, and
+  `expected_second_central_moment`; initial values are `6.0`, `0.5`, and
+  `1/12` respectively.
+- Required metrics are `observed_min`, `observed_max`, `sample_mean`, and
+  `second_central_moment_about_half`, with:
+
+  ```text
+  second_central_moment_about_half = mean((x_i - 0.5)^2)
+  ```
+
+- Mean verification is:
+
+  ```text
+  abs(sample_mean - 0.5)
+      <= sigma_multiplier * sqrt(1 / (12 * N))
+  ```
+
+- Second-central-moment verification is:
+
+  ```text
+  abs(second_central_moment_about_half - 1/12)
+      <= sigma_multiplier * sqrt(1 / (180 * N))
+  ```
+
+- Verification uses the last retrieved N values and records
+  `verification_sample_count=N`.
+- Plots, plot metadata, aggregate metadata, and user-facing documentation state:
+  **Same distribution and output type task; different RNG algorithms.**
 
 ### Thrust
 

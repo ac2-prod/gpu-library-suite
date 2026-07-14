@@ -56,7 +56,7 @@ Codex、renderer、build script、runnerはこれらを自動実行しない。j
 
 ## Pegasus設定
 
-将来の`jobs/pegasus/pegasus.json.example`はPython 3.9標準libraryで読める
+`jobs/pegasus/pegasus.json.example`はPython 3.9標準libraryで読める
 JSONとし、少なくとも次を明示設定させる。
 
 - account
@@ -70,10 +70,20 @@ JSONとし、少なくとも次を明示設定させる。
 - `benchmark_runtime_modules`
 - module purgeの有無
 - compiler/build environment
+- CUDA Toolkit root/version
+- `NVHPC_CUDA_HOME`、またはNVHPCが実際に選択するCUDA Toolkit
 - shared result root
 - `LOCAL_SCRATCH_ROOT`（標準は`/scr`）
 - OpenMPI追加option
 - optional environment overrides
+- `OMP_NUM_THREADS`
+- `OMP_PROC_BIND`
+- `OMP_PLACES`
+- `OMP_DYNAMIC=FALSE`
+- `MKL_NUM_THREADS`
+- `MKL_DYNAMIC=FALSE`
+- `MKL_THREADING_LAYER`
+- `OPENBLAS_NUM_THREADS`
 
 account、queue、MPI version、`benchmark_runtime_modules`など必須値が未設定なら
 rendererは失敗する。`module purge`は設定で明示された場合だけ実行する。
@@ -84,9 +94,37 @@ module群を無条件に同時loadしない。人間が`benchmark_runtime_module
 prebuilt CPU/CUDA/OpenACC binaryを同一job内で実行できる互換runtime環境を
 指定する。
 
+build profileは次の2つだけとする。
+
+```text
+cpu-cuda:
+  GPU_SUITE_BUILD_CPU=ON
+  GPU_SUITE_BUILD_CUDA=ON
+  GPU_SUITE_BUILD_OPENACC=OFF
+
+openacc:
+  CMAKE_C_COMPILER=nvc
+  CMAKE_CXX_COMPILER=nvc++
+  GPU_SUITE_BUILD_CPU=OFF
+  GPU_SUITE_BUILD_CUDA=OFF
+  GPU_SUITE_BUILD_OPENACC=ON
+```
+
+OpenACC buildは、設定された`NVHPC_CUDA_HOME`またはnvc++が一意に報告した
+CUDA Toolkitを`CUDAToolkit_ROOT`として使用する。CMakeが解決したToolkitと
+NVHPCが選択したToolkitのpath/versionが一致しなければbuildを失敗させる。
+
+OpenACCのcuFFT、cuBLAS、cuSPARSE、cuSOLVER、cuRAND targetは
+`OpenACC::OpenACC_CXX`、`CUDA::cudart`、対応する`CUDA::<library>` imported
+targetで統一してlinkする。`-cudalib=<library>`方式とは混在させない。
+OpenACC Thrustは`OpenACC::OpenACC_CXX`と`CUDA::cudart`をlinkし、compile/link
+双方へNVHPCの`-cuda`を付ける。各CUDA-library targetは同じlink設定で、header、
+`cudaGetDeviceCount`、実際に利用するlibrary symbolを含むnvc++
+compile-and-link probeを通過しなければならない。
+
 ## PBS template
 
-将来のtemplateは1行目を必ず`#!/bin/bash`とし、`#!/bin/sh`を使用しない。
+PBS templateは1行目を必ず`#!/bin/bash`とし、`#!/bin/sh`を使用しない。
 基本形は次とする。
 
 ```bash
@@ -138,13 +176,15 @@ Intel MPIは初期対象外。`UCX_MEMTYPE_CACHE=n`は標準強制せず、問�
 
 job masterは`benchmark_runtime_modules`をloadした後、preflight前に
 `runtime-environment.json`の材料を取得する。少なくともmodule list、`PATH`、
-`LD_LIBRARY_PATH`、NVIDIA driver、CUDA runtime、NVHPC compiler/runtime、
+`LD_LIBRARY_PATH`、NVIDIA driver、CUDA runtime/Toolkitのversionとpath、NVHPC
+compiler/runtime、`NVHPC_CUDA_HOME`またはNVHPCが実際に選択したCUDA Toolkit、
 FFTW/oneMKL/OpenBLAS/LAPACKE等のversion、全binaryの`ldd`出力、解決された
-shared-library path、thread/runtime環境を保存する。
+shared-library path、およびCPU thread環境の8変数を保存する。
 
 同文書はproject-defined deterministic JSON serialization profileで保存・hashし、
 `runtime_environment_sha256`を追加waveの一致条件とする。異なるruntime環境を
-同じprimary cross-wave aggregateへ混在させない。
+同じprimary cross-wave aggregateへ混在させない。同一run IDへ追加できず、新しい
+run IDを要求する。
 
 ## PBS job masterによるcampaign preflight
 
@@ -218,7 +258,8 @@ preflight failure、node directory作成不能、`node-status.json`作成不能�
 collectorはpreflightで確定した全expected nodeの`node-status.json`を検査する。
 missing node、benchmark failure、verification failure、collection failureが1件でも
 あれば、raw dataとnode logを保持したままjob全体を非ゼロ終了させる。全nodeの
-statusと回収結果が成功した場合だけjob全体を成功とする。
+statusと回収結果が成功した場合だけjob全体を成功とする。collectorはartifactの
+一覧とhash manifestを作成するが、raw dataを集計、変更、削除、filterしない。
 
 ## CPU thread環境
 
@@ -297,8 +338,9 @@ frequency sysfs情報を保存する。取得不能はnon-fatalとし、`telemet
 
 各telemetry streamには`telemetry_start_timestamp_utc`、
 `telemetry_end_timestamp_utc`、`sample_interval_sec`、`timezone`、`utc_offset`を
-保存する。timestampはUTC・millisecond精度・末尾`Z`とし、timezoneとUTC offsetは
-取得時のlocal-time解釈を監査するために併記する。
+保存し、さらに`midnight_rollover_count`を保存する。timestampはUTC・millisecond
+精度・末尾`Z`とし、timezoneとUTC offsetは取得時のlocal-time解釈を監査するために
+併記する。
 
 `nvidia-smi dmon`の`-o T`出力は時刻だけを持つため、raw outputに加え、
 開始日、timezone、UTC offset、およびlocal midnight rolloverの検出結果を保存する。
@@ -330,7 +372,7 @@ raw telemetryとbenchmark resultを保持する。
 
 ## Buildとrunの分離
 
-将来の`jobs/pegasus/`成果物は次とする。
+実装済みの`jobs/pegasus/`成果物は次とする。
 
 ```text
 jobs/pegasus/README.md

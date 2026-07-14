@@ -1,0 +1,360 @@
+import contextlib
+import copy
+import io
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+import run_suite
+from gpu_suite.hashing import sha256_bytes, sha256_file
+from gpu_suite.manifest import artifact_id
+from gpu_suite.ordering import implementation_order
+from gpu_suite.results_io import load_raw_results
+from gpu_suite.runner import execute_schedule, load_manifest, synthetic_result
+from gpu_suite.schema import validate_raw_result
+from gpu_suite.strict_json import dump_bytes, dumps, loads
+from gpu_suite.validation import validate_campaign
+
+from support import ROOT, ZERO_HASH, pilot_config
+
+
+def execution_fixture(trials=3, continue_on_failure=True):
+    config = pilot_config()
+    config["continue_on_failure"] = continue_on_failure
+    entry = {
+        "artifact_id": "a" * 64,
+        "target_name": "fft_cpu_bench",
+        "build_profile": "cpu-cuda",
+        "backend_variant": "fftw-threaded",
+        "executable_path": "/not/executed/fft_cpu_bench",
+        "library": "cufft",
+        "implementation": "cpu",
+        "executable_role": "benchmark",
+        "build_type": "Release",
+        "binary_sha256": "b" * 64,
+        "build_metadata_sha256": "c" * 64,
+        "compiler": "TestCompiler",
+        "compiler_language": "c",
+        "compiler_version": "1.0",
+        "git_commit": "abc",
+        "git_dirty": False,
+        "supported_cpu_backends": ["cpu-fftw-threaded", "cpu-fftw-serial"],
+    }
+    metadata = {
+        entry["build_metadata_sha256"]: {
+            "build_profile": "cpu-cuda",
+            "build_type": "Release",
+            "git_commit": "abc",
+            "git_dirty": False,
+            "c": {
+                "compiler": "TestCompiler",
+                "compiler_flags": "-O3",
+                "compiler_version": "1.0",
+            },
+        }
+    }
+    case = config["benchmarks"]["cufft"]["cases"][0]
+    item = {
+        "artifact_id": entry["artifact_id"],
+        "argv": [entry["executable_path"], "--output", "-"],
+        "benchmark": "cufft",
+        "case_index": 0,
+        "entry": entry,
+        "parameters": dict(case["parameters"]),
+        "prerequisite_failure": None,
+        "scope": "compute",
+        "scope_settings": {
+            "warmup": 1,
+            "repeat": 2,
+            "trials": trials,
+        },
+        "series": {
+            "implementation": "cpu",
+            "cpu_backend": "cpu-fftw-threaded",
+            "cpu_backend_role": "production",
+            "series_role": "primary",
+        },
+    }
+    context = {
+        "config": config,
+        "cpu_threads": 48,
+        "device": 0,
+        "hostname": "node0",
+        "implementation_order": implementation_order(0, 0),
+        "node_index": 0,
+        "run_id": "run-1",
+        "scheduler": None,
+        "scheduler_job_id": None,
+        "system_label": "local",
+        "wave": 0,
+    }
+    return item, context, metadata
+
+
+def successful_record(item, context, metadata, trial):
+    record = synthetic_result(
+        item, context, ZERO_HASH, ZERO_HASH, metadata, trial, True,
+        "subprocess", "temporary", 1, None, None,
+    )
+    record.update({
+        "record_timestamp": "2026-07-14T00:00:01.000Z",
+        "measurement_start_timestamp": "2026-07-14T00:00:00.000Z",
+        "measurement_end_timestamp": "2026-07-14T00:00:01.000Z",
+        "attempted": True,
+        "failure_origin": None,
+        "elapsed_total_sec": 2.0,
+        "elapsed_sec": 1.0,
+        "cpu_threads_effective": 48,
+        "cpu_parallelism": "threaded",
+        "verification_status": "pass",
+        "exit_code": 0,
+        "status": "success",
+        "message": "",
+    })
+    return validate_raw_result(record)
+
+
+def verification_failure_record(item, context, metadata, trial):
+    record = successful_record(item, context, metadata, trial)
+    record.update({
+        "failure_origin": "verification",
+        "verification_status": "failure",
+        "exit_code": 1,
+        "status": "failure",
+        "message": "recoverable verification failure",
+    })
+    return validate_raw_result(record)
+
+
+class RunnerTests(unittest.TestCase):
+    def test_verification_failure_can_be_followed_by_restored_trials(self):
+        item, context, metadata = execution_fixture()
+        emitted = [
+            verification_failure_record(item, context, metadata, 0),
+            successful_record(item, context, metadata, 1),
+            successful_record(item, context, metadata, 2),
+        ]
+        completed = SimpleNamespace(
+            returncode=1,
+            stdout="".join(dumps(record) + "\n" for record in emitted),
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "raw.jsonl"
+            with mock.patch("gpu_suite.runner.subprocess.run", return_value=completed):
+                status = execute_schedule(
+                    [item], context, output, ZERO_HASH, ZERO_HASH,
+                    metadata, None, None,
+                )
+            records = load_raw_results(output)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(records), 3)
+        self.assertEqual(
+            [record["status"] for record in records],
+            ["failure", "success", "success"],
+        )
+        self.assertTrue(all(record["attempted"] for record in records))
+
+    def test_contamination_preserves_completed_and_synthesizes_remainder(self):
+        item, context, metadata = execution_fixture()
+        stdout = dumps(successful_record(item, context, metadata, 0)) + "\nprogress\n"
+        completed = SimpleNamespace(returncode=0, stdout=stdout, stderr="diagnostic")
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "raw.jsonl"
+            with mock.patch("gpu_suite.runner.subprocess.run", return_value=completed):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    status = execute_schedule(
+                        [item], context, output, ZERO_HASH, ZERO_HASH,
+                        metadata, None, None,
+                    )
+            records = load_raw_results(output)
+        self.assertEqual(status, 1)
+        self.assertEqual([record["trial"] for record in records], [0, 1, 2])
+        self.assertEqual([record["status"] for record in records],
+                         ["success", "failure", "skipped"])
+        self.assertEqual(records[1]["failure_origin"], "output-validation")
+        self.assertEqual(records[2]["failure_origin"], "prior-failure")
+
+    def test_signal_creates_one_attempted_failure_and_later_skips(self):
+        item, context, metadata = execution_fixture()
+        completed = SimpleNamespace(returncode=-9, stdout="", stderr="")
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "raw.jsonl"
+            with mock.patch("gpu_suite.runner.subprocess.run", return_value=completed):
+                status = execute_schedule(
+                    [item], context, output, ZERO_HASH, ZERO_HASH,
+                    metadata, None, None,
+                )
+            records = load_raw_results(output)
+        self.assertEqual(status, 1)
+        self.assertEqual(sum(record["attempted"] for record in records), 1)
+        self.assertEqual(records[0]["failure_origin"], "subprocess")
+        self.assertEqual(records[0]["exit_code"], 137)
+        self.assertTrue(all(record["status"] == "skipped" for record in records[1:]))
+
+    def test_success_exit_with_missing_stdout_is_output_failure(self):
+        item, context, metadata = execution_fixture(trials=2)
+        completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "raw.jsonl"
+            with mock.patch("gpu_suite.runner.subprocess.run", return_value=completed):
+                status = execute_schedule(
+                    [item], context, output, ZERO_HASH, ZERO_HASH,
+                    metadata, None, None,
+                )
+            records = load_raw_results(output)
+        self.assertEqual(status, 1)
+        self.assertEqual(records[0]["status"], "failure")
+        self.assertEqual(records[0]["failure_origin"], "output-validation")
+        self.assertEqual(records[1]["status"], "skipped")
+
+    def test_stop_policy_marks_later_invocations_prior_failure(self):
+        item, context, metadata = execution_fixture(trials=2, continue_on_failure=False)
+        later = copy.deepcopy(item)
+        later["scope"] = "end-to-end"
+        later["scope_settings"] = {"warmup": 1, "repeat": 1, "trials": 2}
+        completed = SimpleNamespace(returncode=1, stdout="", stderr="")
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "raw.jsonl"
+            with mock.patch("gpu_suite.runner.subprocess.run", return_value=completed) as launched:
+                execute_schedule(
+                    [item, later], context, output, ZERO_HASH, ZERO_HASH,
+                    metadata, None, None,
+                )
+            records = load_raw_results(output)
+        self.assertEqual(launched.call_count, 1)
+        self.assertEqual([record["failure_origin"] for record in records[2:]],
+                         ["prior-failure", "prior-failure"])
+        self.assertTrue(all(not record["attempted"] for record in records[2:]))
+
+    def test_dry_run_is_deterministic_and_side_effect_free(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            executable = directory / "fft_cpu_bench"
+            executable.write_bytes(b"test executable\n")
+            metadata_document = {
+                "build_profile": "cpu-cuda",
+                "build_type": "Release",
+                "c": {
+                    "compiler": "TestCompiler",
+                    "compiler_flags": "-O3",
+                    "compiler_version": "1.0",
+                },
+                "git_commit": "abc",
+                "git_dirty": False,
+            }
+            metadata_path = directory / "build-metadata.json"
+            metadata_path.write_bytes(dump_bytes(metadata_document))
+            entry = {
+                "artifact_id": "",
+                "target_name": "fft_cpu_bench",
+                "build_profile": "cpu-cuda",
+                "backend_variant": "fftw-threaded",
+                "executable_path": str(executable),
+                "library": "cufft",
+                "implementation": "cpu",
+                "executable_role": "benchmark",
+                "build_type": "Release",
+                "binary_sha256": sha256_file(executable),
+                "build_metadata_sha256": sha256_file(metadata_path),
+                "compiler": "TestCompiler",
+                "compiler_language": "c",
+                "compiler_version": "1.0",
+                "git_commit": "abc",
+                "git_dirty": False,
+                "supported_cpu_backends": [
+                    "cpu-fftw-threaded", "cpu-fftw-serial"
+                ],
+            }
+            entry["artifact_id"] = artifact_id(entry)
+            manifest_path = directory / "executables.json"
+            manifest_path.write_bytes(dump_bytes({
+                "entries": [entry], "manifest_schema_version": 1
+            }))
+            output = directory / "not-created" / "raw.jsonl"
+            arguments = [
+                "--config", str(ROOT / "configs" / "pilot.json"),
+                "--manifest", str(manifest_path),
+                "--build-metadata", str(metadata_path),
+                "--output", str(output),
+                "--run-id", "run-1",
+                "--system-label", "local",
+                "--wave", "0",
+                "--node-index", "0",
+                "--hostname", "node0",
+                "--runtime-environment-sha256", ZERO_HASH,
+                "--dry-run",
+            ]
+
+            def snapshot():
+                return {
+                    str(path.relative_to(directory)): path.read_bytes()
+                    for path in directory.rglob("*") if path.is_file()
+                }
+
+            before = snapshot()
+            outputs = []
+            with mock.patch("run_suite.execute_schedule") as execute:
+                for _ in range(2):
+                    stream = io.StringIO()
+                    with contextlib.redirect_stdout(stream):
+                        self.assertEqual(run_suite.main(arguments), 0)
+                    outputs.append(stream.getvalue())
+            self.assertFalse(execute.called)
+            self.assertEqual(before, snapshot())
+            self.assertFalse(output.exists())
+            self.assertEqual(outputs[0], outputs[1])
+            document = loads(outputs[0])
+            self.assertEqual(document["dry_run_schema_version"], 1)
+            self.assertTrue(all(
+                command["argv"] is None or
+                command["argv"][command["argv"].index("--output") + 1] == "-"
+                for command in document["commands"]
+            ))
+
+    @unittest.skipUnless(
+        os.environ.get("GPU_SUITE_FFTW_FIXTURE_MANIFEST") and
+        os.environ.get("GPU_SUITE_FFTW_FIXTURE_METADATA"),
+        "synthetic suite manifest is not set",
+    )
+    def test_real_fixture_runs_through_single_writer_and_validates(self):
+        manifest_path = Path(os.environ["GPU_SUITE_FFTW_FIXTURE_MANIFEST"])
+        metadata_path = Path(os.environ["GPU_SUITE_FFTW_FIXTURE_METADATA"])
+        config_path = ROOT / "configs" / "pilot.json"
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "raw-results.jsonl"
+            arguments = [
+                "--config", str(config_path),
+                "--manifest", str(manifest_path),
+                "--build-metadata", str(metadata_path),
+                "--output", str(output),
+                "--run-id", "fixture-run",
+                "--system-label", "local-fixture",
+                "--wave", "0",
+                "--node-index", "0",
+                "--runtime-environment-sha256", ZERO_HASH,
+                "--source-snapshot-sha256", ZERO_HASH,
+            ]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(run_suite.main(arguments), 1)
+            records = load_raw_results(output)
+        self.assertEqual(len(records), 38)
+        self.assertEqual(len({
+            (record["benchmark"], record["implementation"],
+             record["cpu_backend"], record["scope"], record["trial"])
+            for record in records
+        }), 38)
+        self.assertTrue(any(record["status"] == "success" for record in records))
+        self.assertTrue(any(record["status"] == "skipped" for record in records))
+        manifest, _ = load_manifest(manifest_path)
+        report = validate_campaign(
+            records, pilot_config(), sha256_file(config_path), manifest
+        )
+        self.assertEqual(report["validation_status"], "failure")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,16 @@
+build/
+results/
+manual-validation/
+jobs/pegasus/generated/
+configs/executables.json
+jobs/pegasus/pegasus.json
+*.o
+*.a
+*.so
+*.dylib
+*.out
+*.err
+*.log
+__pycache__/
+*.pyc
+.DS_Store

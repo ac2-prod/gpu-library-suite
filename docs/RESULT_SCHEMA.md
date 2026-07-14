@@ -29,6 +29,14 @@ Standalone JSON documents use:
 - nonfinite numbers rejected (`allow_nan=false`); and
 - exactly one LF byte after the JSON value.
 
+C/C++ result serialization fixes `LC_NUMERIC` to `C` before formatting. It uses
+round-trip precision, a period decimal separator, lowercase normalized exponent
+notation without redundant exponent sign/zero padding, and serializes every
+zero including negative zero as `0`. It checks every floating value for
+finiteness before formatting. NaN and infinities are represented by null plus
+the applicable failure/nonfinite status and message, never by non-standard JSON
+tokens.
+
 Compute SHA-256 over the exact saved byte sequence, including the final LF.
 Timestamps use UTC with exactly millisecond precision:
 `YYYY-MM-DDTHH:MM:SS.sssZ`.
@@ -44,7 +52,7 @@ UTF-8 is also a load error. NaN, positive/negative infinity, and other nonfinite
 values are never written as JSON numbers; represent them with null, a
 failure/nonfinite status, and a diagnostic message.
 
-The same future Python utility serializes and hashes `effective-config.json`,
+The shared Python utility serializes and hashes `effective-config.json`,
 `run-metadata.json`, `runtime-environment.json`, `wave-metadata.json`, and
 `node-metadata.json`. C/C++ benchmarks must not independently serialize and hash
 the effective configuration. Executable manifests use the same deterministic
@@ -105,8 +113,11 @@ Within a node, `run_suite.py` is the only raw-file writer. It exclusively create
 the node raw file, writes the CSV header once when applicable, validates
 benchmark stdout, and appends accepted rows. Benchmark executables emit
 machine-readable stdout with `--output -` and never append to node raw files.
-The runner synthesizes a schema-valid failure row for a crash, signal, invalid
-output, or missing output. Raw files are never overwritten.
+The runner preserves validated completed rows. For a crash, signal, invalid
+output, or missing output, it synthesizes one attempted failure row for the
+first unresolved trial and unattempted skipped rows for later trials that did
+not start. It rejects duplicate or out-of-range trial indices and materializes
+each expected index exactly once. Raw files are never overwritten.
 
 ### Fields
 
@@ -141,6 +152,8 @@ output, or missing output. Raw files are never overwritten.
 | `warmup` | integer | yes | Non-negative warm-up count. |
 | `repeat` | integer | yes | Positive count used in the trial. |
 | `trial` | integer | yes | Non-negative trial index. |
+| `attempted` | boolean | yes | True if this trial began execution; false only for an unstarted skipped trial. |
+| `failure_origin` | string/null | yes | Null on success; otherwise the controlled origin defined below. |
 | `elapsed_total_sec` | number/null | yes | Total measured time; null if unavailable/nonfinite. |
 | `elapsed_sec` | number/null | yes | `elapsed_total_sec / repeat`; null if unavailable/nonfinite. |
 | `clock_id` | string | yes | `CLOCK_MONOTONIC`. |
@@ -183,6 +196,32 @@ the span from `measurement_start_timestamp` to
 also spans untimed restoration and cleanup gaps between separately timed
 repeats. `elapsed_total_sec` remains the sum of timed intervals only.
 
+### Attempt and failure-origin rules
+
+`failure_origin` is null or one of:
+
+- `benchmark`: a started trial failed in setup, allocation, timing, or a library
+  operation;
+- `verification`: a started trial completed measurement but failed numerical or
+  structural verification;
+- `subprocess`: the runner observed a crash, signal, or abnormal process exit;
+- `output-validation`: stdout was missing, malformed, contaminated, or failed
+  schema validation;
+- `prior-failure`: this trial did not start after a fatal predecessor; or
+- `prerequisite`: this trial did not start because its executable or another
+  required input was unavailable.
+
+Successful rows require `attempted=true`, `status=success`, and null origin.
+Started failure rows require `attempted=true` and `status=failure`. Skipped rows
+require `attempted=false`, `status=skipped`, null measurement timestamps and
+elapsed fields, `verification_status=skipped`, and null `exit_code`.
+
+For a process/output failure, the first unresolved trial is an attempted
+synthetic failure. Later unresolved trials are synthetic skipped rows with
+`prior-failure`. A synthetic failure has null timing fields when measurement
+never began and records an available subprocess exit code or signal-derived
+code. Completed rows are never replaced.
+
 ### Verification objects
 
 Even a single-metric benchmark uses objects. A threshold entry contains its
@@ -195,7 +234,9 @@ The required distinct evidence includes:
 
 - cuFFT: separate DC and non-DC metrics;
 - cuSOLVER: `solution_relative_error` and `relative_residual`; and
-- cuRAND: separate values needed to judge range, mean, and variance.
+- cuRAND: `observed_min`, `observed_max`, `sample_mean`, and
+  `second_central_moment_about_half`, with interval contracts and the exact
+  statistical operands specified in `BENCHMARK_PROTOCOL.md`.
 
 A verification failure sets `verification_status = "failure"` and overall
 `status = "failure"`. A nonfinite value is stored as null, sets
@@ -264,6 +305,13 @@ Human-readable stdout is invalid. Subprocess crash, signal termination, invalid
 output, and missing output produce synthetic failure rows rather than a silent
 gap in the raw data.
 
+`validate_results.py` first requires the complete configured invocation/trial
+set, unique trial indices, and consistent configuration, binary, compiler, Git,
+and runtime-environment provenance. A structurally complete campaign still has
+`validation_status=failure` when any row is `failure` or `skipped`; the tool
+writes the deterministic schema-version-1 validation summary and exits nonzero.
+Only an all-success campaign has `validation_status=pass` and exit status zero.
+
 ## Effective configuration
 
 `effective-config.json` is the final campaign configuration after merging:
@@ -271,6 +319,45 @@ gap in the raw data.
 1. built-in defaults;
 2. the selected configuration file; and
 3. CLI overrides that affect the measurement protocol.
+
+The configuration has this required structural shape:
+
+```text
+config_schema_version
+run_mode
+output_format
+continue_on_failure
+cpu_threads
+benchmarks
+  <benchmark>
+    enabled
+    precision
+    series[]
+      implementation
+      cpu_backend
+      cpu_backend_role
+      series_role
+    default_speedup_cpu_backend
+    verification
+    cases[]
+      parameters
+      scopes
+        compute
+          warmup
+          repeat
+          trials
+        end-to-end
+          warmup
+          repeat
+          trials
+```
+
+The same case-level scope values apply to CPU, direct CUDA, and OpenACC; an
+implementation-local warm-up/repeat/trials override is invalid. Compute and
+end-to-end values are independent. Unknown keys and missing required keys are
+errors. Both canonical files begin with `config_schema_version = 1`, select
+JSON Lines by default, enable verification, and set
+`continue_on_failure = true`.
 
 It includes `config_schema_version`, run mode (`smoke`, `pilot`, or
 `production`), benchmarks, problem sizes in configuration order, scopes,
@@ -293,20 +380,66 @@ version. Do not rename the canonical files to encode a revision or date.
 
 ## Executables manifest and source provenance
 
+Each build tree writes one deterministic `build-metadata.json`. It records the
+profile, build type, Git commit/dirty state, C/C++/CUDA compiler identities,
+versions and effective flags, CUDA architectures and Toolkit root/version,
+NVHPC CUDA home/GPU target, general OpenACC compile/link flags, and the extra
+OpenACC Thrust `-cuda` compile/link interoperation flags. The CMake-generated
+per-target manifest descriptor supplies the target name and backend variant;
+the partial manifest binds every entry to the exact build-metadata hash.
+
 The executable manifest contains an entry for every runnable binary with at
 least:
 
 | Field | Meaning |
 | --- | --- |
+| `artifact_id` | SHA-256 identity defined below. |
+| `target_name` | Canonical CMake target and executable stem. |
+| `build_profile` | `cpu-cuda` or `openacc`. |
+| `backend_variant` | Compiled provider/capability variant. |
+| `supported_cpu_backends` | Stable CPU backend names supported by this binary, or an empty array for non-CPU targets. |
 | `executable_path` | Configured executable path. |
 | `library` | Library identifier. |
 | `implementation` | CPU, CUDA, or OpenACC. |
+| `executable_role` | `example` or `benchmark`. |
 | `build_type` | Recorded build configuration. |
 | `binary_sha256` | SHA-256 of the exact executable bytes. |
+| `build_metadata_sha256` | SHA-256 of deterministic generated build metadata. |
+| `compiler` | Compiler identity. |
+| `compiler_version` | Compiler version. |
+| `git_commit` | Source commit embedded by the build. |
+| `git_dirty` | Source dirty state embedded by the build. |
+
+`artifact_id` is the SHA-256 of the deterministic-profile JSON object containing
+`library`, `implementation`, `executable_role`, `target_name`, `build_profile`,
+`backend_variant`, and `binary_sha256`.
+
+Within one complete manifest, both of these tuples are unique:
+
+```text
+(library, implementation, executable_role)
+(target_name, build_profile, backend_variant)
+```
+
+A duplicate is an error even if the duplicate entries otherwise match. A merge
+also rejects conflicting paths, binary hashes, build metadata hashes, compiler
+metadata, Git state, build types, or backend providers. Different provider
+builds require distinct campaigns or an explicitly separate auxiliary
+manifest; they are never merged ambiguously.
+
+`backend_variant` records the compiled capability/provider without renaming the
+binary. The entry also records supported stable CPU backend names when one
+binary supports more than one runtime-selectable series.
 
 Serialize the complete manifest with the deterministic JSON profile and compute
 `executables_manifest_sha256` over those exact bytes. The manifest hash thus
 commits to every binary-content hash, not just its path.
+
+Before launch, the runner compares the manifest with generated build metadata,
+including Git commit/dirty state, compiler ID/version, build type, and profile.
+The CMake-generated target descriptor is the source of the manifest's target
+name and backend variant. After launch, the runner compares raw compiler/Git
+fields with the selected manifest entry.
 
 Production runs require a clean worktree and reject `git_dirty = true` before
 measurement. Smoke or pilot runs may use dirty source only when metadata stores
@@ -321,6 +454,17 @@ When dirty, at least one complete dirty-source hash is required. Metadata states
 which method is authoritative. A clean run stores both dirty-source fields as
 null.
 
+`tools/hash_source_snapshot.py REPOSITORY` computes the canonical source
+snapshot hash without modifying Git state. It uses read-only `git ls-files` to
+select the union of tracked and untracked, non-ignored files that currently
+exist; a deleted tracked path is represented by its absence. It rejects
+non-UTF-8 paths, traversal, duplicate normalized paths, symlinks, and non-files.
+After sorting UTF-8 repository-relative POSIX paths, SHA-256 input is the domain
+`gpu-library-suite-source-snapshot-v1` plus a NUL, the uint64 big-endian file
+count, and for each file: uint64 path-byte length, path bytes, one executable-bit
+byte, uint64 content length, and the 32 raw bytes of that file's SHA-256. A file
+that changes during hashing is an error.
+
 ## Runtime software environment
 
 `runtime-environment.json` records the software environment used to execute the
@@ -328,14 +472,16 @@ prebuilt CPU, CUDA, and OpenACC binaries together. It contains at least:
 
 - complete `module list` output or a normalized module list;
 - `PATH` and `LD_LIBRARY_PATH`;
-- NVIDIA driver version and CUDA runtime version;
+- NVIDIA driver version and CUDA runtime/Toolkit version and Toolkit path;
 - NVHPC compiler/runtime version;
+- `NVHPC_CUDA_HOME` when set, or the actual CUDA Toolkit selected by NVHPC;
 - detected FFTW, oneMKL, OpenBLAS, LAPACKE, and other selected CPU-library
   versions;
 - `ldd` output for every executable in the manifest;
 - resolved shared-library paths for every executable; and
-- relevant thread/runtime environment, including OpenMP and CPU-library
-  controls.
+- `OMP_NUM_THREADS`, `OMP_PROC_BIND`, `OMP_PLACES`, `OMP_DYNAMIC`,
+  `MKL_NUM_THREADS`, `MKL_DYNAMIC`, `MKL_THREADING_LAYER`, and
+  `OPENBLAS_NUM_THREADS`.
 
 The job master creates this document with the project-defined deterministic JSON
 profile after loading the benchmark runtime modules. Compute
@@ -421,7 +567,8 @@ Each node's `telemetry/telemetry-metadata.json` contains at least:
 - `telemetry_end_timestamp_utc`;
 - `sample_interval_sec`;
 - `timezone`; and
-- `utc_offset`.
+- `utc_offset`; and
+- `midnight_rollover_count`.
 
 All UTC timestamps use `YYYY-MM-DDTHH:MM:SS.sssZ`. Raw
 `nvidia-smi dmon -o T` output is preserved. Because its time column does not
@@ -444,7 +591,8 @@ schema. Every aggregate record identifies:
 - selected production CPU backend for speedup;
 - `runtime_environment_sha256`;
 - `summary_input_statistic` describing the values summarized at that level;
-- valid/invalid sample counts and exclusion reasons;
+- valid-success, attempted-failure, and unattempted-skipped sample counts plus
+  exclusion counts grouped by `failure_origin`;
 - median, Q1, Q3, IQR, minimum, and maximum where defined; and
 - `aggregate_status`.
 

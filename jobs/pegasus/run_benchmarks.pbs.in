@@ -1,0 +1,107 @@
+#!/bin/bash
+#PBS -A @ACCOUNT@
+#PBS -q @QUEUE@
+#PBS -b @NODES@
+#PBS -l elapstim_req=@WALLTIME@
+#PBS -N @JOB_NAME@
+#PBS -o @PBS_STDOUT@
+#PBS -e @PBS_STDERR@
+#PBS -T openmpi
+#PBS -v NQSV_MPI_VER=@MPI_VERSION@
+#PBS -v OMP_NUM_THREADS=@CPU_THREADS@
+
+set -euo pipefail
+umask 022
+
+: "${PBS_JOBID:?PBS_JOBID is required}"
+: "${PBS_NODEFILE:?PBS_NODEFILE is required}"
+: "${PBS_O_WORKDIR:?PBS_O_WORKDIR is required}"
+
+REPOSITORY_ROOT=@REPOSITORY_ROOT@
+SOURCE_CONFIG=@SOURCE_CONFIG@
+SOURCE_MANIFEST=@SOURCE_MANIFEST@
+RESULT_ROOT=@RESULT_ROOT@
+LOCAL_SCRATCH_ROOT=@LOCAL_SCRATCH_ROOT@
+RUN_ID=@RUN_ID@
+SYSTEM_LABEL=@SYSTEM_LABEL@
+WAVE=@WAVE@
+NODE_COUNT=@NODES@
+CUDA_TOOLKIT_ROOT=@CUDA_TOOLKIT_ROOT@
+CUDA_TOOLKIT_VERSION=@CUDA_TOOLKIT_VERSION@
+NVHPC_CUDA_HOME=@NVHPC_CUDA_HOME@
+
+@MODULE_SETUP@
+
+@CPU_ENVIRONMENT@
+@ENVIRONMENT_OVERRIDES@
+export NVHPC_CUDA_HOME
+
+cd "${PBS_O_WORKDIR}"
+if [[ "$(pwd -P)" != "$(cd "${REPOSITORY_ROOT}" && pwd -P)" ]]; then
+  cd "${REPOSITORY_ROOT}"
+fi
+
+master_scratch="${LOCAL_SCRATCH_ROOT}/gpu-library-suite-${PBS_JOBID}-${RUN_ID}-${WAVE}-master"
+mkdir "${master_scratch}"
+module list >"${master_scratch}/module-list.txt" 2>&1
+cp "${PBS_NODEFILE}" "${master_scratch}/pbs-nodefile.txt"
+
+python3 "${REPOSITORY_ROOT}/jobs/pegasus/collect_runtime_environment.py" \
+  --manifest "${SOURCE_MANIFEST}" \
+  @BUILD_METADATA_ARGUMENTS@ \
+  --module-list "${master_scratch}/module-list.txt" \
+  --cuda-toolkit-root "${CUDA_TOOLKIT_ROOT}" \
+  --cuda-toolkit-version "${CUDA_TOOLKIT_VERSION}" \
+  --nvhpc-cuda-home "${NVHPC_CUDA_HOME}" \
+  --require-ldd --require-gpu-tools \
+  --output "${master_scratch}/runtime-environment.json" \
+  >"${master_scratch}/runtime-environment.sha256"
+runtime_environment_sha256="$(tr -d '\n' <"${master_scratch}/runtime-environment.sha256")"
+
+MPI_OPTIONS=( @OPENMPI_OPTIONS@ )
+mpirun "${MPI_OPTIONS[@]}" -np "${NODE_COUNT}" -npernode 1 --bind-to none \
+  /bin/bash -c 'printf "%s\t%s\n" "${OMPI_COMM_WORLD_RANK}" "$(hostname)"' \
+  >"${master_scratch}/rank-host-mapping.tsv"
+
+python3 "${REPOSITORY_ROOT}/jobs/pegasus/prepare_wave.py" \
+  --result-root "${RESULT_ROOT}" --run-id "${RUN_ID}" --wave "${WAVE}" \
+  --expected-nodes "${NODE_COUNT}" \
+  --mapping "${master_scratch}/rank-host-mapping.tsv" \
+  --config "${SOURCE_CONFIG}" --manifest "${SOURCE_MANIFEST}" \
+  @BUILD_METADATA_ARGUMENTS@ \
+  --runtime-environment "${master_scratch}/runtime-environment.json" \
+  --system-label "${SYSTEM_LABEL}" --scheduler NQSV \
+  --scheduler-job-id "${PBS_JOBID}" --submission-host "$(hostname)" @DIRTY_SOURCE_ARGUMENTS@
+
+RUN_ROOT="${RESULT_ROOT}/${RUN_ID}"
+WAVE_ROOT="${RUN_ROOT}/waves/${WAVE}"
+mkdir "${WAVE_ROOT}/job-master"
+cp "${master_scratch}/module-list.txt" "${WAVE_ROOT}/job-master/module-list.txt"
+cp "${master_scratch}/pbs-nodefile.txt" "${WAVE_ROOT}/job-master/pbs-nodefile.txt"
+cp "${master_scratch}/rank-host-mapping.tsv" "${WAVE_ROOT}/job-master/rank-host-mapping.tsv"
+
+set +e
+mpirun "${MPI_OPTIONS[@]}" -np "${NODE_COUNT}" -npernode 1 --bind-to none \
+  /bin/bash "${REPOSITORY_ROOT}/jobs/pegasus/run_node.sh" \
+  --repository-root "${REPOSITORY_ROOT}" --run-root "${RUN_ROOT}" \
+  --config "${RUN_ROOT}/effective-config.json" \
+  --manifest "${RUN_ROOT}/executables-manifest.json" \
+  @BUILD_METADATA_ARGUMENTS@ \
+  --run-id "${RUN_ID}" --wave "${WAVE}" \
+  --system-label "${SYSTEM_LABEL}" --scheduler NQSV \
+  --scheduler-job-id "${PBS_JOBID}" \
+  --runtime-environment-sha256 "${runtime_environment_sha256}" \
+  --scratch-root "${LOCAL_SCRATCH_ROOT}" @DIRTY_SOURCE_ARGUMENTS@
+measurement_exit_code=$?
+
+python3 "${REPOSITORY_ROOT}/jobs/pegasus/collect_results.py" \
+  --wave-metadata "${WAVE_ROOT}/wave-metadata.json" \
+  --nodes-directory "${WAVE_ROOT}/nodes" \
+  --output "${WAVE_ROOT}/artifact-manifest.json"
+collector_exit_code=$?
+set -e
+
+if [[ ${measurement_exit_code} -ne 0 || ${collector_exit_code} -ne 0 ]]; then
+  exit 1
+fi
+exit 0
