@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "gpu_suite/benchmark.hpp"
 #include "sparse_bench_common.hpp"
 

@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "gpu_suite/benchmark.hpp"
 
 #include <cublas_v2.h>
