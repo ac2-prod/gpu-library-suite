@@ -87,7 +87,7 @@ offset_compact="$(date +%z)"
 utc_offset="${offset_compact:0:3}:${offset_compact:3:2}"
 
 # Invoked indirectly by the EXIT trap below.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 collect_node() {
   process_exit_code=$?
   trap - EXIT INT TERM HUP
@@ -200,7 +200,7 @@ collect_node() {
 }
 
 # Invoked indirectly by signal traps below.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 handle_signal() {
   termination_signal="$1"
   exit "$2"
