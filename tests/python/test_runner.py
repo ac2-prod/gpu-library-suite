@@ -1,6 +1,7 @@
 import contextlib
 import copy
 import io
+import math
 import os
 import tempfile
 import unittest
@@ -19,6 +20,7 @@ from gpu_suite.runner import (
     execute_schedule,
     load_manifest,
     synthetic_result,
+    validate_subprocess_record,
 )
 from gpu_suite.schema import validate_raw_result
 from gpu_suite.strict_json import dump_bytes, dumps, loads
@@ -120,6 +122,21 @@ def successful_record(item, context, metadata, trial):
         "elapsed_sec": 1.0,
         "cpu_threads_effective": 48,
         "cpu_parallelism": "threaded",
+        "verification_metrics": {
+            "dc_relative_error": 0.0,
+            "non_dc_max_abs_error": 0.0,
+        },
+        "verification_thresholds": {
+            "dc_relative_error": {
+                "method": "relative-upper-bound",
+                "upper_bound": 1e-5,
+            },
+            "non_dc_max_abs_error": {
+                "method": "absolute-upper-bound",
+                "upper_bound": 1e-4,
+            },
+        },
+        "verification_primary_metric": "non_dc_max_abs_error",
         "verification_status": "pass",
         "exit_code": 0,
         "status": "success",
@@ -141,6 +158,96 @@ def verification_failure_record(item, context, metadata, trial):
 
 
 class RunnerTests(unittest.TestCase):
+    def assert_subprocess_mismatch(self, mutate, field):
+        item, context, metadata = execution_fixture()
+        record = successful_record(item, context, metadata, 0)
+        mutate(record)
+        validate_raw_result(record)
+        with self.assertRaisesRegex(RunnerError, field):
+            validate_subprocess_record(
+                record, item, context, ZERO_HASH, ZERO_HASH, None, None
+            )
+
+    def test_rejects_requested_thread_mismatch(self):
+        self.assert_subprocess_mismatch(
+            lambda record: record.__setitem__("cpu_threads_requested", 47),
+            "cpu_threads_requested",
+        )
+
+    def test_rejects_effective_thread_mismatch(self):
+        self.assert_subprocess_mismatch(
+            lambda record: record.__setitem__("cpu_threads_effective", 47),
+            "cpu_threads_effective",
+        )
+
+    def test_rejects_device_mismatch(self):
+        self.assert_subprocess_mismatch(
+            lambda record: record.__setitem__("device_id", 1), "device_id"
+        )
+
+    def test_rejects_precision_mismatch(self):
+        self.assert_subprocess_mismatch(
+            lambda record: record.__setitem__("precision", "fp64"), "precision"
+        )
+
+    def test_rejects_problem_size_mismatch(self):
+        self.assert_subprocess_mismatch(
+            lambda record: record.__setitem__("problem_size", 257),
+            "problem_size",
+        )
+
+    def test_rejects_secondary_size_mismatch(self):
+        self.assert_subprocess_mismatch(
+            lambda record: record.__setitem__("secondary_size", 9),
+            "secondary_size",
+        )
+
+    def test_rejects_unexpected_parameter(self):
+        def mutate(record):
+            record["parameters"]["unowned_parameter"] = 1
+
+        self.assert_subprocess_mismatch(mutate, "parameters")
+
+    def test_rejects_scheduler_mismatch(self):
+        self.assert_subprocess_mismatch(
+            lambda record: record.__setitem__("scheduler", "PBS"), "scheduler"
+        )
+
+    def test_rejects_source_hash_mismatch(self):
+        self.assert_subprocess_mismatch(
+            lambda record: record.__setitem__(
+                "source_snapshot_sha256", "d" * 64
+            ),
+            "source_snapshot_sha256",
+        )
+
+    def test_rejects_verification_threshold_mismatch(self):
+        def mutate(record):
+            record["verification_thresholds"]["dc_relative_error"][
+                "upper_bound"
+            ] = 2e-5
+
+        self.assert_subprocess_mismatch(mutate, "verification thresholds")
+
+    def test_rejects_single_ulp_config_threshold_operand_mismatch(self):
+        def mutate(record):
+            threshold = record["verification_thresholds"][
+                "dc_relative_error"
+            ]
+            threshold["upper_bound"] = math.nextafter(
+                threshold["upper_bound"], math.inf
+            )
+
+        self.assert_subprocess_mismatch(
+            mutate, "verification threshold operand mismatch"
+        )
+
+    def test_rejects_library_mismatch(self):
+        self.assert_subprocess_mismatch(
+            lambda record: record.__setitem__("library_name", "wrong-library"),
+            "library_name",
+        )
+
     def test_duplicate_benchmark_manifest_entry_is_defensively_rejected(self):
         _, context, _ = execution_fixture()
         entry = {

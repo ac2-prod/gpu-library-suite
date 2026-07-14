@@ -47,20 +47,6 @@ static int add_double(gpu_suite_json_value *object, const char *key,
   return status;
 }
 
-static int add_string(gpu_suite_json_value *object, const char *key,
-                      const char *value) {
-  gpu_suite_json_value *string = gpu_suite_json_string(value);
-  int status;
-  if (string == NULL) {
-    return GPU_SUITE_ERROR_NOMEM;
-  }
-  status = gpu_suite_json_object_set(object, key, string);
-  if (status != GPU_SUITE_OK) {
-    gpu_suite_json_free(string);
-  }
-  return status;
-}
-
 static int make_verification(gpu_suite_result *result,
                              const gpu_suite_options *options,
                              const fft_buffers *buffers) {
@@ -68,15 +54,9 @@ static int make_verification(gpu_suite_result *result,
   double non_dc_max_abs_error = 0.0;
   size_t transform;
   int status;
-  gpu_suite_json_value *dc_threshold;
-  gpu_suite_json_value *non_dc_threshold;
+  bool finite = true;
 
-  gpu_suite_json_free(result->verification_metrics);
-  gpu_suite_json_free(result->verification_thresholds);
-  result->verification_metrics = gpu_suite_json_object();
-  result->verification_thresholds = gpu_suite_json_object();
-  if (result->verification_metrics == NULL ||
-      result->verification_thresholds == NULL) {
+  if (gpu_suite_verification_reset(result) != GPU_SUITE_OK) {
     return GPU_SUITE_ERROR_NOMEM;
   }
   if (!options->verify) {
@@ -91,20 +71,53 @@ static int make_verification(gpu_suite_result *result,
     const double dc_real = (double)buffers->output[base][0];
     const double dc_imag = (double)buffers->output[base][1];
     const double expected = (double)buffers->nfft;
-    const double transform_dc_error =
-        fmax(fabs(dc_real - expected), fabs(dc_imag)) / expected;
-    dc_relative_error = fmax(dc_relative_error, transform_dc_error);
+    double real_error = 0.0;
+    double imag_error = 0.0;
+    double transform_dc_error = 0.0;
+    if (!gpu_suite_finite_absolute_error(dc_real, expected, &real_error) ||
+        !gpu_suite_finite_absolute_error(dc_imag, 0.0, &imag_error) ||
+        !gpu_suite_finite_max_update(real_error, &transform_dc_error) ||
+        !gpu_suite_finite_max_update(imag_error, &transform_dc_error)) {
+      finite = false;
+    } else {
+      transform_dc_error /= expected;
+      if (!gpu_suite_finite_max_update(transform_dc_error,
+                                       &dc_relative_error))
+        finite = false;
+    }
     for (frequency = 1U; frequency < (size_t)buffers->nfft; ++frequency) {
       const size_t index = base + frequency;
-      non_dc_max_abs_error = fmax(
-          non_dc_max_abs_error, fmax(fabs((double)buffers->output[index][0]),
-                                     fabs((double)buffers->output[index][1])));
+      double real_magnitude = 0.0;
+      double imag_magnitude = 0.0;
+      if (!gpu_suite_finite_absolute_error(
+              (double)buffers->output[index][0], 0.0, &real_magnitude) ||
+          !gpu_suite_finite_absolute_error(
+              (double)buffers->output[index][1], 0.0, &imag_magnitude) ||
+          !gpu_suite_finite_max_update(real_magnitude,
+                                       &non_dc_max_abs_error) ||
+          !gpu_suite_finite_max_update(imag_magnitude,
+                                       &non_dc_max_abs_error))
+        finite = false;
     }
   }
-  if (!isfinite(dc_relative_error) || !isfinite(non_dc_max_abs_error)) {
+  status = gpu_suite_verification_add_upper_bound_threshold(
+      result, "dc_relative_error", "relative-upper-bound",
+      options->rel_tolerance);
+  if (status == GPU_SUITE_OK)
+    status = gpu_suite_verification_add_upper_bound_threshold(
+        result, "non_dc_max_abs_error", "absolute-upper-bound",
+        options->abs_tolerance);
+  if (status != GPU_SUITE_OK)
+    return status;
+  if (!finite) {
+    if (gpu_suite_json_add_null(result->verification_metrics,
+                                "dc_relative_error") != GPU_SUITE_OK ||
+        gpu_suite_json_add_null(result->verification_metrics,
+                                "non_dc_max_abs_error") != GPU_SUITE_OK)
+      return GPU_SUITE_ERROR_NOMEM;
     result->verification_primary_metric = "non_dc_max_abs_error";
     result->verification_status = "nonfinite";
-    return GPU_SUITE_ERROR_FORMAT;
+    return GPU_SUITE_OK;
   }
   status = add_double(result->verification_metrics, "dc_relative_error",
                       dc_relative_error);
@@ -117,39 +130,6 @@ static int make_verification(gpu_suite_result *result,
     return status;
   }
 
-  dc_threshold = gpu_suite_json_object();
-  non_dc_threshold = gpu_suite_json_object();
-  if (dc_threshold == NULL || non_dc_threshold == NULL) {
-    gpu_suite_json_free(dc_threshold);
-    gpu_suite_json_free(non_dc_threshold);
-    return GPU_SUITE_ERROR_NOMEM;
-  }
-  status = add_string(dc_threshold, "method", "relative-upper-bound");
-  if (status == GPU_SUITE_OK) {
-    status = add_double(dc_threshold, "upper_bound", options->rel_tolerance);
-  }
-  if (status == GPU_SUITE_OK) {
-    status = add_string(non_dc_threshold, "method", "absolute-upper-bound");
-  }
-  if (status == GPU_SUITE_OK) {
-    status =
-        add_double(non_dc_threshold, "upper_bound", options->abs_tolerance);
-  }
-  if (status == GPU_SUITE_OK) {
-    status = gpu_suite_json_object_set(result->verification_thresholds,
-                                       "dc_relative_error", dc_threshold);
-  }
-  if (status != GPU_SUITE_OK) {
-    gpu_suite_json_free(dc_threshold);
-    gpu_suite_json_free(non_dc_threshold);
-    return status;
-  }
-  status = gpu_suite_json_object_set(result->verification_thresholds,
-                                     "non_dc_max_abs_error", non_dc_threshold);
-  if (status != GPU_SUITE_OK) {
-    gpu_suite_json_free(non_dc_threshold);
-    return status;
-  }
   result->verification_primary_metric = "non_dc_max_abs_error";
   result->verification_status =
       dc_relative_error <= options->rel_tolerance &&
@@ -268,19 +248,17 @@ int main(int argc, char **argv) {
   }
 #endif
 
-  if (options.size > (uint64_t)INT_MAX || options.batch > (uint64_t)INT_MAX ||
+  if (!gpu_suite_checked_u64_to_int(options.size, &buffers.nfft) ||
+      !gpu_suite_checked_u64_to_int(options.batch, &buffers.batch) ||
       !gpu_suite_checked_u64_to_size(options.size, &buffers.count) ||
-      !gpu_suite_checked_mul_size(buffers.count, (size_t)options.batch,
+      !gpu_suite_checked_mul_size(buffers.count, (size_t)buffers.batch,
                                   &buffers.count) ||
-      !gpu_suite_checked_mul_size(buffers.count, sizeof(*buffers.input),
-                                  &bytes)) {
+      !gpu_suite_checked_bytes(buffers.count, sizeof(*buffers.input), &bytes)) {
     fprintf(stderr, "cuFFT dimensions overflow host representation\n");
     (void)emit_unmeasured_rows(stream, &write_header, &options, 0, false,
                                "prerequisite", "problem dimensions overflow");
     goto cleanup;
   }
-  buffers.nfft = (int)options.size;
-  buffers.batch = (int)options.batch;
   buffers.input = (fftwf_complex *)fftwf_malloc(bytes);
   buffers.output = (fftwf_complex *)fftwf_malloc(bytes);
   if (buffers.input == NULL || buffers.output == NULL) {
@@ -412,11 +390,12 @@ int main(int argc, char **argv) {
       result.elapsed_sec = gpu_suite_optional_double_value(
           elapsed_total / (double)options.repeat);
       if (make_verification(&result, &options, &buffers) != GPU_SUITE_OK) {
-        result.attempted = true;
-        result.failure_origin = "verification";
-        result.exit_code = gpu_suite_optional_int_value(1);
-        result.status = "failure";
-        result.message = "verification produced a nonfinite or invalid metric";
+        fprintf(stderr, "verification result construction failed\n");
+        gpu_suite_result_destroy(&result);
+        (void)emit_unmeasured_rows(
+            stream, &write_header, &options, trial, true, "benchmark",
+            "verification result construction failed");
+        goto cleanup;
       } else if (strcmp(result.verification_status, "pass") == 0 ||
                  strcmp(result.verification_status, "skipped") == 0) {
         result.attempted = true;

@@ -16,12 +16,13 @@ static void make_dense_system(int n, int nrhs, double *a, double *b) {
     for (int i = 0; i < n; ++i)
       b[i + (size_t)r * n] = 2.0 * n;
 }
-static void restore(int n, int nrhs, double *a, double *b, lapack_int *piv,
+static void restore(double *a, double *b, lapack_int *piv,
                     lapack_int *getrf_info, lapack_int *getrs_info,
-                    const double *a0, const double *b0) {
-  memcpy(a, a0, (size_t)n * n * sizeof(*a));
-  memcpy(b, b0, (size_t)n * nrhs * sizeof(*b));
-  memset(piv, 0, (size_t)n * sizeof(*piv));
+                    const double *a0, const double *b0, size_t matrix_bytes,
+                    size_t rhs_bytes, size_t pivot_bytes) {
+  memcpy(a, a0, matrix_bytes);
+  memcpy(b, b0, rhs_bytes);
+  memset(piv, 0, pivot_bytes);
   *getrf_info = 0;
   *getrs_info = 0;
 }
@@ -33,59 +34,92 @@ static int set_verification(gpu_suite_result *result,
                             const gpu_suite_options *options,
                             const double *solution, const double *a0,
                             const double *b0, int n, int nrhs) {
-  double solution_error = 0, residual = 0, a_norm = 0, b_norm = 0;
-  for (int i = 0; i < n; ++i) {
-    double row_sum = 0;
-    for (int j = 0; j < n; ++j)
-      row_sum += fabs(a0[i + (size_t)j * n]);
-    a_norm = fmax(a_norm, row_sum);
-  }
-  for (int r = 0; r < nrhs; ++r)
-    for (int i = 0; i < n; ++i) {
-      solution_error =
-          fmax(solution_error, fabs(solution[i + (size_t)r * n] - 1.0));
-      b_norm = fmax(b_norm, fabs(b0[i + (size_t)r * n]));
-      double ax = 0;
-      for (int j = 0; j < n; ++j)
-        ax += a0[i + (size_t)j * n] * solution[j + (size_t)r * n];
-      residual = fmax(residual, fabs(ax - b0[i + (size_t)r * n]));
-    }
-  double relative_residual = residual / (a_norm + b_norm);
-  gpu_suite_json_free(result->verification_metrics);
-  gpu_suite_json_free(result->verification_thresholds);
-  result->verification_metrics = gpu_suite_json_object();
-  result->verification_thresholds = gpu_suite_json_object();
+  if (gpu_suite_verification_reset(result) != GPU_SUITE_OK)
+    return GPU_SUITE_ERROR_NOMEM;
   if (!options->verify) {
     result->verification_primary_metric = NULL;
     result->verification_status = "skipped";
-    return 1;
+    return GPU_SUITE_OK;
   }
-  gpu_suite_json_add_double(result->verification_metrics,
-                            "solution_relative_error", solution_error);
-  gpu_suite_json_add_double(result->verification_metrics, "relative_residual",
-                            relative_residual);
-  gpu_suite_json_value *s = gpu_suite_json_object(),
-                       *r = gpu_suite_json_object();
-  gpu_suite_json_add_string(s, "method", "absolute-plus-relative");
-  gpu_suite_json_add_double(s, "reference_scale", 1);
-  gpu_suite_json_add_double(s, "abs_tolerance", options->abs_tolerance);
-  gpu_suite_json_add_double(s, "rel_tolerance", options->rel_tolerance);
-  gpu_suite_json_add_string(r, "method", "absolute-plus-relative");
-  gpu_suite_json_add_double(r, "reference_scale", 1);
-  gpu_suite_json_add_double(r, "abs_tolerance", options->abs_tolerance);
-  gpu_suite_json_add_double(r, "rel_tolerance", options->rel_tolerance);
-  gpu_suite_json_object_set(result->verification_thresholds,
-                            "solution_relative_error", s);
-  gpu_suite_json_object_set(result->verification_thresholds,
-                            "relative_residual", r);
+  if (gpu_suite_verification_add_absolute_relative_threshold(
+          result, "solution_relative_error", 1.0, options->abs_tolerance,
+          options->rel_tolerance) != GPU_SUITE_OK ||
+      gpu_suite_verification_add_absolute_relative_threshold(
+          result, "relative_residual", 1.0, options->abs_tolerance,
+          options->rel_tolerance) != GPU_SUITE_OK)
+    return GPU_SUITE_ERROR_NOMEM;
+
+  double solution_error = 0, residual = 0, a_norm = 0, b_norm = 0;
+  int finite = 1;
+  for (int i = 0; i < n; ++i) {
+    double row_sum = 0;
+    for (int j = 0; j < n; ++j) {
+      double entry = a0[i + (size_t)j * n];
+      if (!isfinite(entry) || !isfinite(row_sum + fabs(entry))) {
+        finite = 0;
+        continue;
+      }
+      row_sum += fabs(entry);
+    }
+    if (!gpu_suite_finite_max_update(row_sum, &a_norm))
+      finite = 0;
+  }
+  for (int r = 0; r < nrhs; ++r)
+    for (int i = 0; i < n; ++i) {
+      size_t index = i + (size_t)r * n;
+      double error = 0.0;
+      if (!gpu_suite_finite_absolute_error(solution[index], 1.0, &error) ||
+          !gpu_suite_finite_max_update(error, &solution_error))
+        finite = 0;
+      if (!isfinite(b0[index]) ||
+          !gpu_suite_finite_max_update(fabs(b0[index]), &b_norm))
+        finite = 0;
+      double ax = 0;
+      int product_finite = 1;
+      for (int j = 0; j < n; ++j) {
+        double matrix_value = a0[i + (size_t)j * n];
+        double solution_value = solution[j + (size_t)r * n];
+        double term = matrix_value * solution_value;
+        if (!isfinite(matrix_value) || !isfinite(solution_value) ||
+            !isfinite(term) || !isfinite(ax + term)) {
+          finite = 0;
+          product_finite = 0;
+          continue;
+        }
+        ax += term;
+      }
+      if (product_finite &&
+          (!gpu_suite_finite_absolute_error(ax, b0[index], &error) ||
+           !gpu_suite_finite_max_update(error, &residual)))
+        finite = 0;
+    }
+  double denominator = a_norm + b_norm;
+  double relative_residual = residual / denominator;
+  finite = finite && isfinite(denominator) && denominator > 0.0 &&
+           isfinite(relative_residual);
   result->verification_primary_metric = "relative_residual";
+  if (!finite) {
+    if (gpu_suite_json_add_null(result->verification_metrics,
+                                "solution_relative_error") != GPU_SUITE_OK ||
+        gpu_suite_json_add_null(result->verification_metrics,
+                                "relative_residual") != GPU_SUITE_OK)
+      return GPU_SUITE_ERROR_NOMEM;
+    result->verification_status = "nonfinite";
+    return GPU_SUITE_OK;
+  }
+  if (gpu_suite_json_add_double(result->verification_metrics,
+                                "solution_relative_error", solution_error) !=
+          GPU_SUITE_OK ||
+      gpu_suite_json_add_double(result->verification_metrics,
+                                "relative_residual", relative_residual) !=
+          GPU_SUITE_OK)
+    return GPU_SUITE_ERROR_NOMEM;
   double bound = options->abs_tolerance + options->rel_tolerance;
   result->verification_status =
-      isfinite(solution_error) && isfinite(relative_residual) &&
-              solution_error <= bound && relative_residual <= bound
+      solution_error <= bound && relative_residual <= bound
           ? "pass"
           : "failure";
-  return 1;
+  return GPU_SUITE_OK;
 }
 
 int main(int argc, char **argv) {
@@ -100,26 +134,36 @@ int main(int argc, char **argv) {
     return EXIT_SUCCESS;
   }
   if (parsed != GPU_SUITE_PARSE_OK ||
-      strcmp(options.cpu_backend, GPU_SUITE_COMPILED_CPU_BACKEND) != 0 ||
-      options.size > INT_MAX || options.nrhs > INT_MAX) {
+      strcmp(options.cpu_backend, GPU_SUITE_COMPILED_CPU_BACKEND) != 0) {
     fprintf(stderr, "invalid solver options or CPU backend\n");
     return EXIT_FAILURE;
   }
-  int n = (int)options.size, nrhs = (int)options.nrhs;
-  size_t ac = (size_t)n * n, bc = (size_t)n * nrhs;
-  double *a = malloc(ac * sizeof(*a)), *b = malloc(bc * sizeof(*b)),
-         *a0 = malloc(ac * sizeof(*a0)), *b0 = malloc(bc * sizeof(*b0));
-  lapack_int *piv = malloc((size_t)n * sizeof(*piv));
   gpu_suite_benchmark_writer writer;
   if (gpu_suite_benchmark_writer_open(&writer, &options, error,
                                       sizeof(error)) != GPU_SUITE_OK) {
-    free(piv);
-    free(b0);
-    free(a0);
-    free(b);
-    free(a);
     return EXIT_FAILURE;
   }
+  int n = 0, nrhs = 0;
+  size_t ac = 0U, bc = 0U, matrix_bytes = 0U, rhs_bytes = 0U,
+         pivot_bytes = 0U;
+  if (!gpu_suite_checked_u64_to_int(options.size, &n) ||
+      !gpu_suite_checked_u64_to_int(options.nrhs, &nrhs) ||
+      !gpu_suite_checked_mul_size((size_t)n, (size_t)n, &ac) ||
+      !gpu_suite_checked_mul_size((size_t)n, (size_t)nrhs, &bc) ||
+      !gpu_suite_checked_bytes(ac, sizeof(double), &matrix_bytes) ||
+      !gpu_suite_checked_bytes(bc, sizeof(double), &rhs_bytes) ||
+      !gpu_suite_checked_bytes((size_t)n, sizeof(lapack_int), &pivot_bytes)) {
+    fprintf(stderr, "solver dimensions or byte counts exceed supported range\n");
+    (void)gpu_suite_benchmark_emit_unmeasured(
+        &writer, &options, 0, false, "prerequisite",
+        "solver dimensions exceed supported integer or byte range", error,
+        sizeof(error));
+    (void)gpu_suite_benchmark_writer_close(&writer, error, sizeof(error));
+    return EXIT_FAILURE;
+  }
+  double *a = malloc(matrix_bytes), *b = malloc(rhs_bytes),
+         *a0 = malloc(matrix_bytes), *b0 = malloc(rhs_bytes);
+  lapack_int *piv = malloc(pivot_bytes);
   if (!a || !b || !a0 || !b0 || !piv) {
     gpu_suite_benchmark_emit_unmeasured(&writer, &options, 0, true, "benchmark",
                                         "dense-system allocation failed", error,
@@ -129,7 +173,8 @@ int main(int argc, char **argv) {
   make_dense_system(n, nrhs, a0, b0);
   lapack_int info1 = 0, info2 = 0;
   for (int w = 0; w < options.warmup; ++w) {
-    restore(n, nrhs, a, b, piv, &info1, &info2, a0, b0);
+    restore(a, b, piv, &info1, &info2, a0, b0, matrix_bytes, rhs_bytes,
+            pivot_bytes);
     info1 = LAPACKE_dgetrf(LAPACK_COL_MAJOR, n, n, a, n, piv);
     if (info1 == 0)
       info2 = LAPACKE_dgetrs(LAPACK_COL_MAJOR, 'N', n, nrhs, a, n, piv, b, n);
@@ -142,7 +187,8 @@ int main(int argc, char **argv) {
       goto failed;
     }
   }
-  restore(n, nrhs, a, b, piv, &info1, &info2, a0, b0);
+  restore(a, b, piv, &info1, &info2, a0, b0, matrix_bytes, rhs_bytes,
+          pivot_bytes);
   int any_failure = 0;
   for (int trial = 0; trial < options.trials; ++trial) {
     gpu_suite_result result;
@@ -155,7 +201,8 @@ int main(int argc, char **argv) {
       any_failure = 1;
       break;
     }
-    restore(n, nrhs, a, b, piv, &info1, &info2, a0, b0);
+    restore(a, b, piv, &info1, &info2, a0, b0, matrix_bytes, rhs_bytes,
+            pivot_bytes);
     char sts[GPU_SUITE_TIMESTAMP_CAPACITY] = {0},
          ets[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
     struct timespec start, end;
@@ -178,16 +225,27 @@ int main(int argc, char **argv) {
       result.elapsed_sec = gpu_suite_optional_double_value(elapsed);
       result.getrf_info = gpu_suite_optional_int_value(info1);
       result.getrs_info = gpu_suite_optional_int_value(info2);
-      set_verification(&result, &options, b, a0, b0, n, nrhs);
-      int pass =
-          info1 == 0 && info2 == 0 &&
-          (!options.verify || strcmp(result.verification_status, "pass") == 0);
+      int verified =
+          set_verification(&result, &options, b, a0, b0, n, nrhs);
+      if (verified == GPU_SUITE_OK && (info1 != 0 || info2 != 0))
+        result.verification_status = "failure";
+      int pass = info1 == 0 && info2 == 0 && verified == GPU_SUITE_OK &&
+                 (!options.verify ||
+                  strcmp(result.verification_status, "pass") == 0);
       result.attempted = true;
-      result.failure_origin = pass ? NULL : "verification";
+      result.failure_origin =
+          pass ? NULL : (verified == GPU_SUITE_OK ? "verification" : "benchmark");
+      if (verified != GPU_SUITE_OK)
+        result.verification_status = "skipped";
       result.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
       result.status = pass ? "success" : "failure";
-      result.message = pass ? "" : "LU solve verification/info failure";
+      result.message =
+          pass ? ""
+               : (verified == GPU_SUITE_OK
+                      ? "LU solve verification/info failure"
+                      : "verification result construction failed");
       any_failure |= !pass;
+      ok = ok && verified == GPU_SUITE_OK;
     } else {
       result.attempted = true;
       result.failure_origin = "benchmark";

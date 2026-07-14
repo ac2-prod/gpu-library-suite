@@ -140,48 +140,91 @@ static int apply(sparse_context *ctx, double alpha, const double *x,
 static void context_destroy(sparse_context *ctx) { (void)ctx; }
 #endif
 
+static int run_end_to_end_pipeline(int n, int *row, int *col, double *val,
+                                   const gpu_suite_options *options,
+                                   const double *x, double *y,
+                                   int repeat_index, int measure,
+                                   char start_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY],
+                                   char end_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY],
+                                   char *error, size_t error_size,
+                                   double *elapsed_total) {
+  sparse_context temporary = {0};
+  struct timespec start;
+  struct timespec end;
+  int ok = !measure ||
+           (repeat_index == 0
+                ? gpu_suite_measurement_start(start_timestamp, &start, error,
+                                              error_size)
+                : gpu_suite_clock_now(&start, error, error_size)) ==
+               GPU_SUITE_OK;
+  if (ok)
+    ok = context_create(&temporary, n, row, col, val);
+  if (ok)
+    ok = apply(&temporary, options->alpha, x, options->beta, y);
+  if (ok && measure) {
+    ok = (repeat_index + 1 == options->repeat
+              ? gpu_suite_measurement_end(&end, end_timestamp, error,
+                                          error_size)
+              : gpu_suite_clock_now(&end, error, error_size)) == GPU_SUITE_OK;
+    if (ok)
+      *elapsed_total += gpu_suite_clock_elapsed(&start, &end);
+  }
+  context_destroy(&temporary);
+  return ok;
+}
+
 static int verify_result(gpu_suite_result *result,
                          const gpu_suite_options *options, const double *y,
                          int nx, int ny) {
-  gpu_suite_json_free(result->verification_metrics);
-  gpu_suite_json_free(result->verification_thresholds);
-  result->verification_metrics = gpu_suite_json_object();
-  result->verification_thresholds = gpu_suite_json_object();
-  if (!result->verification_metrics || !result->verification_thresholds)
-    return 0;
+  if (gpu_suite_verification_reset(result) != GPU_SUITE_OK)
+    return GPU_SUITE_ERROR_NOMEM;
   if (!options->verify) {
     result->verification_primary_metric = NULL;
     result->verification_status = "skipped";
-    return 1;
+    return GPU_SUITE_OK;
   }
   int updates = options->scope == GPU_SUITE_SCOPE_COMPUTE ? options->repeat : 1;
   double maximum = 0, scale = 0;
+  int finite = 1;
   for (int iy = 0; iy < ny; ++iy)
     for (int ix = 0; ix < nx; ++ix) {
       int neighbors =
           4 - (ix == 0) - (ix + 1 == nx) - (iy == 0) - (iy + 1 == ny);
       double base = 4.0 - neighbors, expected = 1.0;
-      for (int r = 0; r < updates; ++r)
+      for (int r = 0; r < updates; ++r) {
         expected = options->alpha * base + options->beta * expected;
-      maximum = fmax(maximum, fabs(y[iy * nx + ix] - expected));
-      scale = fmax(scale, fabs(expected));
+        if (!isfinite(expected))
+          finite = 0;
+      }
+      double error = 0.0;
+      if (!gpu_suite_finite_absolute_error(y[iy * nx + ix], expected,
+                                           &error) ||
+          !gpu_suite_finite_max_update(error, &maximum))
+        finite = 0;
+      if (isfinite(expected) &&
+          !gpu_suite_finite_max_update(fabs(expected), &scale))
+        finite = 0;
     }
-  gpu_suite_json_add_double(result->verification_metrics, "max_abs_error",
-                            maximum);
-  gpu_suite_json_value *t = gpu_suite_json_object();
-  gpu_suite_json_add_string(t, "method", "absolute-plus-relative");
-  gpu_suite_json_add_double(t, "reference_scale", scale);
-  gpu_suite_json_add_double(t, "abs_tolerance", options->abs_tolerance);
-  gpu_suite_json_add_double(t, "rel_tolerance", options->rel_tolerance);
-  gpu_suite_json_object_set(result->verification_thresholds, "max_abs_error",
-                            t);
+  if (gpu_suite_verification_add_absolute_relative_threshold(
+          result, "max_abs_error", scale, options->abs_tolerance,
+          options->rel_tolerance) != GPU_SUITE_OK)
+    return GPU_SUITE_ERROR_NOMEM;
   result->verification_primary_metric = "max_abs_error";
+  if (!finite) {
+    if (gpu_suite_json_add_null(result->verification_metrics,
+                                "max_abs_error") != GPU_SUITE_OK)
+      return GPU_SUITE_ERROR_NOMEM;
+    result->verification_status = "nonfinite";
+    return GPU_SUITE_OK;
+  }
+  if (gpu_suite_json_add_double(result->verification_metrics, "max_abs_error",
+                                maximum) != GPU_SUITE_OK)
+    return GPU_SUITE_ERROR_NOMEM;
   result->verification_status =
-      isfinite(maximum) &&
-              maximum <= options->abs_tolerance + options->rel_tolerance * scale
+      maximum <= options->abs_tolerance + options->rel_tolerance * scale
           ? "pass"
           : "failure";
-  return 1;
+  return GPU_SUITE_OK;
 }
 
 int main(int argc, char **argv) {
@@ -203,24 +246,31 @@ int main(int argc, char **argv) {
   }
   uint64_t nxu = options.size_set ? integer_root(options.size) : options.nx,
            nyu = options.size_set ? integer_root(options.size) : options.ny;
-  if (nxu > 2147483647ULL || nyu > 2147483647ULL || nxu * nyu > 2147483647ULL)
-    return EXIT_FAILURE;
-  int nx = (int)nxu, ny = (int)nyu, n = nx * ny, nnz = 5 * n - 2 * nx - 2 * ny;
-  int *row = malloc((size_t)(n + 1) * sizeof(*row)),
-      *col = malloc((size_t)nnz * sizeof(*col));
-  double *val = malloc((size_t)nnz * sizeof(*val)),
-         *x = malloc((size_t)n * sizeof(*x)),
-         *y = malloc((size_t)n * sizeof(*y));
   gpu_suite_benchmark_writer writer;
   if (gpu_suite_benchmark_writer_open(&writer, &options, error,
                                       sizeof(error)) != GPU_SUITE_OK) {
-    free(y);
-    free(x);
-    free(val);
-    free(col);
-    free(row);
     return EXIT_FAILURE;
   }
+  int nx = 0, ny = 0, n = 0, nnz = 0;
+  size_t row_count = 0U;
+  size_t row_bytes = 0U, col_bytes = 0U, val_bytes = 0U, vector_bytes = 0U;
+  if (!gpu_suite_checked_poisson2d_dimensions(
+          nxu, nyu, &nx, &ny, &n, &nnz, &row_count) ||
+      !gpu_suite_checked_bytes(row_count, sizeof(int), &row_bytes) ||
+      !gpu_suite_checked_bytes((size_t)nnz, sizeof(int), &col_bytes) ||
+      !gpu_suite_checked_bytes((size_t)nnz, sizeof(double), &val_bytes) ||
+      !gpu_suite_checked_bytes((size_t)n, sizeof(double), &vector_bytes)) {
+    fprintf(stderr, "CSR dimensions or byte counts exceed supported range\n");
+    (void)gpu_suite_benchmark_emit_unmeasured(
+        &writer, &options, 0, false, "prerequisite",
+        "CSR dimensions exceed supported integer or byte range", error,
+        sizeof(error));
+    (void)gpu_suite_benchmark_writer_close(&writer, error, sizeof(error));
+    return EXIT_FAILURE;
+  }
+  int *row = malloc(row_bytes), *col = malloc(col_bytes);
+  double *val = malloc(val_bytes), *x = malloc(vector_bytes),
+         *y = malloc(vector_bytes);
   if (!row || !col || !val || !x || !y) {
     gpu_suite_benchmark_emit_unmeasured(&writer, &options, 0, true, "benchmark",
                                         "CSR allocation failed", error,
@@ -237,20 +287,35 @@ int main(int argc, char **argv) {
   fill(x, n, 1);
   fill(y, n, 1);
   sparse_context compute = {0};
-  if (!context_create(&compute, n, row, col, val)) {
-    gpu_suite_benchmark_emit_unmeasured(&writer, &options, 0, true, "benchmark",
-                                        "sparse descriptor setup failed", error,
-                                        sizeof(error));
-    goto failed;
-  }
-  for (int w = 0; w < options.warmup; ++w)
-    if (!apply(&compute, options.alpha, x, options.beta, y)) {
-      context_destroy(&compute);
+  int compute_created = 0;
+  if (options.scope == GPU_SUITE_SCOPE_COMPUTE) {
+    compute_created = context_create(&compute, n, row, col, val);
+    if (!compute_created) {
       gpu_suite_benchmark_emit_unmeasured(
-          &writer, &options, 0, true, "benchmark", "SpMV warmup failed", error,
-          sizeof(error));
+          &writer, &options, 0, true, "benchmark",
+          "sparse descriptor setup failed", error, sizeof(error));
       goto failed;
     }
+    for (int w = 0; w < options.warmup; ++w)
+      if (!apply(&compute, options.alpha, x, options.beta, y)) {
+        context_destroy(&compute);
+        gpu_suite_benchmark_emit_unmeasured(
+            &writer, &options, 0, true, "benchmark", "SpMV warmup failed",
+            error, sizeof(error));
+        goto failed;
+      }
+  } else {
+    for (int w = 0; w < options.warmup; ++w) {
+      fill(y, n, 1);
+      if (!run_end_to_end_pipeline(n, row, col, val, &options, x, y, 0, 0,
+                                   NULL, NULL, error, sizeof(error), NULL)) {
+        gpu_suite_benchmark_emit_unmeasured(
+            &writer, &options, 0, true, "benchmark",
+            "end-to-end SpMV warmup failed", error, sizeof(error));
+        goto failed;
+      }
+    }
+  }
   fill(y, n, 1);
   int any_failure = 0;
   for (int trial = 0; trial < options.trials; ++trial) {
@@ -282,24 +347,9 @@ int main(int argc, char **argv) {
     } else {
       for (int r = 0; r < options.repeat && ok; ++r) {
         fill(y, n, 1);
-        sparse_context temporary = {0};
-        ok = (r == 0 ? gpu_suite_measurement_start(sts, &start, error,
-                                                   sizeof(error))
-                     : gpu_suite_clock_now(&start, error, sizeof(error))) ==
-             GPU_SUITE_OK;
-        if (ok)
-          ok = context_create(&temporary, n, row, col, val);
-        if (ok)
-          ok = apply(&temporary, options.alpha, x, options.beta, y);
-        if (ok)
-          ok = (r + 1 == options.repeat
-                    ? gpu_suite_measurement_end(&end, ets, error,
-                                                sizeof(error))
-                    : gpu_suite_clock_now(&end, error, sizeof(error))) ==
-               GPU_SUITE_OK;
-        context_destroy(&temporary);
-        if (ok)
-          elapsed += gpu_suite_clock_elapsed(&start, &end);
+        ok = run_end_to_end_pipeline(
+            n, row, col, val, &options, x, y, r, 1, sts, ets, error,
+            sizeof(error), &elapsed);
       }
     }
     if (ok) {
@@ -308,15 +358,24 @@ int main(int argc, char **argv) {
       result.elapsed_total_sec = gpu_suite_optional_double_value(elapsed);
       result.elapsed_sec =
           gpu_suite_optional_double_value(elapsed / options.repeat);
-      verify_result(&result, &options, y, nx, ny);
-      int pass =
-          !options.verify || strcmp(result.verification_status, "pass") == 0;
+      int verified = verify_result(&result, &options, y, nx, ny);
+      int pass = verified == GPU_SUITE_OK &&
+                 (!options.verify ||
+                  strcmp(result.verification_status, "pass") == 0);
       result.attempted = true;
-      result.failure_origin = pass ? NULL : "verification";
+      result.failure_origin =
+          pass ? NULL : (verified == GPU_SUITE_OK ? "verification" : "benchmark");
+      if (verified != GPU_SUITE_OK)
+        result.verification_status = "skipped";
       result.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
       result.status = pass ? "success" : "failure";
-      result.message = pass ? "" : "SpMV verification failed";
+      result.message =
+          pass ? ""
+               : (verified == GPU_SUITE_OK
+                      ? "SpMV verification failed"
+                      : "verification result construction failed");
       any_failure |= !pass;
+      ok = ok && verified == GPU_SUITE_OK;
     } else {
       result.attempted = true;
       result.failure_origin = "benchmark";
@@ -341,7 +400,8 @@ int main(int argc, char **argv) {
       break;
     }
   }
-  context_destroy(&compute);
+  if (compute_created)
+    context_destroy(&compute);
   free(y);
   free(x);
   free(val);

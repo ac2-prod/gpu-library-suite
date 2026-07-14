@@ -7,7 +7,7 @@ It is evidence for the local phase gates only. It is not evidence of Linux,
 CUDA, NVHPC/OpenACC, GPU, or Pegasus execution. The authoritative acceptance
 criteria remain in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
 
-The review-remediation gate ran on arm64 macOS with Apple Clang 21.0.0,
+The second-review remediation gate ran on arm64 macOS with Apple Clang 21.0.0,
 CMake/CTest 4.4.0, the system Python 3.9.6, an additional Python 3.13.7, and
 ShellCheck 0.11.0. No Linux container runtime was available. The host also did
 not provide a real CUDA compiler/Toolkit, NVHPC, a GPU, a Pegasus allocation,
@@ -18,32 +18,43 @@ the production libraries or vendor compilers.
 
 ## Review-finding provenance
 
-Before this remediation, the initial local Apple-Clang gate passed 59 of 59
-CTest tests and 97 Python tests. Subsequent review found two portability defects
-that this host result could not establish: strict-C17 Linux linking needed an
-explicit `libm` interface, and generated build metadata in a source tree without
-`.git` could serialize unavailable Git fields as invalid JSON. These were code
-review/static-analysis findings, not observed Linux or `.git`-less execution
-failures. The current gates add explicit regressions for both conditions.
+This gate is cumulative. Earlier review added explicit regressions for strict
+C17 `libm` linking and valid unavailable-Git metadata. The current independent
+review identified additional static-analysis gaps that a successful small local
+run could not establish: unchecked runtime dimension/byte conversions, scope
+warm-up retaining or omitting the wrong resource lifecycle, nonfinite values
+passing through numerical reductions, and subprocess records being accepted
+without exact comparison against runner-owned configuration and provenance.
+
+The remediation checks every one of the 18 benchmark sources before allocation
+or classic integer API entry, exercises all six CPU benchmark families with
+oversized runtime inputs, injects NaN and both infinities into shared and
+provider-backed verification paths, checks scope-specific source lifecycle
+structure, and rejects unexpected or mismatched subprocess-owned fields,
+including a one-ULP change to a configuration-owned verification operand.
+These are regression tests for the reviewed defects; fake GPU headers remain
+syntax evidence only.
 
 ## Current successful local checks
 
 - A clean CPU-only configure and build succeeded with initial project languages
   C and C++, strict C17/C++17, explicit CUDA/OpenACC disable reasons, and the
   system Python 3.9 interpreter selected for tests.
-- CTest passed 72 of 72 registered tests. This covers common C/C++ unit tests,
+- CTest passed 73 of 73 registered tests. This covers common C/C++ unit tests,
   compile/link probes, positive and negative FFTW/CBLAS/LAPACKE/oneMKL fixture
   providers, CPU benchmark fixtures, all 36 source/target policy checks,
   CUDA/OpenACC fixture-header syntax checks, CUDA runtime-metadata helper tests,
   Pegasus shell checks, Python tests, the Python 3.9 audit, and the `.git`-less
   source-build regression.
-- The CTest Python suite ran under the actual system Python 3.9.6 and passed 117
-  of 117 tests.
+- The CTest Python suite ran under the actual system Python 3.9.6 and passed 140
+  of 140 tests. The count includes exact runner field/verification contracts,
+  all-family overflow subprocess checks, nonfinite provider injection, and the
+  18-source arithmetic/scope policy audit.
 - The `.git`-less regression copied the source without `.git`, configured and
-  built it, ran all 71 applicable inner CTests successfully, and checked that
+  built it, ran all 72 applicable inner CTests successfully, and checked that
   unavailable Git provenance remains valid JSON with explicit availability and
   null-value semantics.
-- All 53 Python source files passed `ast.parse(feature_version=(3, 9))`, the
+- All 54 Python source files passed `ast.parse(feature_version=(3, 9))`, the
   post-3.9 standard-library API audit, normal compilation, and `py_compile`.
   A separate system-Python-3.9 `compileall` pass also succeeded.
 - `bash -n` passed for the three shell scripts and the PBS template. ShellCheck
@@ -62,45 +73,45 @@ failures. The current gates add explicit regressions for both conditions.
   identity, build-profile/backend conflicts, binary hashes, and versioned empty
   snapshot identity.
 - [`.github/workflows/cpu-linux.yml`](../.github/workflows/cpu-linux.yml)
-  defines mandatory clean Linux GCC and Clang CPU-only jobs. The workflow file
-  is reviewable configuration, not execution evidence; neither job ran in this
-  local task.
+  defines mandatory clean Linux GCC and Clang CPU-only jobs and uses
+  `actions/checkout@v7`. The workflow file is reviewable configuration, not
+  execution evidence; neither job ran in this local task.
 
-The clean review-remediation commands run from the repository root were:
+The clean second-review commands run from the repository root were:
 
 ```bash
 PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
   /usr/local/bin/cmake -S . \
-  -B /tmp/gpu-library-suite-local-build/review-final-gate-1 \
+  -B /tmp/gpu-library-suite-local-build/second-review-final \
   -DCMAKE_BUILD_TYPE=Release \
   -DGPU_SUITE_BUILD_CPU=ON \
   -DGPU_SUITE_BUILD_CUDA=OFF \
   -DGPU_SUITE_BUILD_OPENACC=OFF \
   -DGPU_SUITE_BUILD_TESTS=ON \
+  -DGPU_SUITE_BUILD_EXAMPLES=OFF \
+  -DGPU_SUITE_BUILD_BENCHMARKS=ON \
   -DPython3_EXECUTABLE=/usr/bin/python3
 /usr/local/bin/cmake --build \
-  /tmp/gpu-library-suite-local-build/review-final-gate-1 --parallel 8
+  /tmp/gpu-library-suite-local-build/second-review-final --parallel 8
 /usr/local/bin/ctest --test-dir \
-  /tmp/gpu-library-suite-local-build/review-final-gate-1 \
+  /tmp/gpu-library-suite-local-build/second-review-final \
   --output-on-failure --parallel 8
-/usr/bin/python3 tools/check_python39.py .
-PYTHONPYCACHEPREFIX=/tmp/gpu-library-suite-local-build/review-final-pycache \
+PYTHONPYCACHEPREFIX=/tmp/gpu-library-suite-local-build/second-review-final/standalone-pycache \
+  /usr/bin/python3 tools/check_python39.py .
+PYTHONPYCACHEPREFIX=/tmp/gpu-library-suite-local-build/second-review-final/compileall-pycache \
   /usr/bin/python3 -m compileall -q common tools jobs tests
-bash -n jobs/pegasus/build_cpu_cuda.sh
-bash -n jobs/pegasus/build_openacc.sh
-bash -n jobs/pegasus/run_node.sh
-bash -n jobs/pegasus/run_benchmarks.pbs.in
-/usr/local/bin/shellcheck jobs/pegasus/build_cpu_cuda.sh
-/usr/local/bin/shellcheck jobs/pegasus/build_openacc.sh
-/usr/local/bin/shellcheck jobs/pegasus/run_node.sh
+bash -n jobs/pegasus/build_cpu_cuda.sh jobs/pegasus/build_openacc.sh \
+  jobs/pegasus/run_node.sh jobs/pegasus/run_benchmarks.pbs.in
+/usr/local/bin/shellcheck jobs/pegasus/build_cpu_cuda.sh \
+  jobs/pegasus/build_openacc.sh jobs/pegasus/run_node.sh
 /usr/bin/c++ -std=c++17 -Wall -Wextra -Wpedantic \
   nvidia/c-cpp/curand/examples/rand_cpu.cpp \
-  -o /tmp/gpu-library-suite-local-build/review-final-gate-1/manual/rand_cpu
-/tmp/gpu-library-suite-local-build/review-final-gate-1/manual/rand_cpu
+  -o /tmp/gpu-library-suite-local-build/second-review-final/manual/rand_cpu
+/tmp/gpu-library-suite-local-build/second-review-final/manual/rand_cpu
 /usr/bin/c++ -std=c++17 -Wall -Wextra -Wpedantic \
   nvidia/c-cpp/thrust/examples/reduce_cpu.cpp \
-  -o /tmp/gpu-library-suite-local-build/review-final-gate-1/manual/reduce_cpu
-/tmp/gpu-library-suite-local-build/review-final-gate-1/manual/reduce_cpu
+  -o /tmp/gpu-library-suite-local-build/second-review-final/manual/reduce_cpu
+/tmp/gpu-library-suite-local-build/second-review-final/manual/reduce_cpu
 git diff --check
 ```
 

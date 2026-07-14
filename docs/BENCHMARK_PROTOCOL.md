@@ -167,6 +167,25 @@ or log file and starts no benchmark subprocess.
 Ambiguous, incomplete, or contradictory dimension arguments are errors. No
 option silently overrides another.
 
+### Dynamic-size and overflow contract
+
+Every runtime dimension is validated before allocation or conversion to a
+classic library API integer. A benchmark uses checked conversion from the CLI's
+unsigned representation to `int` and `size_t`, checked dimension products,
+checked additions such as the CSR row-offset count, and checked
+element-count-to-byte calculations. cuFFT length/batch, cuBLAS dimensions,
+cuSPARSE `n`/`nnz` with its current 32-bit index mode, and cuSOLVER
+`n`/`nrhs`/workspace counts must fit every API type they reach. cuRAND and
+Thrust counts must fit both `size_t` and the selected host container's
+`max_size()`.
+
+No dimension, index count, or byte count may wrap or be silently truncated.
+An out-of-range request produces an API-named diagnostic and a schema-valid
+prerequisite or started benchmark failure row according to whether execution
+had begun. Allocation and length-related C++ exceptions are handled explicitly;
+they do not terminate the process without a result when a valid row can still
+be emitted.
+
 ## Configuration scope and initial calibration
 
 Each benchmark configuration contains normalized cases. A case has one
@@ -414,6 +433,17 @@ run one measured trial
 The first trial is restored even though warm-up restoration just occurred. No
 trial may inherit the final state of a preceding trial.
 
+Warm-up exercises the same scope-specific pipeline selected for measurement.
+For compute scope, create the persistent plan, handle, descriptor, generator,
+device allocation, and workspace first; run the compute operation exactly
+`warmup` times; restore canonical state; and measure trials with that same
+persistent context. For end-to-end scope, do not create or retain a compute-only
+persistent context. Instead run exactly `warmup` complete temporary pipelines,
+each containing the scope's allocation, setup, transfer, operation, result
+retrieval, and complete cleanup. No warm-up handle, descriptor, generator,
+workspace, device allocation, or device container remains alive when the first
+end-to-end trial starts.
+
 In compute scope, operations within one trial's repeat loop may update C or y
 successively. Verification accounts for all `repeat` updates, but C/y are reset
 before the next raw trial. In end-to-end scope, restore host-side inputs and
@@ -474,6 +504,15 @@ There is no scalar form of the metrics or thresholds. A nonfinite metric is
 represented as null with `verification_status = nonfinite`, overall
 `status = failure`, and a diagnostic message. Any verification failure remains
 in raw results but is excluded from performance aggregation.
+
+Verification checks every raw output, intermediate error/residual, and norm for
+finiteness before passing it to `fmax`, `std::max`, or another reduction.
+Neither `fmax` nor `std::max` is a NaN detector. Finite values within threshold
+pass; finite values outside threshold fail verification; NaN or either infinity
+always produces a nonfinite verification failure. Failure to allocate a JSON
+verification object or insert a required metric/threshold is a fatal result-
+construction/benchmark error, not a numerical verification failure and never a
+partial success record.
 
 ### cuFFT
 

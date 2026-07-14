@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <new>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -39,10 +40,10 @@ void destroy_context(RandomContext &context) {
   context = RandomContext{};
 }
 
-bool create_context(RandomContext &context, std::size_t count,
+bool create_context(RandomContext &context, std::size_t bytes,
                     const gpu_suite_options &options) {
   return cuda_success(cudaMalloc(reinterpret_cast<void **>(&context.values),
-                                 count * sizeof(double)),
+                                 bytes),
                       "cudaMalloc random output") &&
          curand_success(curandCreateGenerator(&context.generator,
                                               CURAND_RNG_PSEUDO_DEFAULT),
@@ -64,6 +65,41 @@ bool reset_generator(RandomContext &context, const gpu_suite_options &options) {
              "reset generator offset");
 }
 
+bool run_end_to_end_pipeline(
+    const gpu_suite_options &options, std::size_t count, std::size_t bytes,
+    std::vector<double> &values, int repeat_index, bool measure,
+    char start_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY],
+    char end_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY], char *error,
+    std::size_t error_size, double *elapsed_total) {
+  RandomContext context;
+  struct timespec start;
+  struct timespec end;
+  bool ok = !measure ||
+            (repeat_index == 0
+                 ? gpu_suite_measurement_start(start_timestamp, &start, error,
+                                               error_size)
+                 : gpu_suite_clock_now(&start, error, error_size)) ==
+                GPU_SUITE_OK;
+  ok = ok && create_context(context, bytes, options) &&
+       curand_success(curandGenerateUniformDouble(context.generator,
+                                                  context.values, count),
+                      "curandGenerateUniformDouble") &&
+       cuda_success(cudaDeviceSynchronize(), "generation synchronize") &&
+       cuda_success(cudaMemcpy(values.data(), context.values, bytes,
+                               cudaMemcpyDeviceToHost),
+                    "copy random output");
+  if (ok && measure) {
+    ok = (repeat_index + 1 == options.repeat
+              ? gpu_suite_measurement_end(&end, end_timestamp, error,
+                                          error_size)
+              : gpu_suite_clock_now(&end, error, error_size)) == GPU_SUITE_OK;
+    if (ok)
+      *elapsed_total += gpu_suite_clock_elapsed(&start, &end);
+  }
+  destroy_context(context);
+  return ok;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -82,36 +118,69 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   std::size_t count = 0;
-  if (!gpu_suite_checked_u64_to_size(options.size, &count)) {
-    std::fprintf(stderr, "size does not fit host representation\n");
-    return EXIT_FAILURE;
-  }
-
   gpu_suite::ResultWriter writer;
   if (!writer.open(options))
     return EXIT_FAILURE;
+  std::size_t bytes = 0;
+  if (!gpu_suite_checked_u64_to_size(options.size, &count) ||
+      !gpu_suite_checked_bytes(count, sizeof(double), &bytes)) {
+    std::fprintf(stderr, "random output size or byte count is unsupported\n");
+    gpu_suite::emit_unmeasured(
+        writer, options, 0, false, "prerequisite",
+        "random output size exceeds host integer or byte range");
+    (void)writer.close();
+    return EXIT_FAILURE;
+  }
   bool any_failure = false;
   try {
     std::vector<double> values(count);
     RandomContext persistent;
-    if (!cuda_success(cudaSetDevice(options.device), "cudaSetDevice") ||
-        !create_context(persistent, count, options)) {
+    if (!cuda_success(cudaSetDevice(options.device), "cudaSetDevice")) {
       gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
                                  "cuRAND setup failed");
       destroy_context(persistent);
       writer.close();
       return EXIT_FAILURE;
     }
-    for (int warmup = 0; warmup < options.warmup; ++warmup) {
-      if (!curand_success(curandGenerateUniformDouble(persistent.generator,
-                                                      persistent.values, count),
-                          "cuRAND warmup") ||
-          !cuda_success(cudaDeviceSynchronize(), "warmup synchronize")) {
+    if (options.scope == GPU_SUITE_SCOPE_COMPUTE) {
+      if (!create_context(persistent, bytes, options)) {
         gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
-                                   "cuRAND warmup failed");
+                                   "cuRAND compute setup failed");
         destroy_context(persistent);
         writer.close();
         return EXIT_FAILURE;
+      }
+      for (int warmup = 0; warmup < options.warmup; ++warmup) {
+        if (!curand_success(
+                curandGenerateUniformDouble(persistent.generator,
+                                            persistent.values, count),
+                "cuRAND warmup") ||
+            !cuda_success(cudaDeviceSynchronize(), "warmup synchronize")) {
+          gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
+                                     "cuRAND warmup failed");
+          destroy_context(persistent);
+          writer.close();
+          return EXIT_FAILURE;
+        }
+      }
+      if (!reset_generator(persistent, options)) {
+        gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
+                                   "cuRAND state restoration failed");
+        destroy_context(persistent);
+        writer.close();
+        return EXIT_FAILURE;
+      }
+    } else {
+      for (int warmup = 0; warmup < options.warmup; ++warmup) {
+        if (!run_end_to_end_pipeline(options, count, bytes, values, 0, false,
+                                     nullptr, nullptr, error, sizeof(error),
+                                     nullptr)) {
+          gpu_suite::emit_unmeasured(
+              writer, options, 0, true, "benchmark",
+              "cuRAND end-to-end warmup failed");
+          writer.close();
+          return EXIT_FAILURE;
+        }
       }
     }
 
@@ -147,37 +216,15 @@ int main(int argc, char **argv) {
         if (ok) {
           elapsed_total = gpu_suite_clock_elapsed(&start, &end);
           ok = cuda_success(cudaMemcpy(values.data(), persistent.values,
-                                       count * sizeof(double),
+                                       bytes,
                                        cudaMemcpyDeviceToHost),
                             "copy random output");
         }
       } else {
         for (int repeat = 0; repeat < options.repeat && ok; ++repeat) {
-          RandomContext current;
-          ok =
-              (repeat == 0
-                   ? gpu_suite_measurement_start(start_timestamp, &start,
-                                                 error, sizeof(error))
-                   : gpu_suite_clock_now(&start, error, sizeof(error))) ==
-                  GPU_SUITE_OK &&
-              create_context(current, count, options) &&
-              curand_success(curandGenerateUniformDouble(current.generator,
-                                                         current.values, count),
-                             "curandGenerateUniformDouble") &&
-              cuda_success(cudaDeviceSynchronize(), "generation synchronize") &&
-              cuda_success(cudaMemcpy(values.data(), current.values,
-                                      count * sizeof(double),
-                                      cudaMemcpyDeviceToHost),
-                           "copy random output");
-          if (ok)
-            ok = (repeat + 1 == options.repeat
-                      ? gpu_suite_measurement_end(&end, end_timestamp, error,
-                                                  sizeof(error))
-                      : gpu_suite_clock_now(&end, error, sizeof(error))) ==
-                 GPU_SUITE_OK;
-          if (ok)
-            elapsed_total += gpu_suite_clock_elapsed(&start, &end);
-          destroy_context(current);
+          ok = run_end_to_end_pipeline(
+              options, count, bytes, values, repeat, true, start_timestamp,
+              end_timestamp, error, sizeof(error), &elapsed_total);
         }
       }
 
@@ -188,14 +235,26 @@ int main(int argc, char **argv) {
             gpu_suite_optional_double_value(elapsed_total);
         result.elapsed_sec =
             gpu_suite_optional_double_value(elapsed_total / options.repeat);
-        const bool pass = gpu_suite_curand::set_random_verification(
-            result, options, values, "CURAND_RNG_PSEUDO_DEFAULT", "(0,1]");
+        const gpu_suite::VerificationOutcome outcome =
+            gpu_suite_curand::set_random_verification(
+                result, options, values, "CURAND_RNG_PSEUDO_DEFAULT",
+                "(0,1]");
+        const bool constructed =
+            outcome != gpu_suite::VerificationOutcome::construction_error;
+        const bool pass = outcome == gpu_suite::VerificationOutcome::pass;
         result.attempted = true;
-        result.failure_origin = pass ? nullptr : "verification";
+        result.failure_origin =
+            pass ? nullptr : (constructed ? "verification" : "benchmark");
+        if (!constructed)
+          result.verification_status = "skipped";
         result.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
         result.status = pass ? "success" : "failure";
-        result.message = pass ? "" : "cuRAND statistical verification failed";
+        result.message =
+            pass ? ""
+                 : (constructed ? "cuRAND statistical verification failed"
+                                : "verification result construction failed");
         any_failure = any_failure || !pass;
+        ok = ok && constructed;
       } else {
         result.attempted = true;
         result.failure_origin = "benchmark";
@@ -218,6 +277,10 @@ int main(int argc, char **argv) {
       }
     }
     destroy_context(persistent);
+  } catch (const std::length_error &) {
+    gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
+                               "host vector size exceeds max_size");
+    any_failure = true;
   } catch (const std::bad_alloc &) {
     gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
                                "host allocation failed");

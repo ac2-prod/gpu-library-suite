@@ -1,4 +1,5 @@
 #include "gpu_suite/benchmark.hpp"
+#include "reduce_bench_common.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -6,6 +7,7 @@
 #include <functional>
 #include <new>
 #include <numeric>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -44,11 +46,20 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   std::size_t count = 0;
-  if (!gpu_suite_checked_u64_to_size(options.size, &count))
-    return EXIT_FAILURE;
   gpu_suite::ResultWriter writer;
   if (!writer.open(options))
     return EXIT_FAILURE;
+  std::size_t bytes = 0;
+  if (!gpu_suite_checked_u64_to_size(options.size, &count) ||
+      !gpu_suite_checked_bytes(count, sizeof(double), &bytes)) {
+    (void)bytes;
+    std::fprintf(stderr, "reduction size or byte count is unsupported\n");
+    (void)gpu_suite::emit_unmeasured(
+        writer, options, 0, false, "prerequisite",
+        "reduction size exceeds host integer or byte range");
+    (void)writer.close();
+    return EXIT_FAILURE;
+  }
   bool any_failure = false;
   try {
     const std::vector<double> values(count, 1.0);
@@ -98,37 +109,25 @@ int main(int argc, char **argv) {
         result.elapsed_total_sec = gpu_suite_optional_double_value(elapsed);
         result.elapsed_sec =
             gpu_suite_optional_double_value(elapsed / options.repeat);
-        gpu_suite_json_free(result.verification_metrics);
-        gpu_suite_json_free(result.verification_thresholds);
-        result.verification_metrics = gpu_suite_json_object();
-        result.verification_thresholds = gpu_suite_json_object();
-        const double expected = static_cast<double>(count);
-        const double absolute_error = std::fabs(value - expected);
-        gpu_suite::json_add_double(result.verification_metrics,
-                                   "absolute_error", absolute_error);
-        gpu_suite_json_value *threshold = gpu_suite_json_object();
-        gpu_suite::json_add_string(threshold, "method",
-                                   "absolute-plus-relative");
-        gpu_suite::json_add_double(threshold, "reference_scale", expected);
-        gpu_suite::json_add_double(threshold, "abs_tolerance",
-                                   options.abs_tolerance);
-        gpu_suite::json_add_double(threshold, "rel_tolerance",
-                                   options.rel_tolerance);
-        gpu_suite_json_object_set(result.verification_thresholds,
-                                  "absolute_error", threshold);
-        result.verification_primary_metric = "absolute_error";
-        const bool pass =
-            !options.verify ||
-            absolute_error <=
-                options.abs_tolerance + options.rel_tolerance * expected;
-        result.verification_status =
-            options.verify ? (pass ? "pass" : "failure") : "skipped";
+        const gpu_suite::VerificationOutcome outcome =
+            gpu_suite_thrust::set_reduction_verification(result, options,
+                                                          value, count);
+        const bool constructed =
+            outcome != gpu_suite::VerificationOutcome::construction_error;
+        const bool pass = outcome == gpu_suite::VerificationOutcome::pass;
         result.attempted = true;
-        result.failure_origin = pass ? nullptr : "verification";
+        result.failure_origin =
+            pass ? nullptr : (constructed ? "verification" : "benchmark");
+        if (!constructed)
+          result.verification_status = "skipped";
         result.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
         result.status = pass ? "success" : "failure";
-        result.message = pass ? "" : "transform-reduce verification failed";
+        result.message =
+            pass ? ""
+                 : (constructed ? "transform-reduce verification failed"
+                                : "verification result construction failed");
         any_failure = any_failure || !pass;
+        ok = ok && constructed;
       } else {
         result.attempted = true;
         result.failure_origin = "benchmark";
@@ -150,6 +149,11 @@ int main(int argc, char **argv) {
         break;
       }
     }
+  } catch (const std::length_error &) {
+    (void)gpu_suite::emit_unmeasured(
+        writer, options, 0, true, "benchmark",
+        "host vector size exceeds max_size");
+    any_failure = true;
   } catch (const std::bad_alloc &) {
     (void)gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
                                      "host allocation failed");

@@ -33,6 +33,24 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
 endif()
 add_test(NAME test_cpp_compat COMMAND test_cpp_compat)
 
+add_executable(test_verification_nonfinite c/test_verification_nonfinite.cpp)
+target_link_libraries(test_verification_nonfinite PRIVATE gpu_suite::common)
+target_include_directories(test_verification_nonfinite PRIVATE
+  "${CMAKE_SOURCE_DIR}/nvidia/c-cpp/cufft/benchmarks"
+  "${CMAKE_SOURCE_DIR}/nvidia/c-cpp/curand/benchmarks"
+  "${CMAKE_SOURCE_DIR}/nvidia/c-cpp/cusolver/benchmarks"
+  "${CMAKE_SOURCE_DIR}/nvidia/c-cpp/cusparse/benchmarks"
+  "${CMAKE_SOURCE_DIR}/nvidia/c-cpp/thrust/benchmarks")
+set_target_properties(test_verification_nonfinite PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED YES
+  CXX_EXTENSIONS NO)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+  target_compile_options(test_verification_nonfinite PRIVATE
+    -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+endif()
+add_test(NAME test_verification_nonfinite COMMAND test_verification_nonfinite)
+
 set(_gpu_suite_fixture_root "${CMAKE_BINARY_DIR}/test-fixtures")
 set(_gpu_suite_fixture_pycache "${_gpu_suite_fixture_root}/pycache")
 

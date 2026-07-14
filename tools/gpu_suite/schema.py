@@ -124,6 +124,36 @@ def _finite_nonnegative(value: Any) -> bool:
     )
 
 
+def _safe_hostname_component(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and value not in {"", ".", ".."}
+        and "/" not in value
+        and "\\" not in value
+        and not any(ord(character) < 32 or ord(character) == 127
+                    for character in value)
+    )
+
+
+def _require_finite_json_numbers(value: Any, path: str) -> None:
+    if value is None or isinstance(value, (str, bool, int)):
+        return
+    if isinstance(value, float):
+        _require(math.isfinite(value), "nonfinite number at {0}".format(path))
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _require_finite_json_numbers(item, "{0}[{1}]".format(path, index))
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _require(isinstance(key, str),
+                     "non-string JSON key at {0}".format(path))
+            _require_finite_json_numbers(item, "{0}.{1}".format(path, key))
+        return
+    raise SchemaError("non-JSON value at {0}".format(path))
+
+
 def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
     """Validate one exact schema-v1 raw record and return a plain copy."""
 
@@ -152,6 +182,8 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
     for name in ("system_label", "hostname", "compiler", "compiler_version",
                  "global_configure_flags", "library_name", "message"):
         _require(isinstance(record[name], str), "{0} must be a string".format(name))
+    _require(_safe_hostname_component(record["hostname"]),
+             "hostname must be a safe directory component")
     for name in ("wave", "node_index", "warmup", "repeat", "trial"):
         _require(_is_integer(record[name]) and record[name] >= 0,
                  "invalid {0}".format(name))
@@ -168,9 +200,12 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
     _require(record["implementation"] in IMPLEMENTATIONS,
              "invalid implementation")
     _require(record["scope"] in SCOPES, "invalid scope")
-    _require(_optional_integer(record["problem_size"]) and
-             _optional_integer(record["secondary_size"]), "invalid size")
+    for name in ("problem_size", "secondary_size"):
+        value = record[name]
+        _require(value is None or (_is_integer(value) and value > 0),
+                 "invalid {0}".format(name))
     _require(isinstance(record["parameters"], dict), "parameters must be an object")
+    _require_finite_json_numbers(record["parameters"], "parameters")
     _require(isinstance(record["precision"], str), "precision must be a string")
     for name in ("cpu_backend", "cpu_backend_role", "cpu_parallelism",
                  "verification_primary_metric", "gpu_name", "gpu_uuid",
@@ -181,6 +216,8 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
     for name in ("cpu_threads_requested", "cpu_threads_effective", "getrf_info",
                  "getrs_info", "device_id", "exit_code"):
         _require(_optional_integer(record[name]), "invalid {0}".format(name))
+    _require(record["device_id"] is None or record["device_id"] >= 0,
+             "device_id must be non-negative or null")
     if record["implementation"] == "cpu":
         _require(isinstance(record["cpu_backend"], str) and
                  record["cpu_backend"] != "", "CPU backend is required")
@@ -226,9 +263,27 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
     _require(isinstance(record["verification_metrics"], dict) and
              isinstance(record["verification_thresholds"], dict),
              "verification fields must be objects")
+    _require_finite_json_numbers(record["verification_metrics"],
+                                 "verification_metrics")
+    _require_finite_json_numbers(record["verification_thresholds"],
+                                 "verification_thresholds")
+    for metric_name, metric_value in record["verification_metrics"].items():
+        _require(metric_value is None or
+                 (isinstance(metric_value, (int, float)) and
+                  not isinstance(metric_value, bool) and
+                  math.isfinite(float(metric_value))),
+                 "invalid verification metric {0}".format(metric_name))
     _require(record["verification_status"] in
              {"pass", "failure", "skipped", "nonfinite"},
              "invalid verification_status")
+    primary_metric = record["verification_primary_metric"]
+    _require(primary_metric is None or
+             primary_metric in record["verification_metrics"],
+             "verification primary metric is absent from metrics")
+    if record["verification_status"] == "nonfinite":
+        _require(primary_metric is not None and
+                 record["verification_metrics"][primary_metric] is None,
+                 "nonfinite verification requires a null primary metric")
     available = record["git_metadata_available"]
     _require(isinstance(available, bool),
              "git_metadata_available must be boolean")
@@ -257,6 +312,8 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
         _require(record["elapsed_total_sec"] is not None, "success requires timing")
         _require(record["exit_code"] == 0, "success exit_code must be zero")
         _require(record["message"] == "", "success message must be empty")
+        _require(record["verification_status"] in {"pass", "skipped"},
+                 "success has invalid verification status")
     elif status == "failure":
         _require(record["attempted"] and origin is not None,
                  "failure must be attempted with an origin")
@@ -273,6 +330,12 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
                  "skipped trial cannot contain execution data")
         _require(record["verification_status"] == "skipped",
                  "skipped trial verification must be skipped")
+    if (origin == "verification" or
+            record["verification_status"] in {"failure", "nonfinite"}):
+        _require(status == "failure" and record["attempted"] and
+                 origin == "verification" and
+                 record["verification_status"] in {"failure", "nonfinite"},
+                 "inconsistent verification failure state")
     if record["benchmark"] == "cusolver":
         _require(record["repeat"] == 1, "cuSOLVER repeat must be one")
     return dict(record)

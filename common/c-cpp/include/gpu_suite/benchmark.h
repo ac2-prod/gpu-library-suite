@@ -38,6 +38,14 @@ int gpu_suite_json_add_int(gpu_suite_json_value *object, const char *key,
                            int64_t value);
 int gpu_suite_json_add_string(gpu_suite_json_value *object, const char *key,
                               const char *value);
+int gpu_suite_json_add_null(gpu_suite_json_value *object, const char *key);
+int gpu_suite_verification_reset(gpu_suite_result *result);
+int gpu_suite_verification_add_absolute_relative_threshold(
+    gpu_suite_result *result, const char *metric, double reference_scale,
+    double abs_tolerance, double rel_tolerance);
+int gpu_suite_verification_add_upper_bound_threshold(
+    gpu_suite_result *result, const char *metric, const char *method,
+    double upper_bound);
 
 #ifdef __cplusplus
 }

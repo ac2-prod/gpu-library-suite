@@ -420,7 +420,9 @@ def synthetic_result(
         "verification_metrics": {},
         "verification_thresholds": {},
         "verification_primary_metric": None,
-        "verification_status": "skipped",
+        "verification_status": (
+            "failure" if attempted and origin == "verification" else "skipped"
+        ),
         "getrf_info": None,
         "getrs_info": None,
         "device_id": context["device"] if series["implementation"] != "cpu" else None,
@@ -450,47 +452,328 @@ def synthetic_result(
     return validate_raw_result(record)
 
 
-def _core_parameters_match(
-    benchmark: str, expected: Mapping[str, Any], actual: Mapping[str, Any]
-) -> bool:
-    normalized = normalized_parameters(benchmark, expected)
-    try:
-        selected = core_raw_parameters(benchmark, actual)
-    except RunnerError:
-        return False
-    return selected == normalized
+def expected_raw_parameters(
+    benchmark: str, parameters: Mapping[str, Any], implementation: str,
+) -> Dict[str, Any]:
+    """Reconstruct the exact parameter object a selected executable must emit."""
+
+    expected = normalized_parameters(benchmark, parameters)
+    if benchmark == "curand":
+        expected = dict(expected)
+        expected["verification_sample_count"] = expected["size"]
+        if implementation == "cpu":
+            expected["cpu_engine"] = "std::mt19937_64"
+            expected["distribution_interval"] = "[0,1)"
+        else:
+            expected["generator_algorithm"] = "CURAND_RNG_PSEUDO_DEFAULT"
+            expected["distribution_interval"] = "(0,1]"
+    return expected
+
+
+def _absolute_plus_relative(
+    reference_scale: float, verification: Mapping[str, Any]
+) -> Dict[str, Any]:
+    return {
+        "method": "absolute-plus-relative",
+        "reference_scale": reference_scale,
+        "abs_tolerance": verification["abs_tolerance"],
+        "rel_tolerance": verification["rel_tolerance"],
+    }
+
+
+def _expected_verification(
+    item: Mapping[str, Any], context: Mapping[str, Any]
+) -> Tuple[Dict[str, Any], Tuple[str, ...], str]:
+    benchmark = item["benchmark"]
+    parameters = normalized_parameters(benchmark, item["parameters"])
+    verification = context["config"]["benchmarks"][benchmark]["verification"]
+    repeat = item["scope_settings"]["repeat"]
+    updates = repeat if item["scope"] == "compute" else 1
+    if benchmark == "cufft":
+        return (
+            {
+                "dc_relative_error": {
+                    "method": "relative-upper-bound",
+                    "upper_bound": verification["rel_tolerance"],
+                },
+                "non_dc_max_abs_error": {
+                    "method": "absolute-upper-bound",
+                    "upper_bound": verification["abs_tolerance"],
+                },
+            },
+            ("dc_relative_error", "non_dc_max_abs_error"),
+            "non_dc_max_abs_error",
+        )
+    if benchmark == "cublas":
+        expected = 1.0
+        for _ in range(updates):
+            expected = (
+                parameters["alpha"] * parameters["k"]
+                + parameters["beta"] * expected
+            )
+        return (
+            {"max_abs_error": _absolute_plus_relative(abs(expected), verification)},
+            ("max_abs_error",),
+            "max_abs_error",
+        )
+    if benchmark == "cusparse":
+        def neighbor_contributions(length: int) -> Tuple[int, ...]:
+            if length == 1:
+                return (0,)
+            if length == 2:
+                return (1,)
+            return (1, 2)
+
+        horizontal = neighbor_contributions(parameters["nx"])
+        vertical = neighbor_contributions(parameters["ny"])
+        bases = tuple(
+            float(4 - horizontal_count - vertical_count)
+            for horizontal_count in horizontal
+            for vertical_count in vertical
+        )
+        reference_scale = 0.0
+        for base in bases:
+            expected = 1.0
+            for _ in range(updates):
+                expected = (
+                    parameters["alpha"] * base
+                    + parameters["beta"] * expected
+                )
+            reference_scale = max(reference_scale, abs(expected))
+        return (
+            {
+                "max_abs_error": _absolute_plus_relative(
+                    reference_scale, verification
+                )
+            },
+            ("max_abs_error",),
+            "max_abs_error",
+        )
+    if benchmark == "cusolver":
+        threshold = _absolute_plus_relative(1.0, verification)
+        return (
+            {
+                "solution_relative_error": dict(threshold),
+                "relative_residual": dict(threshold),
+            },
+            ("solution_relative_error", "relative_residual"),
+            "relative_residual",
+        )
+    if benchmark == "curand":
+        count = float(parameters["size"])
+        sigma = verification["sigma_multiplier"]
+        interval = (
+            "[0,1)" if item["series"]["implementation"] == "cpu" else "(0,1]"
+        )
+        return (
+            {
+                "observed_range": {
+                    "method": "inclusive-range",
+                    "lower_bound": 0.0,
+                    "upper_bound": 1.0,
+                    "backend_interval": interval,
+                },
+                "sample_mean": {
+                    "method": "uniform-mean-sigma-bound",
+                    "expected_mean": verification["expected_mean"],
+                    "sigma_multiplier": sigma,
+                    "absolute_bound": sigma * math.sqrt(1.0 / (12.0 * count)),
+                },
+                "second_central_moment_about_half": {
+                    "method": "uniform-second-central-moment-sigma-bound",
+                    "expected_second_central_moment": verification[
+                        "expected_second_central_moment"
+                    ],
+                    "sigma_multiplier": sigma,
+                    "absolute_bound": sigma * math.sqrt(1.0 / (180.0 * count)),
+                },
+            },
+            (
+                "observed_min",
+                "observed_max",
+                "sample_mean",
+                "second_central_moment_about_half",
+            ),
+            "sample_mean",
+        )
+    if benchmark == "thrust":
+        return (
+            {
+                "absolute_error": _absolute_plus_relative(
+                    float(parameters["size"]), verification
+                )
+            },
+            ("absolute_error",),
+            "absolute_error",
+        )
+    raise RunnerError("unknown benchmark verification family")
+
+
+def _threshold_values_match(expected: Any, actual: Any) -> bool:
+    if isinstance(expected, dict):
+        return (
+            isinstance(actual, dict)
+            and set(actual) == set(expected)
+            and all(
+                _threshold_values_match(expected[name], actual[name])
+                for name in expected
+            )
+        )
+    if isinstance(expected, float):
+        return (
+            isinstance(actual, (int, float))
+            and not isinstance(actual, bool)
+            and math.isfinite(float(actual))
+            and math.isclose(float(actual), expected, rel_tol=1e-15, abs_tol=0.0)
+        )
+    return actual == expected
+
+
+def _validate_exact_config_threshold_operands(
+    validated: Mapping[str, Any], item: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> None:
+    """Require configuration-owned operands to survive stdout exactly.
+
+    Derived reference scales and statistical bounds may differ by a final
+    host-library rounding step, so the structural comparison above permits a
+    one-ulp-scale tolerance for those values.  Values copied directly from the
+    effective configuration do not need that tolerance and must compare equal.
+    """
+
+    benchmark = item["benchmark"]
+    actual = validated["verification_thresholds"]
+    verification = context["config"]["benchmarks"][benchmark]["verification"]
+    operands = []  # type: List[Tuple[str, str, Any]]
+    if benchmark == "cufft":
+        operands.extend((
+            ("dc_relative_error", "upper_bound",
+             verification["rel_tolerance"]),
+            ("non_dc_max_abs_error", "upper_bound",
+             verification["abs_tolerance"]),
+        ))
+    elif benchmark in {"cublas", "cusparse"}:
+        operands.extend((
+            ("max_abs_error", "abs_tolerance",
+             verification["abs_tolerance"]),
+            ("max_abs_error", "rel_tolerance",
+             verification["rel_tolerance"]),
+        ))
+    elif benchmark == "cusolver":
+        for metric in ("solution_relative_error", "relative_residual"):
+            operands.extend((
+                (metric, "abs_tolerance", verification["abs_tolerance"]),
+                (metric, "rel_tolerance", verification["rel_tolerance"]),
+            ))
+    elif benchmark == "curand":
+        operands.extend((
+            ("observed_range", "lower_bound", 0.0),
+            ("observed_range", "upper_bound", 1.0),
+            ("sample_mean", "expected_mean", verification["expected_mean"]),
+            ("sample_mean", "sigma_multiplier",
+             verification["sigma_multiplier"]),
+            ("second_central_moment_about_half",
+             "expected_second_central_moment",
+             verification["expected_second_central_moment"]),
+            ("second_central_moment_about_half", "sigma_multiplier",
+             verification["sigma_multiplier"]),
+        ))
+    elif benchmark == "thrust":
+        operands.extend((
+            ("absolute_error", "abs_tolerance",
+             verification["abs_tolerance"]),
+            ("absolute_error", "rel_tolerance",
+             verification["rel_tolerance"]),
+        ))
+    else:
+        raise RunnerError("unknown benchmark verification family")
+
+    for metric, operand, expected in operands:
+        if actual[metric][operand] != expected:
+            raise RunnerError(
+                "subprocess record verification threshold operand mismatch: "
+                "{0}.{1}".format(metric, operand)
+            )
+
+
+def _validate_verification(
+    validated: Mapping[str, Any], item: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> None:
+    if validated["verification_status"] == "skipped":
+        if validated["status"] == "success":
+            raise RunnerError("subprocess skipped requested verification")
+        if (
+            validated["verification_metrics"] != {}
+            or validated["verification_thresholds"] != {}
+            or validated["verification_primary_metric"] is not None
+        ):
+            raise RunnerError("skipped verification contains verification data")
+        return
+    thresholds, metric_names, primary = _expected_verification(item, context)
+    if not _threshold_values_match(
+        thresholds, validated["verification_thresholds"]
+    ):
+        raise RunnerError("subprocess record verification thresholds mismatch")
+    _validate_exact_config_threshold_operands(validated, item, context)
+    if set(validated["verification_metrics"]) != set(metric_names):
+        raise RunnerError("subprocess record verification metrics mismatch")
+    if validated["verification_primary_metric"] != primary:
+        raise RunnerError("subprocess record verification primary metric mismatch")
 
 
 def validate_subprocess_record(
     record: Mapping[str, Any], item: Mapping[str, Any], context: Mapping[str, Any],
     config_sha256: str, runtime_environment_sha256: str,
+    git_diff_sha256: Optional[str], source_snapshot_sha256: Optional[str],
 ) -> Dict[str, Any]:
     validated = validate_raw_result(record)
     entry = item["entry"]
     series = item["series"]
+    benchmark = item["benchmark"]
+    primary_size, secondary_size = problem_sizes(benchmark, item["parameters"])
+    cpu = series["implementation"] == "cpu"
+    expected_git_diff = git_diff_sha256 if entry["git_dirty"] is True else None
+    expected_source_snapshot = (
+        source_snapshot_sha256 if entry["git_dirty"] is True else None
+    )
     expected_values = {
         "run_id": context["run_id"],
         "system_label": context["system_label"],
         "wave": context["wave"],
         "node_index": context["node_index"],
         "hostname": context["hostname"],
+        "block_id": "{0}|{1}|{2}".format(
+            context["run_id"], context["wave"], context["hostname"]
+        ),
+        "scheduler": context["scheduler"],
+        "scheduler_job_id": context["scheduler_job_id"],
         "implementation_order": list(context["implementation_order"]),
-        "benchmark": item["benchmark"],
+        "benchmark": benchmark,
         "implementation": series["implementation"],
         "scope": item["scope"],
+        "problem_size": primary_size,
+        "secondary_size": secondary_size,
+        "parameters": expected_raw_parameters(
+            benchmark, item["parameters"], series["implementation"]
+        ),
+        "precision": context["config"]["benchmarks"][benchmark]["precision"],
         "warmup": item["scope_settings"]["warmup"],
         "repeat": item["scope_settings"]["repeat"],
-        "cpu_backend": series["cpu_backend"],
-        "cpu_backend_role": series["cpu_backend_role"],
+        "cpu_backend": series["cpu_backend"] if cpu else None,
+        "cpu_backend_role": series["cpu_backend_role"] if cpu else None,
         "series_role": series["series_role"],
+        "cpu_threads_requested": context["cpu_threads"] if cpu else None,
         "cpu_threads_effective": (
             series["cpu_threads_effective"]
-            if series["implementation"] == "cpu" else None
+            if cpu else None
         ),
         "cpu_parallelism": (
             series["cpu_parallelism"]
-            if series["implementation"] == "cpu" else None
+            if cpu else None
         ),
+        "device_id": None if cpu else context["device"],
+        "library_name": series["cpu_backend"] if cpu else benchmark,
         "config_sha256": config_sha256,
         "runtime_environment_sha256": runtime_environment_sha256,
         "binary_sha256": entry["binary_sha256"],
@@ -500,12 +783,13 @@ def validate_subprocess_record(
         "git_metadata_available": entry["git_metadata_available"],
         "git_commit": entry["git_commit"],
         "git_dirty": entry["git_dirty"],
+        "git_diff_sha256": expected_git_diff,
+        "source_snapshot_sha256": expected_source_snapshot,
     }
     for name, expected in expected_values.items():
         if validated[name] != expected:
             raise RunnerError("subprocess record mismatch for {0}".format(name))
-    if not _core_parameters_match(item["benchmark"], item["parameters"], validated["parameters"]):
-        raise RunnerError("subprocess record parameters do not match command")
+    _validate_verification(validated, item, context)
     return validated
 
 
@@ -554,9 +838,9 @@ def execute_schedule(
                 environment["GPU_SUITE_SCHEDULER"] = context["scheduler"]
             if context["scheduler_job_id"] is not None:
                 environment["GPU_SUITE_SCHEDULER_JOB_ID"] = context["scheduler_job_id"]
-            if git_diff_sha256 is not None:
+            if entry["git_dirty"] is True and git_diff_sha256 is not None:
                 environment["GPU_SUITE_GIT_DIFF_SHA256"] = git_diff_sha256
-            if source_snapshot_sha256 is not None:
+            if entry["git_dirty"] is True and source_snapshot_sha256 is not None:
                 environment["GPU_SUITE_SOURCE_SNAPSHOT_SHA256"] = source_snapshot_sha256
             completed = subprocess.run(
                 item["argv"], text=True, capture_output=True, check=False,
@@ -582,7 +866,8 @@ def execute_schedule(
                         raise RunnerError("duplicate, out-of-order, or out-of-range trial")
                     validated = validate_subprocess_record(
                         record, item, context, config_sha256,
-                        runtime_environment_sha256,
+                        runtime_environment_sha256, git_diff_sha256,
+                        source_snapshot_sha256,
                     )
                     if fatal_failure_seen and not (
                         validated["status"] == "skipped"

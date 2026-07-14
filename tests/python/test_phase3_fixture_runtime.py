@@ -22,7 +22,65 @@ def run_benchmark(path, arguments):
     return records, completed.stderr
 
 
+def run_nonfinite_fixture(path, arguments, special):
+    environment = os.environ.copy()
+    environment["GPU_SUITE_TEST_NONFINITE"] = special
+    completed = subprocess.run(
+        [path] + arguments + ["--output", "-", "--format", "jsonl"],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=environment,
+    )
+    if completed.returncode == 0:
+        raise AssertionError("nonfinite fixture unexpectedly succeeded")
+    if "NaN" in completed.stdout or "Infinity" in completed.stdout:
+        raise AssertionError("nonfinite JSON token escaped into stdout")
+    records = [loads(line) for line in completed.stdout.splitlines()]
+    if len(records) != 1:
+        raise AssertionError("nonfinite fixture emitted an unexpected row count")
+    record = validate_raw_result(records[0])
+    if record["status"] != "failure" or record["failure_origin"] != "verification":
+        raise AssertionError("nonfinite fixture did not become verification failure")
+    if record["verification_status"] != "nonfinite":
+        raise AssertionError("nonfinite fixture has the wrong verification status")
+    primary = record["verification_primary_metric"]
+    if primary is None or record["verification_metrics"][primary] is not None:
+        raise AssertionError("nonfinite fixture did not use a null metric sentinel")
+
+
 class Phase3FixtureRuntimeTests(unittest.TestCase):
+    @unittest.skipUnless(
+        os.environ.get("GPU_SUITE_CBLAS_FIXTURE_BENCH")
+        and os.environ.get("GPU_SUITE_SPARSE_FIXTURE_BENCH")
+        and os.environ.get("GPU_SUITE_SOLVER_FIXTURE_BENCH"),
+        "CPU provider fixture paths absent",
+    )
+    def test_cpu_provider_nonfinite_outputs_are_failures_with_null_metrics(self):
+        fixtures = (
+            (os.environ["GPU_SUITE_CBLAS_FIXTURE_BENCH"],
+             ["--size", "4", "--warmup", "0", "--repeat", "1",
+              "--trials", "1", "--scope", "compute", "--verify", "true",
+              "--cpu-backend", "cpu-onemkl", "--cpu-threads", "2",
+              "--cpu-backend-role", "production", "--series-role", "primary",
+              "--cpu-parallelism", "threaded"]),
+            (os.environ["GPU_SUITE_SPARSE_FIXTURE_BENCH"],
+             ["--size", "16", "--warmup", "0", "--repeat", "1",
+              "--trials", "1", "--scope", "compute", "--verify", "true",
+              "--cpu-backend", "cpu-onemkl", "--cpu-threads", "2",
+              "--cpu-backend-role", "production", "--series-role", "primary",
+              "--cpu-parallelism", "threaded"]),
+            (os.environ["GPU_SUITE_SOLVER_FIXTURE_BENCH"],
+             ["--size", "4", "--nrhs", "1", "--warmup", "0",
+              "--repeat", "1", "--trials", "1", "--scope", "end-to-end",
+              "--verify", "true", "--cpu-backend", "cpu-onemkl",
+              "--cpu-threads", "2", "--cpu-backend-role", "production",
+              "--series-role", "primary", "--cpu-parallelism", "threaded"]),
+        )
+        for special in ("nan", "inf", "-inf"):
+            for path, arguments in fixtures:
+                with self.subTest(special=special, executable=path):
+                    run_nonfinite_fixture(path, arguments, special)
     @unittest.skipUnless(os.environ.get("GPU_SUITE_CBLAS_FIXTURE_BENCH"), "fixture path absent")
     def test_cblas_compute_repeat_updates_c_continuously(self):
         records, stderr = run_benchmark(
@@ -87,6 +145,7 @@ class Phase3FixtureRuntimeTests(unittest.TestCase):
         self.assertAlmostEqual(record["verification_thresholds"]["sample_mean"]["absolute_bound"], mean_bound)
         self.assertAlmostEqual(record["verification_thresholds"]["second_central_moment_about_half"]["absolute_bound"], moment_bound)
         self.assertEqual(record["parameters"]["distribution_interval"], "[0,1)")
+        self.assertEqual(record["parameters"]["cpu_engine"], "std::mt19937_64")
 
     @unittest.skipUnless(os.environ.get("GPU_SUITE_REDUCE_CPU_BENCH"), "fixture path absent")
     def test_reduction_expected_value(self):

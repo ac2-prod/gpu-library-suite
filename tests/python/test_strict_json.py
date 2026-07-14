@@ -22,6 +22,10 @@ class StrictJsonTests(unittest.TestCase):
                 with self.assertRaises(NonStandardConstantError):
                     loads('{"value":' + constant + "}")
 
+    def test_finite_syntax_that_overflows_binary_float_is_rejected(self):
+        with self.assertRaises(StrictJsonError):
+            loads('{"value":1e9999}')
+
     def test_invalid_utf8_is_rejected(self):
         with self.assertRaises(StrictJsonError):
             loads(b'{"value":"\xff"}')

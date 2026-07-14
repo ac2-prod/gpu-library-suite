@@ -119,3 +119,82 @@ int gpu_suite_json_add_string(gpu_suite_json_value *object, const char *key,
                               const char *value) {
   return object_add(object, key, gpu_suite_json_string(value));
 }
+
+int gpu_suite_json_add_null(gpu_suite_json_value *object, const char *key) {
+  return object_add(object, key, gpu_suite_json_null());
+}
+
+int gpu_suite_verification_reset(gpu_suite_result *result) {
+  gpu_suite_json_value *metrics;
+  gpu_suite_json_value *thresholds;
+  if (result == NULL) {
+    return GPU_SUITE_ERROR_INVALID;
+  }
+  metrics = gpu_suite_json_object();
+  thresholds = gpu_suite_json_object();
+  if (metrics == NULL || thresholds == NULL) {
+    gpu_suite_json_free(metrics);
+    gpu_suite_json_free(thresholds);
+    return GPU_SUITE_ERROR_NOMEM;
+  }
+  gpu_suite_json_free(result->verification_metrics);
+  gpu_suite_json_free(result->verification_thresholds);
+  result->verification_metrics = metrics;
+  result->verification_thresholds = thresholds;
+  result->verification_primary_metric = NULL;
+  return GPU_SUITE_OK;
+}
+
+int gpu_suite_verification_add_absolute_relative_threshold(
+    gpu_suite_result *result, const char *metric, double reference_scale,
+    double abs_tolerance, double rel_tolerance) {
+  gpu_suite_json_value *threshold;
+  int status;
+  if (result == NULL || result->verification_thresholds == NULL) {
+    return GPU_SUITE_ERROR_INVALID;
+  }
+  threshold = gpu_suite_json_object();
+  if (threshold == NULL) {
+    return GPU_SUITE_ERROR_NOMEM;
+  }
+  status = gpu_suite_json_add_string(threshold, "method",
+                                     "absolute-plus-relative");
+  if (status == GPU_SUITE_OK)
+    status = gpu_suite_json_add_double(threshold, "reference_scale",
+                                       reference_scale);
+  if (status == GPU_SUITE_OK)
+    status = gpu_suite_json_add_double(threshold, "abs_tolerance",
+                                       abs_tolerance);
+  if (status == GPU_SUITE_OK)
+    status = gpu_suite_json_add_double(threshold, "rel_tolerance",
+                                       rel_tolerance);
+  if (status == GPU_SUITE_OK)
+    status = gpu_suite_json_object_set(result->verification_thresholds, metric,
+                                       threshold);
+  if (status != GPU_SUITE_OK)
+    gpu_suite_json_free(threshold);
+  return status;
+}
+
+int gpu_suite_verification_add_upper_bound_threshold(
+    gpu_suite_result *result, const char *metric, const char *method,
+    double upper_bound) {
+  gpu_suite_json_value *threshold;
+  int status;
+  if (result == NULL || result->verification_thresholds == NULL) {
+    return GPU_SUITE_ERROR_INVALID;
+  }
+  threshold = gpu_suite_json_object();
+  if (threshold == NULL) {
+    return GPU_SUITE_ERROR_NOMEM;
+  }
+  status = gpu_suite_json_add_string(threshold, "method", method);
+  if (status == GPU_SUITE_OK)
+    status = gpu_suite_json_add_double(threshold, "upper_bound", upper_bound);
+  if (status == GPU_SUITE_OK)
+    status = gpu_suite_json_object_set(result->verification_thresholds, metric,
+                                       threshold);
+  if (status != GPU_SUITE_OK)
+    gpu_suite_json_free(threshold);
+  return status;
+}

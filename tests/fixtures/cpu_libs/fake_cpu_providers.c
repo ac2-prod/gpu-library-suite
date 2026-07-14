@@ -5,6 +5,22 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
+
+static int fixture_nonfinite(double *value) {
+  const char *requested = getenv("GPU_SUITE_TEST_NONFINITE");
+  if (requested == NULL)
+    return 0;
+  if (strcmp(requested, "nan") == 0)
+    *value = NAN;
+  else if (strcmp(requested, "inf") == 0)
+    *value = INFINITY;
+  else if (strcmp(requested, "-inf") == 0)
+    *value = -INFINITY;
+  else
+    return 0;
+  return 1;
+}
 
 void cblas_dgemm(CBLAS_ORDER order, CBLAS_TRANSPOSE trans_a,
                  CBLAS_TRANSPOSE trans_b, int m, int n, int k, double alpha,
@@ -25,6 +41,8 @@ void cblas_dgemm(CBLAS_ORDER order, CBLAS_TRANSPOSE trans_a,
           alpha * sum + beta * c[row + (size_t)column * (size_t)ldc];
     }
   }
+  if (m > 0 && n > 0)
+    (void)fixture_nonfinite(&c[0]);
 }
 
 lapack_int LAPACKE_dgetrf(int matrix_layout, lapack_int m, lapack_int n,
@@ -99,6 +117,8 @@ lapack_int LAPACKE_dgetrs(int matrix_layout, char trans, lapack_int n,
       b[row + (size_t)rhs * (size_t)ldb] /= a[row + (size_t)row * (size_t)lda];
     }
   }
+  if (n > 0 && nrhs > 0)
+    (void)fixture_nonfinite(&b[0]);
   return 0;
 }
 
@@ -181,6 +201,8 @@ sparse_status_t mkl_sparse_d_mv(sparse_operation_t operation, double alpha,
     }
     y[row] = alpha * sum + beta * y[row];
   }
+  if (matrix->rows > 0)
+    (void)fixture_nonfinite(&y[0]);
   return SPARSE_STATUS_SUCCESS;
 }
 

@@ -8,6 +8,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
+#include <new>
+#include <stdexcept>
 #include <vector>
 
 static bool cuda_success(cudaError_t status, const char *api) {
@@ -155,21 +158,47 @@ int main(int argc, char **argv) {
   }
   if (p != GPU_SUITE_PARSE_OK)
     return 1;
-  int nx = (int)(o.size_set ? root(o.size) : o.nx),
-      ny = (int)(o.size_set ? root(o.size) : o.ny), n = nx * ny,
-      nnz = 5 * n - 2 * nx - 2 * ny;
-  std::vector<int> row(n + 1), col(nnz);
-  std::vector<double> val(nnz), x(n, 1), y(n, 1);
+  gpu_suite::ResultWriter w;
+  if (!w.open(o))
+    return 1;
+  const std::uint64_t nx_value = o.size_set ? root(o.size) : o.nx;
+  const std::uint64_t ny_value = o.size_set ? root(o.size) : o.ny;
+  int nx = 0, ny = 0, n = 0, nnz = 0;
+  std::size_t row_count = 0;
+  std::size_t row_bytes = 0, column_bytes = 0, value_bytes = 0,
+              vector_bytes = 0;
+  if (!gpu_suite_checked_poisson2d_dimensions(
+          nx_value, ny_value, &nx, &ny, &n, &nnz, &row_count) ||
+      !gpu_suite_checked_bytes(row_count, sizeof(int), &row_bytes) ||
+      !gpu_suite_checked_bytes(static_cast<std::size_t>(nnz), sizeof(int),
+                               &column_bytes) ||
+      !gpu_suite_checked_bytes(static_cast<std::size_t>(nnz), sizeof(double),
+                               &value_bytes) ||
+      !gpu_suite_checked_bytes(static_cast<std::size_t>(n), sizeof(double),
+                               &vector_bytes)) {
+    std::fprintf(stderr, "CSR dimensions or byte counts exceed supported range\n");
+    gpu_suite::emit_unmeasured(
+        w, o, 0, false, "prerequisite",
+        "CSR dimensions exceed supported integer or byte range");
+    (void)w.close();
+    return 1;
+  }
+  (void)row_bytes;
+  (void)column_bytes;
+  (void)value_bytes;
+  (void)vector_bytes;
+  bool fatal_failure = false;
+  bool any_failure = false;
+  try {
+  std::vector<int> row(row_count), col(static_cast<std::size_t>(nnz));
+  std::vector<double> val(static_cast<std::size_t>(nnz));
+  std::vector<double> x(static_cast<std::size_t>(n), 1.0);
+  std::vector<double> y(static_cast<std::size_t>(n), 1.0);
   make_poisson2d_csr(nx, ny, row.data(), col.data(), val.data());
   int *rp = row.data(), *cp = col.data();
   double *vp = val.data(), *xp = x.data(), *yp = y.data();
   size_t rs = row.size(), cs = col.size(), vs = val.size(), xs = x.size(),
          ys = y.size();
-  gpu_suite::ResultWriter w;
-  if (!w.open(o))
-    return 1;
-  bool fatal_failure = false;
-  bool any_failure = false;
 
   if (!cuda_success(cudaSetDevice(o.device), "cudaSetDevice")) {
     gpu_suite::emit_unmeasured(w, o, 0, true, "benchmark",
@@ -222,14 +251,24 @@ int main(int argc, char **argv) {
             gpu_suite_optional_double_value(elapsed_total);
         result.elapsed_sec =
             gpu_suite_optional_double_value(elapsed_total / o.repeat);
-        const bool pass =
+        const gpu_suite::VerificationOutcome outcome =
             gpu_suite_cusparse::set_spmv_verification(result, o, y, nx, ny, 1);
+        const bool constructed =
+            outcome != gpu_suite::VerificationOutcome::construction_error;
+        const bool pass = outcome == gpu_suite::VerificationOutcome::pass;
         result.attempted = true;
-        result.failure_origin = pass ? nullptr : "verification";
+        result.failure_origin =
+            pass ? nullptr : (constructed ? "verification" : "benchmark");
+        if (!constructed)
+          result.verification_status = "skipped";
         result.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
         result.status = pass ? "success" : "failure";
-        result.message = pass ? "" : "OpenACC SpMV verification failed";
+        result.message =
+            pass ? ""
+                 : (constructed ? "OpenACC SpMV verification failed"
+                                : "verification result construction failed");
         any_failure = any_failure || !pass;
+        ok = ok && constructed;
       } else {
         result.attempted = true;
         result.failure_origin = "benchmark";
@@ -333,8 +372,16 @@ int main(int argc, char **argv) {
         r.measurement_end_timestamp = et;
         r.elapsed_total_sec = gpu_suite_optional_double_value(elapsed);
         r.elapsed_sec = gpu_suite_optional_double_value(elapsed / o.repeat);
-        pass = gpu_suite_cusparse::set_spmv_verification(r, o, y, nx, ny,
-                                                         o.repeat);
+        const gpu_suite::VerificationOutcome outcome =
+            gpu_suite_cusparse::set_spmv_verification(r, o, y, nx, ny,
+                                                      o.repeat);
+        const bool constructed =
+            outcome != gpu_suite::VerificationOutcome::construction_error;
+        pass = outcome == gpu_suite::VerificationOutcome::pass;
+        if (!constructed) {
+          r.verification_status = "skipped";
+          ok = false;
+        }
       } else {
         r.verification_status = "skipped";
       }
@@ -373,6 +420,24 @@ int main(int argc, char **argv) {
   }
   if (h)
     cusparseDestroy(h);
+  } catch (const std::length_error &) {
+    std::fprintf(stderr,
+                 "OpenACC cuSPARSE host vector length is unsupported\n");
+    gpu_suite::emit_unmeasured(w, o, 0, true, "benchmark",
+                               "host vector length exceeds max_size");
+    any_failure = true;
+  } catch (const std::bad_alloc &) {
+    std::fprintf(stderr, "OpenACC cuSPARSE host allocation failed\n");
+    gpu_suite::emit_unmeasured(w, o, 0, true, "benchmark",
+                               "host allocation failed");
+    any_failure = true;
+  } catch (const std::exception &exception) {
+    std::fprintf(stderr, "OpenACC cuSPARSE host allocation failed: %s\n",
+                 exception.what());
+    gpu_suite::emit_unmeasured(w, o, 0, true, "benchmark",
+                               "host allocation or vector length failed");
+    any_failure = true;
+  }
   if (!w.close())
     any_failure = true;
   if (fatal_failure)

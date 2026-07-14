@@ -10,6 +10,8 @@
 
 namespace gpu_suite {
 
+enum class VerificationOutcome { pass, failure, construction_error };
+
 class ResultWriter {
 public:
   ResultWriter() = default;

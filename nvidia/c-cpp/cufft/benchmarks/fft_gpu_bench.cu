@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <new>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -104,12 +105,12 @@ bool warmup_compute(const DeviceContext &context,
 
 bool warmup_end_to_end(const gpu_suite_options &options,
                        std::vector<cufftComplex> &input,
-                       std::vector<cufftComplex> &output, std::size_t bytes) {
+                       std::vector<cufftComplex> &output, std::size_t bytes,
+                       int nfft, int batch) {
   for (int iteration = 0; iteration < options.warmup; ++iteration) {
     DeviceContext context;
     canonical_host(input, output);
-    if (!create_context(context, static_cast<int>(options.size),
-                        static_cast<int>(options.batch), bytes) ||
+    if (!create_context(context, nfft, batch, bytes) ||
         !restore_device(context, input, bytes) ||
         !cufft_ok(cufftExecC2C(context.plan, context.input, context.output,
                                CUFFT_FORWARD),
@@ -175,6 +176,7 @@ bool run_compute_trial(const DeviceContext &context,
 bool run_end_to_end_trial(const gpu_suite_options &options,
                           std::vector<cufftComplex> &input,
                           std::vector<cufftComplex> &output, std::size_t bytes,
+                          int nfft, int batch,
                           char start_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY],
                           char end_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY],
                           double &elapsed_total, const char *&message) {
@@ -194,8 +196,7 @@ bool run_end_to_end_trial(const gpu_suite_options &options,
       message = "could not read measurement start clock";
       return false;
     }
-    if (!create_context(context, static_cast<int>(options.size),
-                        static_cast<int>(options.batch), bytes) ||
+    if (!create_context(context, nfft, batch, bytes) ||
         !restore_device(context, input, bytes) ||
         !cufft_ok(cufftExecC2C(context.plan, context.input, context.output,
                                CUFFT_FORWARD),
@@ -232,6 +233,8 @@ int main(int argc, char **argv) {
   gpu_suite_fft_bench::Writer writer;
   std::size_t count = 0;
   std::size_t bytes = 0;
+  int nfft = 0;
+  int batch = 0;
   bool any_failure = false;
 
   gpu_suite_options_init(&options, GPU_SUITE_BENCHMARK_CUFFT,
@@ -250,12 +253,12 @@ int main(int argc, char **argv) {
   if (!gpu_suite_fft_bench::open_writer(options, writer)) {
     return EXIT_FAILURE;
   }
-  if (options.size > static_cast<std::uint64_t>(INT_MAX) ||
-      options.batch > static_cast<std::uint64_t>(INT_MAX) ||
+  if (!gpu_suite_checked_u64_to_int(options.size, &nfft) ||
+      !gpu_suite_checked_u64_to_int(options.batch, &batch) ||
       !gpu_suite_checked_u64_to_size(options.size, &count) ||
       !gpu_suite_checked_mul_size(
-          count, static_cast<std::size_t>(options.batch), &count) ||
-      !gpu_suite_checked_mul_size(count, sizeof(cufftComplex), &bytes)) {
+          count, static_cast<std::size_t>(batch), &count) ||
+      !gpu_suite_checked_bytes(count, sizeof(cufftComplex), &bytes)) {
     std::fprintf(stderr, "cuFFT dimensions overflow host representation\n");
     (void)gpu_suite_fft_bench::emit_unmeasured(
         writer, options, 0, false, "prerequisite",
@@ -277,8 +280,7 @@ int main(int argc, char **argv) {
     DeviceContext compute_context;
 
     if (options.scope == GPU_SUITE_SCOPE_COMPUTE) {
-      if (!create_context(compute_context, static_cast<int>(options.size),
-                          static_cast<int>(options.batch), bytes) ||
+      if (!create_context(compute_context, nfft, batch, bytes) ||
           !restore_device(compute_context, input, bytes) ||
           !warmup_compute(compute_context, options)) {
         (void)gpu_suite_fft_bench::emit_unmeasured(
@@ -288,7 +290,8 @@ int main(int argc, char **argv) {
         (void)gpu_suite_fft_bench::close_writer(writer);
         return EXIT_FAILURE;
       }
-    } else if (!warmup_end_to_end(options, input, output, bytes)) {
+    } else if (!warmup_end_to_end(options, input, output, bytes, nfft,
+                                  batch)) {
       (void)gpu_suite_fft_bench::emit_unmeasured(
           writer, options, 0, true, "benchmark",
           "cuFFT end-to-end warm-up failed");
@@ -307,7 +310,8 @@ int main(int argc, char **argv) {
               ? run_compute_trial(compute_context, options, input, output,
                                   bytes, start_timestamp, end_timestamp,
                                   elapsed_total, message)
-              : run_end_to_end_trial(options, input, output, bytes,
+              : run_end_to_end_trial(options, input, output, bytes, nfft,
+                                     batch,
                                      start_timestamp, end_timestamp,
                                      elapsed_total, message);
       bool row_success = false;
@@ -329,6 +333,12 @@ int main(int argc, char **argv) {
       }
     }
     destroy_context(compute_context);
+  } catch (const std::length_error &) {
+    std::fprintf(stderr, "host vector size exceeds max_size\n");
+    (void)gpu_suite_fft_bench::emit_unmeasured(
+        writer, options, 0, true, "benchmark",
+        "host vector size exceeds max_size");
+    any_failure = true;
   } catch (const std::bad_alloc &) {
     std::fprintf(stderr, "host allocation failed\n");
     (void)gpu_suite_fft_bench::emit_unmeasured(

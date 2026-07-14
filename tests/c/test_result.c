@@ -1,4 +1,4 @@
-#include "gpu_suite/result.h"
+#include "gpu_suite/benchmark.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -48,6 +48,10 @@ int main(void) {
   char path[] = "/tmp/gpu-suite-result-XXXXXX";
   int descriptor;
   bool must_close = false;
+  const char *original_hostname;
+  const char *original_block_id;
+  char invalid_block[GPU_SUITE_RUN_ID_CAPACITY + GPU_SUITE_LABEL_CAPACITY +
+                     32];
 
   gpu_suite_options_init(&options, GPU_SUITE_BENCHMARK_CUFFT,
                          GPU_SUITE_IMPLEMENTATION_CPU);
@@ -61,6 +65,67 @@ int main(void) {
   finalize_success(&result);
   assert(gpu_suite_result_validate(&result, error, sizeof(error)) ==
          GPU_SUITE_OK);
+
+  result.verification_status = "failure";
+  assert(gpu_suite_result_validate(&result, error, sizeof(error)) !=
+         GPU_SUITE_OK);
+  result.verification_status = "pass";
+  result.status = "failure";
+  result.failure_origin = "verification";
+  result.exit_code = gpu_suite_optional_int_value(1);
+  result.message = "verification failed";
+  assert(gpu_suite_result_validate(&result, error, sizeof(error)) !=
+         GPU_SUITE_OK);
+  finalize_success(&result);
+
+  result.problem_size = gpu_suite_optional_int_value(-1);
+  assert(gpu_suite_result_validate(&result, error, sizeof(error)) !=
+         GPU_SUITE_OK);
+  result.problem_size = gpu_suite_optional_int_value(256);
+  result.secondary_size = gpu_suite_optional_int_value(-1);
+  assert(gpu_suite_result_validate(&result, error, sizeof(error)) !=
+         GPU_SUITE_OK);
+  result.secondary_size = gpu_suite_optional_int_value(8);
+
+  result.verification_primary_metric = "missing_metric";
+  assert(gpu_suite_result_validate(&result, error, sizeof(error)) !=
+         GPU_SUITE_OK);
+  result.verification_primary_metric = NULL;
+
+  assert(gpu_suite_json_add_double(result.verification_metrics,
+                                   "finite_metric", 0.0) == GPU_SUITE_OK);
+  result.verification_primary_metric = "finite_metric";
+  result.verification_status = "nonfinite";
+  result.status = "failure";
+  result.failure_origin = "verification";
+  result.exit_code = gpu_suite_optional_int_value(1);
+  result.message = "nonfinite output";
+  assert(gpu_suite_result_validate(&result, error, sizeof(error)) !=
+         GPU_SUITE_OK);
+  assert(gpu_suite_json_add_null(result.verification_metrics,
+                                 "null_metric") == GPU_SUITE_OK);
+  result.verification_primary_metric = "null_metric";
+  assert(gpu_suite_result_validate(&result, error, sizeof(error)) ==
+         GPU_SUITE_OK);
+  finalize_success(&result);
+
+  original_hostname = result.hostname;
+  original_block_id = result.block_id;
+  for (size_t index = 0U; index < 4U; ++index) {
+    static const char *const invalid_hostnames[] = {".", "..", "bad/name",
+                                                     "bad\\name"};
+    result.hostname = invalid_hostnames[index];
+    assert(snprintf(invalid_block, sizeof(invalid_block), "%s|%d|%s",
+                    result.run_id, result.wave, result.hostname) > 0);
+    result.block_id = invalid_block;
+    assert(gpu_suite_result_validate(&result, error, sizeof(error)) !=
+           GPU_SUITE_OK);
+  }
+  result.hostname = original_hostname;
+  result.block_id = "inconsistent-block";
+  assert(gpu_suite_result_validate(&result, error, sizeof(error)) !=
+         GPU_SUITE_OK);
+  result.block_id = original_block_id;
   result.record_timestamp = "2000-01-01T00:00:00.000Z";
 
   stream = tmpfile();
@@ -118,6 +183,9 @@ int main(void) {
   gpu.cuda_runtime_version = "12.8.0";
   gpu.library_version = "12080";
   assert(gpu_suite_result_validate(&gpu, error, sizeof(error)) == GPU_SUITE_OK);
+  gpu.device_id = gpu_suite_optional_int_value(-1);
+  assert(gpu_suite_result_validate(&gpu, error, sizeof(error)) != GPU_SUITE_OK);
+  gpu.device_id = gpu_suite_optional_int_value(0);
 
   descriptor = mkstemp(path);
   assert(descriptor >= 0);

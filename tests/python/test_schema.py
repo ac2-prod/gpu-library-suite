@@ -108,6 +108,79 @@ class SchemaTests(unittest.TestCase):
         record["attempted"] = False
         with self.assertRaises(SchemaError):
             validate_raw_result(record)
+
+    def test_status_and_verification_are_mutually_consistent(self):
+        record = success_record()
+        record["verification_status"] = "failure"
+        with self.assertRaises(SchemaError):
+            validate_raw_result(record)
+
+        record = success_record()
+        record.update({
+            "failure_origin": "verification",
+            "verification_status": "pass",
+            "exit_code": 1,
+            "status": "failure",
+            "message": "verification failed",
+        })
+        with self.assertRaises(SchemaError):
+            validate_raw_result(record)
+
+    def test_positive_sizes_nonnegative_device_and_safe_hostname(self):
+        for field in ("problem_size", "secondary_size"):
+            record = success_record()
+            record[field] = -1
+            with self.subTest(field=field), self.assertRaises(SchemaError):
+                validate_raw_result(record)
+
+        record = success_record()
+        record["device_id"] = -1
+        with self.assertRaises(SchemaError):
+            validate_raw_result(record)
+
+        for hostname in (".", "..", "bad/name", "bad\\name"):
+            record = success_record()
+            record["hostname"] = hostname
+            record["block_id"] = "run-1|0|" + hostname
+            with self.subTest(hostname=hostname), self.assertRaises(SchemaError):
+                validate_raw_result(record)
+
+        record = success_record()
+        record["block_id"] = "run-1|0|different"
+        with self.assertRaises(SchemaError):
+            validate_raw_result(record)
+
+    def test_primary_metric_must_exist(self):
+        record = success_record()
+        record["verification_primary_metric"] = "missing_metric"
+        with self.assertRaises(SchemaError):
+            validate_raw_result(record)
+
+    def test_nonfinite_numbers_and_nonfinite_sentinel_semantics(self):
+        for container, key in (("parameters", "value"),
+                               ("verification_metrics", "metric"),
+                               ("verification_thresholds", "threshold")):
+            record = success_record()
+            record[container][key] = float("inf")
+            with self.subTest(container=container), self.assertRaises(SchemaError):
+                validate_raw_result(record)
+
+        record = success_record()
+        record.update({
+            "failure_origin": "verification",
+            "verification_metrics": {"max_abs_error": None},
+            "verification_primary_metric": "max_abs_error",
+            "verification_status": "nonfinite",
+            "exit_code": 1,
+            "status": "failure",
+            "message": "nonfinite output",
+        })
+        self.assertEqual(validate_raw_result(record)["verification_status"],
+                         "nonfinite")
+
+        record["verification_metrics"]["max_abs_error"] = 0.0
+        with self.assertRaises(SchemaError):
+            validate_raw_result(record)
         record = success_record()
         record["unexpected"] = 1
         with self.assertRaises(SchemaError):

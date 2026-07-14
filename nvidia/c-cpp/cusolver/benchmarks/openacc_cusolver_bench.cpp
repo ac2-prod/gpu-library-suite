@@ -1,4 +1,5 @@
 #include "gpu_suite/benchmark.hpp"
+#include "solver_bench_common.hpp"
 
 #include <cuda_runtime.h>
 #include <cusolverDn.h>
@@ -8,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <new>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -35,76 +37,6 @@ void make_dense_system(int n, int nrhs, double *matrix, double *rhs) {
     }
   }
   std::fill(rhs, rhs + static_cast<std::size_t>(n) * nrhs, 2.0 * n);
-}
-
-bool add_threshold(gpu_suite_json_value *thresholds, const char *name,
-                   const gpu_suite_options &options) {
-  gpu_suite_json_value *threshold = gpu_suite_json_object();
-  return threshold != nullptr &&
-         gpu_suite::json_add_string(threshold, "method",
-                                    "absolute-plus-relative") == GPU_SUITE_OK &&
-         gpu_suite::json_add_double(threshold, "reference_scale", 1.0) ==
-             GPU_SUITE_OK &&
-         gpu_suite::json_add_double(threshold, "abs_tolerance",
-                                    options.abs_tolerance) == GPU_SUITE_OK &&
-         gpu_suite::json_add_double(threshold, "rel_tolerance",
-                                    options.rel_tolerance) == GPU_SUITE_OK &&
-         gpu_suite_json_object_set(thresholds, name, threshold) == GPU_SUITE_OK;
-}
-
-bool verify(gpu_suite_result &result, const gpu_suite_options &options,
-            const std::vector<double> &solution,
-            const std::vector<double> &matrix, const std::vector<double> &rhs,
-            int n, int nrhs) {
-  gpu_suite_json_free(result.verification_metrics);
-  gpu_suite_json_free(result.verification_thresholds);
-  result.verification_metrics = gpu_suite_json_object();
-  result.verification_thresholds = gpu_suite_json_object();
-  if (!options.verify) {
-    result.verification_primary_metric = nullptr;
-    result.verification_status = "skipped";
-    return true;
-  }
-  double solution_error = 0.0;
-  double residual = 0.0;
-  double matrix_norm = 0.0;
-  double rhs_norm = 0.0;
-  for (int row = 0; row < n; ++row) {
-    double row_sum = 0.0;
-    for (int column = 0; column < n; ++column) {
-      row_sum += std::fabs(matrix[row + static_cast<std::size_t>(column) * n]);
-    }
-    matrix_norm = std::max(matrix_norm, row_sum);
-  }
-  for (int column = 0; column < nrhs; ++column) {
-    for (int row = 0; row < n; ++row) {
-      const std::size_t index = row + static_cast<std::size_t>(column) * n;
-      solution_error =
-          std::max(solution_error, std::fabs(solution[index] - 1.0));
-      rhs_norm = std::max(rhs_norm, std::fabs(rhs[index]));
-      double product = 0.0;
-      for (int inner = 0; inner < n; ++inner) {
-        product += matrix[row + static_cast<std::size_t>(inner) * n] *
-                   solution[inner + static_cast<std::size_t>(column) * n];
-      }
-      residual = std::max(residual, std::fabs(product - rhs[index]));
-    }
-  }
-  const double relative_residual = residual / (matrix_norm + rhs_norm);
-  gpu_suite::json_add_double(result.verification_metrics,
-                             "solution_relative_error", solution_error);
-  gpu_suite::json_add_double(result.verification_metrics, "relative_residual",
-                             relative_residual);
-  add_threshold(result.verification_thresholds, "solution_relative_error",
-                options);
-  add_threshold(result.verification_thresholds, "relative_residual", options);
-  result.verification_primary_metric = "relative_residual";
-  const double bound = options.abs_tolerance + options.rel_tolerance;
-  const bool pass = std::isfinite(solution_error) &&
-                    std::isfinite(relative_residual) &&
-                    solution_error <= bound && relative_residual <= bound;
-  result.verification_status = pass ? "pass" : "failure";
-  return pass;
 }
 
 bool run_library_calls(cusolverDnHandle_t handle, int n, int nrhs,
@@ -141,16 +73,48 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  const int n = static_cast<int>(options.size);
-  const int nrhs = static_cast<int>(options.nrhs);
   gpu_suite::ResultWriter writer;
   if (!writer.open(options))
     return EXIT_FAILURE;
+  int n = 0;
+  int nrhs = 0;
+  std::size_t matrix_count_checked = 0;
+  std::size_t rhs_count_checked = 0;
+  std::size_t matrix_bytes = 0;
+  std::size_t rhs_bytes = 0;
+  std::size_t pivot_bytes = 0;
+  if (!gpu_suite_checked_u64_to_int(options.size, &n) ||
+      !gpu_suite_checked_u64_to_int(options.nrhs, &nrhs) ||
+      !gpu_suite_checked_mul_size(static_cast<std::size_t>(n),
+                                  static_cast<std::size_t>(n),
+                                  &matrix_count_checked) ||
+      !gpu_suite_checked_mul_size(static_cast<std::size_t>(n),
+                                  static_cast<std::size_t>(nrhs),
+                                  &rhs_count_checked) ||
+      !gpu_suite_checked_bytes(matrix_count_checked, sizeof(double),
+                               &matrix_bytes) ||
+      !gpu_suite_checked_bytes(rhs_count_checked, sizeof(double), &rhs_bytes) ||
+      !gpu_suite_checked_bytes(static_cast<std::size_t>(n), sizeof(int),
+                               &pivot_bytes)) {
+    (void)matrix_bytes;
+    (void)rhs_bytes;
+    (void)pivot_bytes;
+    std::fprintf(stderr,
+                 "solver dimensions or byte counts exceed supported range\n");
+    gpu_suite::emit_unmeasured(
+        writer, options, 0, false, "prerequisite",
+        "solver dimensions exceed supported integer or byte range");
+    (void)writer.close();
+    return EXIT_FAILURE;
+  }
+  (void)matrix_bytes;
+  (void)rhs_bytes;
+  (void)pivot_bytes;
   bool any_failure = false;
 
   try {
-    std::vector<double> canonical_matrix(static_cast<std::size_t>(n) * n);
-    std::vector<double> canonical_rhs(static_cast<std::size_t>(n) * nrhs);
+    std::vector<double> canonical_matrix(matrix_count_checked);
+    std::vector<double> canonical_rhs(rhs_count_checked);
     std::vector<double> matrix(canonical_matrix.size());
     std::vector<double> rhs(canonical_rhs.size());
     std::vector<int> pivots(n);
@@ -176,6 +140,7 @@ int main(int argc, char **argv) {
       const std::size_t matrix_count = matrix.size();
       const std::size_t rhs_count = rhs.size();
       int workspace_count = 0;
+      std::size_t workspace_bytes = 0;
       double *workspace = nullptr;
 
 #pragma acc data copy(matrix_ptr[0 : matrix_count], rhs_ptr[0 : rhs_count])    \
@@ -191,11 +156,17 @@ int main(int argc, char **argv) {
           }
         }
         if (setup_ok) {
-          setup_ok = cuda_success(
-              cudaMalloc(reinterpret_cast<void **>(&workspace),
-                         static_cast<std::size_t>(workspace_count) *
-                             sizeof(double)),
-              "cudaMalloc workspace");
+          setup_ok = workspace_count >= 0 &&
+                     gpu_suite_checked_bytes(
+                         static_cast<std::size_t>(workspace_count),
+                         sizeof(double), &workspace_bytes);
+          if (!setup_ok)
+            std::fprintf(stderr, "invalid cuSOLVER workspace byte count\n");
+          if (setup_ok && workspace_bytes != 0U)
+            setup_ok = cuda_success(
+                cudaMalloc(reinterpret_cast<void **>(&workspace),
+                           workspace_bytes),
+                "cudaMalloc workspace");
         }
         for (int warmup = 0; warmup < options.warmup && setup_ok; ++warmup) {
           matrix = canonical_matrix;
@@ -254,16 +225,33 @@ int main(int argc, char **argv) {
             result.elapsed_sec = gpu_suite_optional_double_value(elapsed);
             result.getrf_info = gpu_suite_optional_int_value(getrf_info[0]);
             result.getrs_info = gpu_suite_optional_int_value(getrs_info[0]);
-            const bool verified = verify(result, options, rhs, canonical_matrix,
-                                         canonical_rhs, n, nrhs);
+            const gpu_suite::VerificationOutcome outcome =
+                gpu_suite_cusolver::set_solver_verification(
+                    result, options, rhs, canonical_matrix, canonical_rhs, n,
+                    nrhs);
+            const bool constructed =
+                outcome != gpu_suite::VerificationOutcome::construction_error;
+            if (constructed &&
+                (getrf_info[0] != 0 || getrs_info[0] != 0))
+              result.verification_status = "failure";
             const bool pass =
-                getrf_info[0] == 0 && getrs_info[0] == 0 && verified;
+                getrf_info[0] == 0 && getrs_info[0] == 0 &&
+                outcome == gpu_suite::VerificationOutcome::pass;
             result.attempted = true;
-            result.failure_origin = pass ? nullptr : "verification";
+            result.failure_origin =
+                pass ? nullptr
+                     : (constructed ? "verification" : "benchmark");
+            if (!constructed)
+              result.verification_status = "skipped";
             result.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
             result.status = pass ? "success" : "failure";
-            result.message = pass ? "" : "OpenACC solve verification failed";
+            result.message =
+                pass ? ""
+                     : (constructed
+                            ? "OpenACC solve verification failed"
+                            : "verification result construction failed");
             any_failure = any_failure || !pass;
+            ok = ok && constructed;
           } else {
             result.attempted = true;
             result.failure_origin = "benchmark";
@@ -314,6 +302,7 @@ int main(int argc, char **argv) {
         cusolverDnHandle_t handle = nullptr;
         double *workspace = nullptr;
         int workspace_count = 0;
+        std::size_t workspace_bytes = 0;
         end_to_end_ready = solver_success(cusolverDnCreate(&handle),
                                           "warmup cusolverDnCreate");
 #pragma acc data copyin(matrix_ptr[0 : matrix_count], rhs_ptr[0 : rhs_count])  \
@@ -327,12 +316,21 @@ int main(int argc, char **argv) {
                                               &workspace_count),
                   "warmup cusolverDnDgetrf_bufferSize");
           }
-          if (end_to_end_ready)
-            end_to_end_ready = cuda_success(
-                cudaMalloc(reinterpret_cast<void **>(&workspace),
-                           static_cast<std::size_t>(workspace_count) *
-                               sizeof(double)),
-                "warmup cudaMalloc workspace");
+          if (end_to_end_ready) {
+            end_to_end_ready =
+                workspace_count >= 0 &&
+                gpu_suite_checked_bytes(
+                    static_cast<std::size_t>(workspace_count), sizeof(double),
+                    &workspace_bytes);
+            if (!end_to_end_ready)
+              std::fprintf(stderr,
+                           "invalid warmup cuSOLVER workspace byte count\n");
+            if (end_to_end_ready && workspace_bytes != 0U)
+              end_to_end_ready = cuda_success(
+                  cudaMalloc(reinterpret_cast<void **>(&workspace),
+                             workspace_bytes),
+                  "warmup cudaMalloc workspace");
+          }
           if (end_to_end_ready)
             end_to_end_ready =
                 run_library_calls(handle, n, nrhs, matrix_ptr, rhs_ptr,
@@ -373,6 +371,7 @@ int main(int argc, char **argv) {
         cusolverDnHandle_t handle = nullptr;
         double *workspace = nullptr;
         int workspace_count = 0;
+        std::size_t workspace_bytes = 0;
         gpu_suite_result result;
         if (!gpu_suite::initialize_result(result, options, trial)) {
           any_failure = true;
@@ -399,11 +398,18 @@ int main(int argc, char **argv) {
             }
           }
           if (ok) {
-            ok = cuda_success(
-                cudaMalloc(reinterpret_cast<void **>(&workspace),
-                           static_cast<std::size_t>(workspace_count) *
-                               sizeof(double)),
-                "cudaMalloc workspace");
+            ok = workspace_count >= 0 &&
+                 gpu_suite_checked_bytes(
+                     static_cast<std::size_t>(workspace_count), sizeof(double),
+                     &workspace_bytes);
+            if (!ok)
+              std::fprintf(stderr,
+                           "invalid cuSOLVER workspace byte count\n");
+            if (ok && workspace_bytes != 0U)
+              ok = cuda_success(
+                  cudaMalloc(reinterpret_cast<void **>(&workspace),
+                             workspace_bytes),
+                  "cudaMalloc workspace");
           }
           if (ok) {
             ok = run_library_calls(handle, n, nrhs, matrix_ptr, rhs_ptr,
@@ -427,16 +433,30 @@ int main(int argc, char **argv) {
           result.elapsed_sec = gpu_suite_optional_double_value(elapsed);
           result.getrf_info = gpu_suite_optional_int_value(getrf_info[0]);
           result.getrs_info = gpu_suite_optional_int_value(getrs_info[0]);
-          const bool verified = verify(result, options, rhs, canonical_matrix,
-                                       canonical_rhs, n, nrhs);
+          const gpu_suite::VerificationOutcome outcome =
+              gpu_suite_cusolver::set_solver_verification(
+                  result, options, rhs, canonical_matrix, canonical_rhs, n,
+                  nrhs);
+          const bool constructed =
+              outcome != gpu_suite::VerificationOutcome::construction_error;
+          if (constructed && (getrf_info[0] != 0 || getrs_info[0] != 0))
+            result.verification_status = "failure";
           const bool pass =
-              getrf_info[0] == 0 && getrs_info[0] == 0 && verified;
+              getrf_info[0] == 0 && getrs_info[0] == 0 &&
+              outcome == gpu_suite::VerificationOutcome::pass;
           result.attempted = true;
-          result.failure_origin = pass ? nullptr : "verification";
+          result.failure_origin =
+              pass ? nullptr : (constructed ? "verification" : "benchmark");
+          if (!constructed)
+            result.verification_status = "skipped";
           result.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
           result.status = pass ? "success" : "failure";
-          result.message = pass ? "" : "OpenACC solve verification failed";
+          result.message =
+              pass ? ""
+                   : (constructed ? "OpenACC solve verification failed"
+                                  : "verification result construction failed");
           any_failure = any_failure || !pass;
+          ok = ok && constructed;
         } else {
           result.attempted = true;
           result.failure_origin = "benchmark";
@@ -463,6 +483,10 @@ int main(int argc, char **argv) {
         }
       }
     }
+  } catch (const std::length_error &) {
+    gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
+                               "host vector size exceeds max_size");
+    any_failure = true;
   } catch (const std::bad_alloc &) {
     gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
                                "host allocation failed");

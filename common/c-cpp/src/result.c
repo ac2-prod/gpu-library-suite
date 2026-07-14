@@ -573,6 +573,22 @@ static bool string_in(const char *value, const char *const *allowed,
   return false;
 }
 
+static bool hostname_component_valid(const char *value) {
+  const unsigned char *cursor = (const unsigned char *)value;
+  if (value == NULL || value[0] == '\0' || strcmp(value, ".") == 0 ||
+      strcmp(value, "..") == 0) {
+    return false;
+  }
+  while (*cursor != 0U) {
+    if (*cursor < 0x20U || *cursor == 0x7fU || *cursor == (unsigned char)'/' ||
+        *cursor == (unsigned char)'\\') {
+      return false;
+    }
+    ++cursor;
+  }
+  return true;
+}
+
 int gpu_suite_result_validate(const gpu_suite_result *result, char *error,
                               size_t error_size) {
   static const char *const statuses[] = {"success", "failure", "skipped"};
@@ -593,11 +609,12 @@ int gpu_suite_result_validate(const gpu_suite_result *result, char *error,
       !gpu_suite_run_id_validate(result->run_id) ||
       !timestamp_valid(result->record_timestamp) ||
       result->system_label == NULL || result->system_label[0] == '\0' ||
-      result->wave < 0 || result->node_index < 0 || result->hostname == NULL ||
-      result->hostname[0] == '\0' || result->block_id == NULL ||
-      result->implementation_order == NULL || result->parameters == NULL ||
-      result->verification_metrics == NULL ||
-      result->verification_thresholds == NULL) {
+      result->wave < 0 || result->node_index < 0 ||
+      !hostname_component_valid(result->hostname) || result->block_id == NULL ||
+      !gpu_suite_json_is_array(result->implementation_order) ||
+      !gpu_suite_json_is_object(result->parameters) ||
+      !gpu_suite_json_is_object(result->verification_metrics) ||
+      !gpu_suite_json_is_object(result->verification_thresholds)) {
     set_error(error, error_size, "missing or invalid required result field");
     return GPU_SUITE_ERROR_INVALID;
   }
@@ -628,6 +645,28 @@ int gpu_suite_result_validate(const gpu_suite_result *result, char *error,
       !string_in(result->series_role, series_roles,
                  sizeof(series_roles) / sizeof(series_roles[0]))) {
     set_error(error, error_size, "invalid result value");
+    return GPU_SUITE_ERROR_INVALID;
+  }
+  if ((!result->problem_size.is_null && result->problem_size.value <= 0) ||
+      (!result->secondary_size.is_null && result->secondary_size.value <= 0) ||
+      (!result->device_id.is_null && result->device_id.value < 0)) {
+    set_error(error, error_size, "invalid problem, secondary, or device size");
+    return GPU_SUITE_ERROR_INVALID;
+  }
+  if (result->verification_primary_metric != NULL &&
+      !gpu_suite_json_object_has(result->verification_metrics,
+                                 result->verification_primary_metric)) {
+    set_error(error, error_size,
+              "verification primary metric is absent from metrics");
+    return GPU_SUITE_ERROR_INVALID;
+  }
+  if (strcmp(result->verification_status, "nonfinite") == 0 &&
+      (result->verification_primary_metric == NULL ||
+       !gpu_suite_json_object_value_is_null(
+           result->verification_metrics,
+           result->verification_primary_metric))) {
+    set_error(error, error_size,
+              "nonfinite verification requires a null primary metric");
     return GPU_SUITE_ERROR_INVALID;
   }
   if (strcmp(result->implementation, "cpu") == 0) {
@@ -712,7 +751,9 @@ int gpu_suite_result_validate(const gpu_suite_result *result, char *error,
   if (strcmp(result->status, "success") == 0) {
     if (!result->attempted || result->failure_origin != NULL ||
         result->elapsed_total_sec.is_null || result->exit_code.is_null ||
-        result->exit_code.value != 0 || result->message[0] != '\0') {
+        result->exit_code.value != 0 || result->message[0] != '\0' ||
+        (strcmp(result->verification_status, "pass") != 0 &&
+         strcmp(result->verification_status, "skipped") != 0)) {
       set_error(error, error_size, "invalid successful result");
       return GPU_SUITE_ERROR_INVALID;
     }
@@ -736,6 +777,19 @@ int gpu_suite_result_validate(const gpu_suite_result *result, char *error,
         strcmp(result->verification_status, "skipped") != 0 ||
         !result->exit_code.is_null) {
       set_error(error, error_size, "invalid skipped result");
+      return GPU_SUITE_ERROR_INVALID;
+    }
+  }
+  if ((result->failure_origin != NULL &&
+       strcmp(result->failure_origin, "verification") == 0) ||
+      strcmp(result->verification_status, "failure") == 0 ||
+      strcmp(result->verification_status, "nonfinite") == 0) {
+    if (strcmp(result->status, "failure") != 0 || !result->attempted ||
+        result->failure_origin == NULL ||
+        strcmp(result->failure_origin, "verification") != 0 ||
+        (strcmp(result->verification_status, "failure") != 0 &&
+         strcmp(result->verification_status, "nonfinite") != 0)) {
+      set_error(error, error_size, "inconsistent verification failure state");
       return GPU_SUITE_ERROR_INVALID;
     }
   }

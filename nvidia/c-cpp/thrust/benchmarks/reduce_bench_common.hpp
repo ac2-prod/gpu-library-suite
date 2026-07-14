@@ -7,39 +7,40 @@
 
 namespace gpu_suite_thrust {
 
-inline bool set_reduction_verification(gpu_suite_result &result,
-                                       const gpu_suite_options &options,
-                                       double value, std::size_t count) {
-  gpu_suite_json_free(result.verification_metrics);
-  gpu_suite_json_free(result.verification_thresholds);
-  result.verification_metrics = gpu_suite_json_object();
-  result.verification_thresholds = gpu_suite_json_object();
+inline gpu_suite::VerificationOutcome
+set_reduction_verification(gpu_suite_result &result,
+                           const gpu_suite_options &options, double value,
+                           std::size_t count) {
+  if (gpu_suite_verification_reset(&result) != GPU_SUITE_OK)
+    return gpu_suite::VerificationOutcome::construction_error;
   if (!options.verify) {
     result.verification_primary_metric = nullptr;
     result.verification_status = "skipped";
-    return true;
+    return gpu_suite::VerificationOutcome::pass;
   }
   const double expected = static_cast<double>(count);
-  const double absolute_error = std::fabs(value - expected);
-  if (!std::isfinite(absolute_error)) {
-    result.verification_primary_metric = nullptr;
+  if (gpu_suite_verification_add_absolute_relative_threshold(
+          &result, "absolute_error", expected, options.abs_tolerance,
+          options.rel_tolerance) != GPU_SUITE_OK)
+    return gpu_suite::VerificationOutcome::construction_error;
+  double absolute_error = 0.0;
+  if (!gpu_suite_finite_absolute_error(value, expected, &absolute_error)) {
+    if (gpu_suite_json_add_null(result.verification_metrics,
+                                "absolute_error") != GPU_SUITE_OK)
+      return gpu_suite::VerificationOutcome::construction_error;
+    result.verification_primary_metric = "absolute_error";
     result.verification_status = "nonfinite";
-    return false;
+    return gpu_suite::VerificationOutcome::failure;
   }
-  gpu_suite::json_add_double(result.verification_metrics, "absolute_error",
-                             absolute_error);
-  gpu_suite_json_value *threshold = gpu_suite_json_object();
-  gpu_suite::json_add_string(threshold, "method", "absolute-plus-relative");
-  gpu_suite::json_add_double(threshold, "reference_scale", expected);
-  gpu_suite::json_add_double(threshold, "abs_tolerance", options.abs_tolerance);
-  gpu_suite::json_add_double(threshold, "rel_tolerance", options.rel_tolerance);
-  gpu_suite_json_object_set(result.verification_thresholds, "absolute_error",
-                            threshold);
+  if (gpu_suite::json_add_double(result.verification_metrics, "absolute_error",
+                                 absolute_error) != GPU_SUITE_OK)
+    return gpu_suite::VerificationOutcome::construction_error;
   const bool pass = absolute_error <=
                     options.abs_tolerance + options.rel_tolerance * expected;
   result.verification_primary_metric = "absolute_error";
   result.verification_status = pass ? "pass" : "failure";
-  return pass;
+  return pass ? gpu_suite::VerificationOutcome::pass
+              : gpu_suite::VerificationOutcome::failure;
 }
 
 } // namespace gpu_suite_thrust

@@ -105,6 +105,42 @@ class CufftFixtureRuntimeTests(unittest.TestCase):
         self.assertEqual(completed.stdout.count("result_schema_version"), 1)
         self.assertEqual({row["trial"] for row in rows}, {"0", "1"})
 
+    @unittest.skipUnless(
+        os.environ.get("GPU_SUITE_FFTW_FIXTURE_BENCH"),
+        "synthetic FFTW benchmark path is not set",
+    )
+    def test_nonfinite_fft_output_is_a_verification_failure(self):
+        base_command = [
+            os.environ["GPU_SUITE_FFTW_FIXTURE_BENCH"],
+            "--size", "8", "--batch", "1", "--warmup", "0",
+            "--repeat", "1", "--trials", "1", "--scope", "compute",
+            "--verify", "true", "--output", "-", "--format", "jsonl",
+            "--cpu-backend", "cpu-fftw-threaded", "--cpu-threads", "2",
+            "--cpu-threads-effective", "2", "--cpu-backend-role", "production",
+            "--series-role", "primary", "--cpu-parallelism", "threaded",
+        ]
+        for special in ("nan", "inf", "-inf"):
+            environment = os.environ.copy()
+            environment["GPU_SUITE_TEST_NONFINITE"] = special
+            completed = subprocess.run(
+                base_command, text=True, capture_output=True, check=False,
+                env=environment,
+            )
+            with self.subTest(special=special):
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertNotIn("NaN", completed.stdout)
+                self.assertNotIn("Infinity", completed.stdout)
+                record = loads(completed.stdout.strip())
+                validate_raw_result(record)
+                self.assertEqual(record["status"], "failure")
+                self.assertEqual(record["failure_origin"], "verification")
+                self.assertEqual(record["verification_status"], "nonfinite")
+                self.assertIsNone(
+                    record["verification_metrics"][
+                        record["verification_primary_metric"]
+                    ]
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

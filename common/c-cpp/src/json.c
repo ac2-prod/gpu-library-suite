@@ -267,6 +267,42 @@ int gpu_suite_json_object_set(gpu_suite_json_value *object, const char *key,
   return GPU_SUITE_OK;
 }
 
+bool gpu_suite_json_is_array(const gpu_suite_json_value *value) {
+  return value != NULL && value->type == JSON_ARRAY;
+}
+
+bool gpu_suite_json_is_object(const gpu_suite_json_value *value) {
+  return value != NULL && value->type == JSON_OBJECT;
+}
+
+bool gpu_suite_json_object_has(const gpu_suite_json_value *object,
+                               const char *key) {
+  size_t index;
+  if (!gpu_suite_json_is_object(object) || key == NULL) {
+    return false;
+  }
+  for (index = 0U; index < object->data.object.count; ++index) {
+    if (strcmp(object->data.object.members[index].key, key) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool gpu_suite_json_object_value_is_null(const gpu_suite_json_value *object,
+                                         const char *key) {
+  size_t index;
+  if (!gpu_suite_json_is_object(object) || key == NULL) {
+    return false;
+  }
+  for (index = 0U; index < object->data.object.count; ++index) {
+    if (strcmp(object->data.object.members[index].key, key) == 0) {
+      return object->data.object.members[index].value->type == JSON_NULL;
+    }
+  }
+  return false;
+}
+
 static int buffer_reserve(json_buffer *buffer, size_t additional) {
   size_t required;
   size_t capacity;

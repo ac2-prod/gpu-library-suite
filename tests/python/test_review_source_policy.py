@@ -54,6 +54,170 @@ class ReviewSourcePolicyTests(unittest.TestCase):
         self.assertIn("report_api_error", clock)
         self.assertIn('"clock_gettime(CLOCK_MONOTONIC)"', clock)
 
+    def test_all_benchmarks_check_api_ranges_products_and_byte_counts(self):
+        paths = self.benchmark_paths()
+        self.assertEqual(len(paths), 18)
+        for path in paths:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.relative_to(ROOT)):
+                self.assertIn("gpu_suite_checked_bytes", text)
+                self.assertNotRegex(text, r"malloc\([^)]*\*\s*sizeof")
+                if path.suffix in {".cpp", ".cu"}:
+                    self.assertIn("std::length_error", text)
+                    self.assertIn("std::bad_alloc", text)
+
+        for library in ("cufft", "cublas", "cusolver"):
+            for path in paths:
+                if path.parent.parent.name == library:
+                    with self.subTest(api_integer=path.relative_to(ROOT)):
+                        self.assertIn("gpu_suite_checked_u64_to_int",
+                                      path.read_text(encoding="utf-8"))
+        for path in paths:
+            if path.parent.parent.name == "cusparse":
+                with self.subTest(csr=path.relative_to(ROOT)):
+                    self.assertIn(
+                        "gpu_suite_checked_poisson2d_dimensions",
+                        path.read_text(encoding="utf-8"),
+                    )
+
+    def test_end_to_end_warmup_uses_temporary_scope_pipeline(self):
+        paths = self.benchmark_paths()
+        self.assertEqual(len(paths), 18)
+        warmup_loop = re.compile(
+            r"(?:warmup|warm|w|iteration)\s*<\s*(?:options|o)[.]warmup"
+        )
+        for path in paths:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(warmup_count=path.relative_to(ROOT)):
+                self.assertRegex(text, warmup_loop)
+
+        direct_cuda = [
+            path for path in paths if path.suffix == ".cu"
+        ]
+        self.assertEqual(len(direct_cuda), 6)
+        for path in direct_cuda:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.relative_to(ROOT)):
+                self.assertRegex(text, r"run_end_to_end_(?:pipeline|trial)")
+                if "warmup_end_to_end" in text:
+                    self.assertGreaterEqual(text.count("warmup_end_to_end"), 2)
+                else:
+                    self.assertRegex(
+                        text,
+                        r"warmup[\s\S]{0,900}"
+                        r"run_end_to_end_(?:pipeline|trial)|"
+                        r"run_end_to_end_(?:pipeline|trial)"
+                        r"[\s\S]{0,900}warmup",
+                    )
+                self.assertRegex(
+                    text,
+                    r"scope\s*==\s*GPU_SUITE_SCOPE_COMPUTE[\s\S]{0,500}"
+                    r"(?:create|cudaMalloc|device_vector)",
+                )
+
+        openacc_blas = read(
+            "nvidia/c-cpp/cublas/benchmarks/openacc_cublas_bench.cpp"
+        )
+        self.assertRegex(
+            openacc_blas,
+            r"warmup[\s\S]{0,900}cublasCreate[\s\S]{0,900}cublasDestroy",
+        )
+        openacc_solver = read(
+            "nvidia/c-cpp/cusolver/benchmarks/openacc_cusolver_bench.cpp"
+        )
+        self.assertRegex(
+            openacc_solver,
+            r"warmup[\s\S]{0,1600}cusolverDnCreate[\s\S]{0,2200}"
+            r"cusolverDnDestroy",
+        )
+
+        openacc_fft = read(
+            "nvidia/c-cpp/cufft/benchmarks/openacc_cufft_bench.cpp"
+        )
+        fft_warmup = openacc_fft[
+            openacc_fft.index("bool warmup_end_to_end"):
+            openacc_fft.index("bool run_end_to_end_trial")
+        ]
+        self.assertIn("create_plan", fft_warmup)
+        self.assertIn("#pragma acc data", fft_warmup)
+        self.assertIn("cufftDestroy", fft_warmup)
+
+        openacc_sparse = read(
+            "nvidia/c-cpp/cusparse/benchmarks/openacc_cusparse_bench.cpp"
+        )
+        sparse_pipeline = openacc_sparse[
+            openacc_sparse.index("static bool run_end_to_end_once"):
+            openacc_sparse.index("int main")
+        ]
+        for marker in (
+            "cusparseCreate", "cusparseCreateCsr", "#pragma acc data",
+            "cudaFree", "cusparseDestroyDnVec", "cusparseDestroySpMat",
+            "cusparseDestroy(handle)",
+        ):
+            self.assertIn(marker, sparse_pipeline)
+
+        openacc_curand = read(
+            "nvidia/c-cpp/curand/benchmarks/openacc_curand_bench.cpp"
+        )
+        curand_pipeline = openacc_curand[
+            openacc_curand.index("bool run_end_to_end_pipeline"):
+            openacc_curand.index("} // namespace")
+        ]
+        for marker in (
+            "curandCreateGenerator", "#pragma acc data",
+            "curandDestroyGenerator",
+        ):
+            self.assertIn(marker, curand_pipeline)
+        self.assertRegex(
+            openacc_curand,
+            r"warmup\s*<\s*options[.]warmup[\s\S]{0,500}"
+            r"run_end_to_end_pipeline",
+        )
+
+        openacc_thrust = read(
+            "nvidia/c-cpp/thrust/benchmarks/openacc_thrust_bench.cpp"
+        )
+        thrust_pipeline = openacc_thrust[
+            openacc_thrust.index("bool run_end_to_end_pipeline"):
+            openacc_thrust.index("} // namespace")
+        ]
+        self.assertIn("#pragma acc data copyin", thrust_pipeline)
+        self.assertIn("transform_reduce", thrust_pipeline)
+        self.assertNotIn("device_vector", thrust_pipeline)
+        self.assertRegex(
+            openacc_thrust,
+            r"warmup\s*<\s*options[.]warmup[\s\S]{0,500}"
+            r"run_end_to_end_pipeline",
+        )
+
+    def test_solver_workspace_and_nonfinite_reduction_policy(self):
+        for relative in (
+            "nvidia/c-cpp/cusolver/benchmarks/solver_gpu_bench.cu",
+            "nvidia/c-cpp/cusolver/benchmarks/openacc_cusolver_bench.cpp",
+        ):
+            text = read(relative)
+            with self.subTest(path=relative):
+                self.assertNotRegex(text, r"sqrt\s*\([^)]*matrix[.]size")
+                self.assertIn("workspace_count", text)
+                self.assertIn("gpu_suite_checked_bytes", text)
+                self.assertRegex(text, r"workspace_(?:count|bytes)\s*(?:>=|!=|<)")
+
+        benchmark_text = "\n".join(
+            path.read_text(encoding="utf-8") for path in self.benchmark_paths()
+        )
+        helper_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (ROOT / "nvidia" / "c-cpp").glob(
+                "*/benchmarks/*_bench_common.hpp"
+            )
+        )
+        combined = benchmark_text + helper_text
+        self.assertNotIn("fmax(", combined)
+        self.assertNotIn("std::max(", combined)
+        self.assertIn("gpu_suite_finite_absolute_error", combined)
+        self.assertIn("gpu_suite_json_add_null", combined)
+        self.assertIn('verification_status = "nonfinite"', combined)
+
     def test_verification_failure_is_not_a_fatal_trial_barrier(self):
         for relative in (
             "nvidia/c-cpp/cublas/benchmarks/blas_gpu_bench.cu",

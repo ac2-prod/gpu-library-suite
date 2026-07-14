@@ -47,6 +47,9 @@ Every project Python JSON loader explicitly supplies both:
   object keys rather than accepting the last value; and
 - `parse_constant` that rejects `NaN`, `Infinity`, and `-Infinity`.
 
+The loader also rejects syntactically standard numbers such as an excessive
+exponent when conversion would produce a nonfinite host floating-point value.
+
 Do not rely on the permissive defaults of `json.load` or `json.loads`. Invalid
 UTF-8 is also a load error. NaN, positive/negative infinity, and other nonfinite
 values are never written as JSON numbers; represent them with null, a
@@ -92,9 +95,12 @@ sanitize an invalid value silently.
   ```
 
 Store `run_id`, `wave`, and `hostname` as separate fields as well. A hostname
-used as a directory component must be validated as a safe single component; do
-not silently rewrite it. A duplicate hostname within one wave is an error under
-the one-process-per-node model.
+used as a directory component must be validated as a safe single component. It
+must be nonempty, must not equal `.` or `..`, and must not contain `/`,
+backslash, any platform path separator, or a control character. Do not silently
+rewrite it. A duplicate hostname within one wave is an error under the
+one-process-per-node model. `block_id` must equal the exact scalar composition
+of the separately validated `run_id`, `wave`, and `hostname` fields.
 
 ### Scheduler identity
 
@@ -113,6 +119,11 @@ Within a node, `run_suite.py` is the only raw-file writer. It exclusively create
 the node raw file, writes the CSV header once when applicable, validates
 benchmark stdout, and appends accepted rows. Benchmark executables emit
 machine-readable stdout with `--output -` and never append to node raw files.
+Before accepting a row, the runner compares every field owned by the effective
+configuration, executable manifest/build metadata, execution context, and
+source/binary/runtime provenance. It also requires the exact library-specific
+metric key set, primary metric, threshold method, and threshold operands; a
+subprocess cannot redefine campaign facts in its stdout.
 The runner preserves validated completed rows. For a crash, signal, invalid
 output, or missing output, it synthesizes one attempted failure row for the
 first unresolved trial and unattempted skipped rows for later trials that did
@@ -139,8 +150,8 @@ each expected index exactly once. Raw files are never overwritten.
 | `benchmark` | string | yes | `cufft`, `cublas`, `cusparse`, `cusolver`, `curand`, or `thrust`. |
 | `implementation` | string | yes | `cpu`, `cuda`, or `openacc`. |
 | `scope` | string | yes | `compute` or `end-to-end`. |
-| `problem_size` | integer/null | yes | Primary x-axis value; null for non-square DGEMM. |
-| `secondary_size` | integer/null | yes | Library-specific secondary size or null. |
+| `problem_size` | integer/null | yes | Positive primary x-axis value; null only where the benchmark definition permits it, such as non-square DGEMM. |
+| `secondary_size` | integer/null | yes | Positive library-specific secondary size or null. |
 | `parameters` | object | yes | Complete normalized library parameters. CSV stores deterministic JSON text. |
 | `precision` | string | yes | For example `fp32` or `fp64`. |
 | `cpu_backend` | string/null | yes | Stable backend name for CPU, otherwise null. |
@@ -164,7 +175,7 @@ each expected index exactly once. Raw files are never overwritten.
 | `verification_status` | string | yes | `pass`, `failure`, `skipped`, or `nonfinite`. |
 | `getrf_info` | integer/null | yes | cuSOLVER factorization info, otherwise null. |
 | `getrs_info` | integer/null | yes | cuSOLVER solve info, otherwise null. |
-| `device_id` | integer/null | yes | CUDA device index for GPU, otherwise null. |
+| `device_id` | integer/null | yes | Non-negative CUDA device index for GPU, otherwise null. |
 | `gpu_name` | string/null | yes | Reported GPU name or null. |
 | `gpu_uuid` | string/null | yes | Reported GPU UUID or null. |
 | `cuda_driver_version` | string/null | yes | CUDA Driver API version returned by `cudaDriverGetVersion`, or null when not applicable/unavailable. |
@@ -232,10 +243,15 @@ repeats. `elapsed_total_sec` remains the sum of timed intervals only.
 - `prerequisite`: this trial did not start because its executable or another
   required input was unavailable.
 
-Successful rows require `attempted=true`, `status=success`, and null origin.
-Started failure rows require `attempted=true` and `status=failure`. Skipped rows
-require `attempted=false`, `status=skipped`, null measurement timestamps and
-elapsed fields, `verification_status=skipped`, and null `exit_code`.
+Successful rows require `attempted=true`, `status=success`, null origin,
+`verification_status=pass` or `skipped`, both elapsed fields, `exit_code=0`,
+and an empty message. Started failure rows require `attempted=true`,
+`status=failure`, and a started-failure origin. In particular,
+`failure_origin=verification` requires `verification_status=failure` or
+`nonfinite`; a verification-origin row can never report verification pass.
+Skipped rows require `attempted=false`, `status=skipped`, origin
+`prior-failure` or `prerequisite`, null measurement timestamps and elapsed
+fields, `verification_status=skipped`, and null `exit_code`.
 
 For a process/output failure, the first unresolved trial is an attempted
 synthetic failure. Later unresolved trials are synthetic skipped rows with
@@ -260,9 +276,14 @@ The required distinct evidence includes:
   statistical operands specified in `BENCHMARK_PROTOCOL.md`.
 
 A verification failure sets `verification_status = "failure"` and overall
-`status = "failure"`. A nonfinite value is stored as null, sets
+`status = "failure"`. A nonfinite primary value is stored as null, sets
 `verification_status = "nonfinite"` and overall failure, and includes a message.
 The raw record is retained in both cases.
+
+When `verification_primary_metric` is non-null, its value must name an existing
+key in `verification_metrics`. Verification-skipped rows may set it to null.
+The C/C++ validator/serializer and Python loader/validator enforce the same
+status, size, device, hostname, block, and verification-object invariants.
 
 ## Result directory and write ownership
 

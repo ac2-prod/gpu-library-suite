@@ -36,6 +36,17 @@ def _reject_constant(value: str) -> Any:
     )
 
 
+def _parse_finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise StrictJsonError(
+            "JSON number is outside the finite floating-point range: {0}".format(
+                value
+            )
+        )
+    return parsed
+
+
 def loads(data: JsonInput) -> Any:
     """Load strict JSON, rejecting invalid UTF-8, duplicate keys and constants."""
 
@@ -53,6 +64,7 @@ def loads(data: JsonInput) -> Any:
             text,
             object_pairs_hook=_reject_duplicates,
             parse_constant=_reject_constant,
+            parse_float=_parse_finite_float,
         )
     except (DuplicateKeyError, NonStandardConstantError):
         raise

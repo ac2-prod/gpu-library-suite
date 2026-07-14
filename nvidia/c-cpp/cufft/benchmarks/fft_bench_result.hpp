@@ -88,82 +88,76 @@ int verify(gpu_suite_result &result, const gpu_suite_options &options,
   double non_dc_max_abs_error = 0.0;
   const std::size_t nfft = static_cast<std::size_t>(options.size);
   const std::size_t batch = static_cast<std::size_t>(options.batch);
+  std::size_t expected_count = 0;
 
-  gpu_suite_json_free(result.verification_metrics);
-  gpu_suite_json_free(result.verification_thresholds);
-  result.verification_metrics = gpu_suite_json_object();
-  result.verification_thresholds = gpu_suite_json_object();
-  if (result.verification_metrics == nullptr ||
-      result.verification_thresholds == nullptr) {
+  if (gpu_suite_verification_reset(&result) != GPU_SUITE_OK)
     return GPU_SUITE_ERROR_NOMEM;
-  }
   if (!options.verify) {
     result.verification_primary_metric = nullptr;
     result.verification_status = "skipped";
     return GPU_SUITE_OK;
   }
-  if (output == nullptr || count != nfft * batch) {
+  if (output == nullptr ||
+      !gpu_suite_checked_mul_size(nfft, batch, &expected_count) ||
+      count != expected_count || nfft == 0U) {
     return GPU_SUITE_ERROR_INVALID;
   }
+  if (gpu_suite_verification_add_upper_bound_threshold(
+          &result, "dc_relative_error", "relative-upper-bound",
+          options.rel_tolerance) != GPU_SUITE_OK ||
+      gpu_suite_verification_add_upper_bound_threshold(
+          &result, "non_dc_max_abs_error", "absolute-upper-bound",
+          options.abs_tolerance) != GPU_SUITE_OK)
+    return GPU_SUITE_ERROR_NOMEM;
+  bool finite = true;
   for (std::size_t transform = 0; transform < batch; ++transform) {
     const std::size_t base = transform * nfft;
     const double expected = static_cast<double>(nfft);
-    dc_relative_error = std::max(
-        dc_relative_error,
-        std::max(std::fabs(static_cast<double>(output[base].x) - expected),
-                 std::fabs(static_cast<double>(output[base].y))) /
-            expected);
+    const double dc_real = static_cast<double>(output[base].x);
+    const double dc_imag = static_cast<double>(output[base].y);
+    double real_error = 0.0;
+    double imag_error = 0.0;
+    double transform_error = 0.0;
+    if (!gpu_suite_finite_absolute_error(dc_real, expected, &real_error) ||
+        !gpu_suite_finite_absolute_error(dc_imag, 0.0, &imag_error) ||
+        !gpu_suite_finite_max_update(real_error, &transform_error) ||
+        !gpu_suite_finite_max_update(imag_error, &transform_error)) {
+      finite = false;
+    } else {
+      transform_error /= expected;
+      if (!gpu_suite_finite_max_update(transform_error, &dc_relative_error))
+        finite = false;
+    }
     for (std::size_t frequency = 1; frequency < nfft; ++frequency) {
       const Complex &value = output[base + frequency];
-      non_dc_max_abs_error =
-          std::max(non_dc_max_abs_error,
-                   std::max(std::fabs(static_cast<double>(value.x)),
-                            std::fabs(static_cast<double>(value.y))));
+      double real_magnitude = 0.0;
+      double imag_magnitude = 0.0;
+      if (!gpu_suite_finite_absolute_error(static_cast<double>(value.x), 0.0,
+                                           &real_magnitude) ||
+          !gpu_suite_finite_absolute_error(static_cast<double>(value.y), 0.0,
+                                           &imag_magnitude) ||
+          !gpu_suite_finite_max_update(real_magnitude,
+                                       &non_dc_max_abs_error) ||
+          !gpu_suite_finite_max_update(imag_magnitude,
+                                       &non_dc_max_abs_error))
+        finite = false;
     }
   }
-  if (!std::isfinite(dc_relative_error) ||
-      !std::isfinite(non_dc_max_abs_error)) {
+  if (!finite) {
+    if (gpu_suite_json_add_null(result.verification_metrics,
+                                "dc_relative_error") != GPU_SUITE_OK ||
+        gpu_suite_json_add_null(result.verification_metrics,
+                                "non_dc_max_abs_error") != GPU_SUITE_OK)
+      return GPU_SUITE_ERROR_NOMEM;
     result.verification_primary_metric = "non_dc_max_abs_error";
     result.verification_status = "nonfinite";
-    return GPU_SUITE_ERROR_FORMAT;
+    return GPU_SUITE_OK;
   }
   if (add_double(result.verification_metrics, "dc_relative_error",
                  dc_relative_error) != GPU_SUITE_OK ||
       add_double(result.verification_metrics, "non_dc_max_abs_error",
                  non_dc_max_abs_error) != GPU_SUITE_OK) {
     return GPU_SUITE_ERROR_NOMEM;
-  }
-  gpu_suite_json_value *dc = gpu_suite_json_object();
-  gpu_suite_json_value *non_dc = gpu_suite_json_object();
-  if (dc == nullptr || non_dc == nullptr) {
-    gpu_suite_json_free(dc);
-    gpu_suite_json_free(non_dc);
-    return GPU_SUITE_ERROR_NOMEM;
-  }
-  int status = add_string(dc, "method", "relative-upper-bound");
-  if (status == GPU_SUITE_OK) {
-    status = add_double(dc, "upper_bound", options.rel_tolerance);
-  }
-  if (status == GPU_SUITE_OK) {
-    status = add_string(non_dc, "method", "absolute-upper-bound");
-  }
-  if (status == GPU_SUITE_OK) {
-    status = add_double(non_dc, "upper_bound", options.abs_tolerance);
-  }
-  if (status == GPU_SUITE_OK) {
-    status = gpu_suite_json_object_set(result.verification_thresholds,
-                                       "dc_relative_error", dc);
-  }
-  if (status != GPU_SUITE_OK) {
-    gpu_suite_json_free(dc);
-    gpu_suite_json_free(non_dc);
-    return status;
-  }
-  status = gpu_suite_json_object_set(result.verification_thresholds,
-                                     "non_dc_max_abs_error", non_dc);
-  if (status != GPU_SUITE_OK) {
-    gpu_suite_json_free(non_dc);
-    return status;
   }
   result.verification_primary_metric = "non_dc_max_abs_error";
   result.verification_status =
@@ -241,9 +235,14 @@ bool emit_measured(Writer &writer, const gpu_suite_options &options, int trial,
     result.elapsed_sec = gpu_suite_optional_double_value(
         elapsed_total / static_cast<double>(options.repeat));
     const int verification_status = verify(result, options, output, count);
-    if (verification_status == GPU_SUITE_OK &&
-        (std::strcmp(result.verification_status, "pass") == 0 ||
-         std::strcmp(result.verification_status, "skipped") == 0)) {
+    if (verification_status != GPU_SUITE_OK) {
+      std::fprintf(stderr, "cuFFT verification result construction failed\n");
+      gpu_suite_result_destroy(&result);
+      row_success = false;
+      return false;
+    }
+    if (std::strcmp(result.verification_status, "pass") == 0 ||
+        std::strcmp(result.verification_status, "skipped") == 0) {
       result.attempted = true;
       result.failure_origin = nullptr;
       result.exit_code = gpu_suite_optional_int_value(0);
@@ -255,9 +254,9 @@ bool emit_measured(Writer &writer, const gpu_suite_options &options, int trial,
       result.failure_origin = "verification";
       result.exit_code = gpu_suite_optional_int_value(1);
       result.status = "failure";
-      result.message = verification_status == GPU_SUITE_OK
-                           ? "cuFFT verification threshold exceeded"
-                           : "cuFFT verification produced invalid metrics";
+      result.message = std::strcmp(result.verification_status, "nonfinite") == 0
+                           ? "cuFFT verification produced nonfinite output"
+                           : "cuFFT verification threshold exceeded";
       row_success = false;
     }
   } else {

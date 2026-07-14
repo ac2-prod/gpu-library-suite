@@ -16,11 +16,7 @@ static void fill(double *values, size_t count, double value) {
 static int set_verification(gpu_suite_result *result,
                             const gpu_suite_options *options, const double *c,
                             size_t count, int k) {
-  gpu_suite_json_free(result->verification_metrics);
-  gpu_suite_json_free(result->verification_thresholds);
-  result->verification_metrics = gpu_suite_json_object();
-  result->verification_thresholds = gpu_suite_json_object();
-  if (!result->verification_metrics || !result->verification_thresholds)
+  if (gpu_suite_verification_reset(result) != GPU_SUITE_OK)
     return GPU_SUITE_ERROR_NOMEM;
   if (!options->verify) {
     result->verification_primary_metric = NULL;
@@ -31,29 +27,33 @@ static int set_verification(gpu_suite_result *result,
   double expected = 1.0;
   for (int r = 0; r < updates; ++r)
     expected = options->alpha * k + options->beta * expected;
-  double maximum = 0.0;
-  for (size_t i = 0; i < count; ++i)
-    maximum = fmax(maximum, fabs(c[i] - expected));
-  if (!isfinite(maximum)) {
-    result->verification_status = "nonfinite";
-    return GPU_SUITE_ERROR_FORMAT;
-  }
-  gpu_suite_json_add_double(result->verification_metrics, "max_abs_error",
-                            maximum);
-  gpu_suite_json_value *threshold = gpu_suite_json_object();
-  gpu_suite_json_add_string(threshold, "method", "absolute-plus-relative");
-  gpu_suite_json_add_double(threshold, "reference_scale", fabs(expected));
-  gpu_suite_json_add_double(threshold, "abs_tolerance", options->abs_tolerance);
-  gpu_suite_json_add_double(threshold, "rel_tolerance", options->rel_tolerance);
-  if (gpu_suite_json_object_set(result->verification_thresholds,
-                                "max_abs_error", threshold) != GPU_SUITE_OK) {
-    gpu_suite_json_free(threshold);
+  double reference_scale = isfinite(expected) ? fabs(expected) : 0.0;
+  if (gpu_suite_verification_add_absolute_relative_threshold(
+          result, "max_abs_error", reference_scale, options->abs_tolerance,
+          options->rel_tolerance) != GPU_SUITE_OK)
     return GPU_SUITE_ERROR_NOMEM;
+  double maximum = 0.0;
+  int finite = isfinite(expected);
+  for (size_t i = 0; i < count; ++i) {
+    double error = 0.0;
+    if (!gpu_suite_finite_absolute_error(c[i], expected, &error) ||
+        !gpu_suite_finite_max_update(error, &maximum))
+      finite = 0;
   }
   result->verification_primary_metric = "max_abs_error";
+  if (!finite) {
+    if (gpu_suite_json_add_null(result->verification_metrics,
+                                "max_abs_error") != GPU_SUITE_OK)
+      return GPU_SUITE_ERROR_NOMEM;
+    result->verification_status = "nonfinite";
+    return GPU_SUITE_OK;
+  }
+  if (gpu_suite_json_add_double(result->verification_metrics, "max_abs_error",
+                                maximum) != GPU_SUITE_OK)
+    return GPU_SUITE_ERROR_NOMEM;
   result->verification_status =
-      maximum <=
-              options->abs_tolerance + options->rel_tolerance * fabs(expected)
+      maximum <= options->abs_tolerance +
+                     options->rel_tolerance * reference_scale
           ? "pass"
           : "failure";
   return GPU_SUITE_OK;
@@ -81,25 +81,33 @@ int main(int argc, char **argv) {
   uint64_t mu = options.size_set ? options.size : options.m,
            nu = options.size_set ? options.size : options.n,
            ku = options.size_set ? options.size : options.k;
-  if (mu > INT_MAX || nu > INT_MAX || ku > INT_MAX) {
-    fprintf(stderr, "DGEMM dimension exceeds CBLAS int range\n");
-    return EXIT_FAILURE;
-  }
-  int m = (int)mu, n = (int)nu, k = (int)ku;
-  size_t ac, bc, cc;
-  if (!gpu_suite_checked_mul_size((size_t)m, (size_t)k, &ac) ||
-      !gpu_suite_checked_mul_size((size_t)k, (size_t)n, &bc) ||
-      !gpu_suite_checked_mul_size((size_t)m, (size_t)n, &cc)) {
-    return EXIT_FAILURE;
-  }
   gpu_suite_benchmark_writer writer;
   if (gpu_suite_benchmark_writer_open(&writer, &options, error,
                                       sizeof(error)) != GPU_SUITE_OK) {
     fprintf(stderr, "%s\n", error);
     return EXIT_FAILURE;
   }
-  double *a = malloc(ac * sizeof(*a)), *b = malloc(bc * sizeof(*b)),
-         *c = malloc(cc * sizeof(*c));
+  int m = 0, n = 0, k = 0;
+  size_t ac = 0U, bc = 0U, cc = 0U;
+  size_t ab = 0U, bb = 0U, cb = 0U;
+  if (!gpu_suite_checked_u64_to_int(mu, &m) ||
+      !gpu_suite_checked_u64_to_int(nu, &n) ||
+      !gpu_suite_checked_u64_to_int(ku, &k) ||
+      !gpu_suite_checked_mul_size((size_t)m, (size_t)k, &ac) ||
+      !gpu_suite_checked_mul_size((size_t)k, (size_t)n, &bc) ||
+      !gpu_suite_checked_mul_size((size_t)m, (size_t)n, &cc) ||
+      !gpu_suite_checked_bytes(ac, sizeof(double), &ab) ||
+      !gpu_suite_checked_bytes(bc, sizeof(double), &bb) ||
+      !gpu_suite_checked_bytes(cc, sizeof(double), &cb)) {
+    fprintf(stderr, "DGEMM dimensions or byte counts exceed supported range\n");
+    (void)gpu_suite_benchmark_emit_unmeasured(
+        &writer, &options, 0, false, "prerequisite",
+        "DGEMM dimensions exceed supported integer or byte range", error,
+        sizeof(error));
+    (void)gpu_suite_benchmark_writer_close(&writer, error, sizeof(error));
+    return EXIT_FAILURE;
+  }
+  double *a = malloc(ab), *b = malloc(bb), *c = malloc(cb);
   if (!a || !b || !c) {
     gpu_suite_benchmark_emit_unmeasured(&writer, &options, 0, true, "benchmark",
                                         "matrix allocation failed", error,
@@ -172,11 +180,19 @@ int main(int argc, char **argv) {
                  (strcmp(result.verification_status, "pass") == 0 ||
                   strcmp(result.verification_status, "skipped") == 0);
       result.attempted = true;
-      result.failure_origin = pass ? NULL : "verification";
+      result.failure_origin =
+          pass ? NULL : (verified == GPU_SUITE_OK ? "verification" : "benchmark");
+      if (verified != GPU_SUITE_OK)
+        result.verification_status = "skipped";
       result.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
       result.status = pass ? "success" : "failure";
-      result.message = pass ? "" : "DGEMM verification failed";
+      result.message =
+          pass ? ""
+               : (verified == GPU_SUITE_OK
+                      ? "DGEMM verification failed"
+                      : "verification result construction failed");
       any_failure |= !pass;
+      ok = ok && verified == GPU_SUITE_OK;
     } else {
       result.attempted = true;
       result.failure_origin = "benchmark";

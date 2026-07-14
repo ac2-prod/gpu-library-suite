@@ -9,22 +9,22 @@
 
 namespace gpu_suite_cusparse {
 
-inline bool set_spmv_verification(gpu_suite_result &result,
-                                  const gpu_suite_options &options,
-                                  const std::vector<double> &values, int nx,
-                                  int ny, int updates) {
-  gpu_suite_json_free(result.verification_metrics);
-  gpu_suite_json_free(result.verification_thresholds);
-  result.verification_metrics = gpu_suite_json_object();
-  result.verification_thresholds = gpu_suite_json_object();
+inline gpu_suite::VerificationOutcome
+set_spmv_verification(gpu_suite_result &result,
+                      const gpu_suite_options &options,
+                      const std::vector<double> &values, int nx, int ny,
+                      int updates) {
+  if (gpu_suite_verification_reset(&result) != GPU_SUITE_OK)
+    return gpu_suite::VerificationOutcome::construction_error;
   if (!options.verify) {
     result.verification_primary_metric = nullptr;
     result.verification_status = "skipped";
-    return true;
+    return gpu_suite::VerificationOutcome::pass;
   }
 
   double maximum = 0.0;
   double reference_scale = 0.0;
+  bool finite = true;
   for (int iy = 0; iy < ny; ++iy) {
     for (int ix = 0; ix < nx; ++ix) {
       const int neighbor_count =
@@ -33,30 +33,46 @@ inline bool set_spmv_verification(gpu_suite_result &result,
       double expected = 1.0;
       for (int update = 0; update < updates; ++update) {
         expected = options.alpha * product + options.beta * expected;
+        if (!std::isfinite(expected))
+          finite = false;
       }
-      maximum = std::max(maximum, std::fabs(values[iy * nx + ix] - expected));
-      reference_scale = std::max(reference_scale, std::fabs(expected));
+      double error = 0.0;
+      if (!gpu_suite_finite_absolute_error(
+              values[static_cast<std::size_t>(iy) *
+                         static_cast<std::size_t>(nx) +
+                     static_cast<std::size_t>(ix)],
+              expected,
+              &error) ||
+          !gpu_suite_finite_max_update(error, &maximum))
+        finite = false;
+      if (std::isfinite(expected) &&
+          !gpu_suite_finite_max_update(std::fabs(expected), &reference_scale))
+        finite = false;
     }
   }
-  if (!std::isfinite(maximum) || !std::isfinite(reference_scale)) {
-    result.verification_primary_metric = nullptr;
+  if (!std::isfinite(reference_scale))
+    return gpu_suite::VerificationOutcome::construction_error;
+  if (gpu_suite_verification_add_absolute_relative_threshold(
+          &result, "max_abs_error", reference_scale, options.abs_tolerance,
+          options.rel_tolerance) != GPU_SUITE_OK)
+    return gpu_suite::VerificationOutcome::construction_error;
+  if (!finite) {
+    if (gpu_suite_json_add_null(result.verification_metrics,
+                                "max_abs_error") != GPU_SUITE_OK)
+      return gpu_suite::VerificationOutcome::construction_error;
+    result.verification_primary_metric = "max_abs_error";
     result.verification_status = "nonfinite";
-    return false;
+    return gpu_suite::VerificationOutcome::failure;
   }
-  gpu_suite::json_add_double(result.verification_metrics, "max_abs_error",
-                             maximum);
-  gpu_suite_json_value *threshold = gpu_suite_json_object();
-  gpu_suite::json_add_string(threshold, "method", "absolute-plus-relative");
-  gpu_suite::json_add_double(threshold, "reference_scale", reference_scale);
-  gpu_suite::json_add_double(threshold, "abs_tolerance", options.abs_tolerance);
-  gpu_suite::json_add_double(threshold, "rel_tolerance", options.rel_tolerance);
-  gpu_suite_json_object_set(result.verification_thresholds, "max_abs_error",
-                            threshold);
+  if (gpu_suite::json_add_double(result.verification_metrics, "max_abs_error",
+                                 maximum) != GPU_SUITE_OK)
+    return gpu_suite::VerificationOutcome::construction_error;
   const bool pass = maximum <= options.abs_tolerance +
                                    options.rel_tolerance * reference_scale;
   result.verification_primary_metric = "max_abs_error";
   result.verification_status = pass ? "pass" : "failure";
-  return pass;
+  return pass ? gpu_suite::VerificationOutcome::pass
+              : gpu_suite::VerificationOutcome::failure;
 }
 
 } // namespace gpu_suite_cusparse

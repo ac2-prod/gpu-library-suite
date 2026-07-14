@@ -7,46 +7,54 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <new>
+#include <stdexcept>
 #include <vector>
 
-static bool set_verification(gpu_suite_result &result,
-                             const gpu_suite_options &options,
-                             const std::vector<double> &values, int inner_size,
-                             int updates) {
-  gpu_suite_json_free(result.verification_metrics);
-  gpu_suite_json_free(result.verification_thresholds);
-  result.verification_metrics = gpu_suite_json_object();
-  result.verification_thresholds = gpu_suite_json_object();
+static gpu_suite::VerificationOutcome
+set_verification(gpu_suite_result &result, const gpu_suite_options &options,
+                 const std::vector<double> &values, int inner_size,
+                 int updates) {
+  if (gpu_suite_verification_reset(&result) != GPU_SUITE_OK)
+    return gpu_suite::VerificationOutcome::construction_error;
   if (!options.verify) {
     result.verification_primary_metric = nullptr;
     result.verification_status = "skipped";
-    return true;
+    return gpu_suite::VerificationOutcome::pass;
   }
   double expected = 1.0;
   for (int update = 0; update < updates; ++update)
     expected = options.alpha * inner_size + options.beta * expected;
+  const double reference_scale =
+      std::isfinite(expected) ? std::fabs(expected) : 0.0;
+  if (gpu_suite_verification_add_absolute_relative_threshold(
+          &result, "max_abs_error", reference_scale, options.abs_tolerance,
+          options.rel_tolerance) != GPU_SUITE_OK)
+    return gpu_suite::VerificationOutcome::construction_error;
   double maximum = 0.0;
-  for (double value : values)
-    maximum = std::max(maximum, std::fabs(value - expected));
-  if (!std::isfinite(maximum)) {
-    result.verification_primary_metric = nullptr;
-    result.verification_status = "nonfinite";
-    return false;
+  bool finite = std::isfinite(expected);
+  for (double value : values) {
+    double error = 0.0;
+    if (!gpu_suite_finite_absolute_error(value, expected, &error) ||
+        !gpu_suite_finite_max_update(error, &maximum))
+      finite = false;
   }
-  gpu_suite::json_add_double(result.verification_metrics, "max_abs_error",
-                             maximum);
-  gpu_suite_json_value *threshold = gpu_suite_json_object();
-  gpu_suite::json_add_string(threshold, "method", "absolute-plus-relative");
-  gpu_suite::json_add_double(threshold, "reference_scale", std::fabs(expected));
-  gpu_suite::json_add_double(threshold, "abs_tolerance", options.abs_tolerance);
-  gpu_suite::json_add_double(threshold, "rel_tolerance", options.rel_tolerance);
-  gpu_suite_json_object_set(result.verification_thresholds, "max_abs_error",
-                            threshold);
-  const bool pass = maximum <= options.abs_tolerance +
-                                   options.rel_tolerance * std::fabs(expected);
   result.verification_primary_metric = "max_abs_error";
+  if (!finite) {
+    if (gpu_suite_json_add_null(result.verification_metrics,
+                                "max_abs_error") != GPU_SUITE_OK)
+      return gpu_suite::VerificationOutcome::construction_error;
+    result.verification_status = "nonfinite";
+    return gpu_suite::VerificationOutcome::failure;
+  }
+  if (gpu_suite::json_add_double(result.verification_metrics, "max_abs_error",
+                                 maximum) != GPU_SUITE_OK)
+    return gpu_suite::VerificationOutcome::construction_error;
+  const bool pass = maximum <= options.abs_tolerance +
+                                   options.rel_tolerance * reference_scale;
   result.verification_status = pass ? "pass" : "failure";
-  return pass;
+  return pass ? gpu_suite::VerificationOutcome::pass
+              : gpu_suite::VerificationOutcome::failure;
 }
 
 static bool cuda_success(cudaError_t status, const char *api) {
@@ -81,22 +89,52 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  const int m = static_cast<int>(options.size_set ? options.size : options.m);
-  const int n = static_cast<int>(options.size_set ? options.size : options.n);
-  const int k = static_cast<int>(options.size_set ? options.size : options.k);
-  std::vector<double> a(static_cast<std::size_t>(m) * k, 1.0);
-  std::vector<double> b(static_cast<std::size_t>(k) * n, 1.0);
-  std::vector<double> c(static_cast<std::size_t>(m) * n, 1.0);
-  double *a_ptr = a.data();
-  double *b_ptr = b.data();
-  double *c_ptr = c.data();
-  const std::size_t a_count = a.size();
-  const std::size_t b_count = b.size();
-  const std::size_t c_count = c.size();
   gpu_suite::ResultWriter writer;
   if (!writer.open(options))
     return EXIT_FAILURE;
   bool any_failure = false;
+  int m = 0;
+  int n = 0;
+  int k = 0;
+  std::size_t a_count = 0;
+  std::size_t b_count = 0;
+  std::size_t c_count = 0;
+  std::size_t a_bytes = 0;
+  std::size_t b_bytes = 0;
+  std::size_t c_bytes = 0;
+  const std::uint64_t m_value = options.size_set ? options.size : options.m;
+  const std::uint64_t n_value = options.size_set ? options.size : options.n;
+  const std::uint64_t k_value = options.size_set ? options.size : options.k;
+  if (!gpu_suite_checked_u64_to_int(m_value, &m) ||
+      !gpu_suite_checked_u64_to_int(n_value, &n) ||
+      !gpu_suite_checked_u64_to_int(k_value, &k) ||
+      !gpu_suite_checked_mul_size(static_cast<std::size_t>(m),
+                                  static_cast<std::size_t>(k), &a_count) ||
+      !gpu_suite_checked_mul_size(static_cast<std::size_t>(k),
+                                  static_cast<std::size_t>(n), &b_count) ||
+      !gpu_suite_checked_mul_size(static_cast<std::size_t>(m),
+                                  static_cast<std::size_t>(n), &c_count) ||
+      !gpu_suite_checked_bytes(a_count, sizeof(double), &a_bytes) ||
+      !gpu_suite_checked_bytes(b_count, sizeof(double), &b_bytes) ||
+      !gpu_suite_checked_bytes(c_count, sizeof(double), &c_bytes)) {
+    (void)a_bytes;
+    (void)b_bytes;
+    (void)c_bytes;
+    std::fprintf(stderr,
+                 "DGEMM dimensions or byte counts exceed supported range\n");
+    gpu_suite::emit_unmeasured(
+        writer, options, 0, false, "prerequisite",
+        "DGEMM dimensions exceed supported integer or byte range");
+    (void)writer.close();
+    return EXIT_FAILURE;
+  }
+  try {
+  std::vector<double> a(a_count, 1.0);
+  std::vector<double> b(b_count, 1.0);
+  std::vector<double> c(c_count, 1.0);
+  double *a_ptr = a.data();
+  double *b_ptr = b.data();
+  double *c_ptr = c.data();
   bool emitted_result_rows = false;
   bool fatal_failure =
       !cuda_success(cudaSetDevice(options.device), "cudaSetDevice");
@@ -160,6 +198,7 @@ int main(int argc, char **argv) {
                                 "OpenACC update self C");
 
         bool pass = false;
+        bool constructed = true;
         if (ok) {
           const double elapsed = gpu_suite_clock_elapsed(&start, &end);
           result.measurement_start_timestamp = start_timestamp;
@@ -167,9 +206,17 @@ int main(int argc, char **argv) {
           result.elapsed_total_sec = gpu_suite_optional_double_value(elapsed);
           result.elapsed_sec = gpu_suite_optional_double_value(
               elapsed / static_cast<double>(options.repeat));
-          pass = set_verification(result, options, c, k, options.repeat);
-          result.failure_origin = pass ? nullptr : "verification";
+          const gpu_suite::VerificationOutcome outcome =
+              set_verification(result, options, c, k, options.repeat);
+          constructed =
+              outcome != gpu_suite::VerificationOutcome::construction_error;
+          pass = outcome == gpu_suite::VerificationOutcome::pass;
+          result.failure_origin =
+              pass ? nullptr : (constructed ? "verification" : "benchmark");
+          if (!constructed)
+            result.verification_status = "skipped";
           any_failure = any_failure || !pass;
+          fatal_failure = fatal_failure || !constructed;
         } else {
           result.verification_status = "skipped";
           result.failure_origin = "benchmark";
@@ -179,7 +226,10 @@ int main(int argc, char **argv) {
         result.attempted = true;
         result.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
         result.status = pass ? "success" : "failure";
-        result.message = pass ? "" : "OpenACC cuBLAS compute trial failed";
+        result.message =
+            pass ? ""
+                 : (constructed ? "OpenACC cuBLAS compute trial failed"
+                                : "verification result construction failed");
         if (!writer.write(result)) {
           fatal_failure = true;
           any_failure = true;
@@ -277,6 +327,7 @@ int main(int argc, char **argv) {
       }
 
       bool pass = false;
+      bool constructed = true;
       if (ok) {
         result.measurement_start_timestamp = start_timestamp;
         result.measurement_end_timestamp = end_timestamp;
@@ -284,9 +335,17 @@ int main(int argc, char **argv) {
             gpu_suite_optional_double_value(elapsed_total);
         result.elapsed_sec = gpu_suite_optional_double_value(
             elapsed_total / static_cast<double>(options.repeat));
-        pass = set_verification(result, options, c, k, 1);
-        result.failure_origin = pass ? nullptr : "verification";
+        const gpu_suite::VerificationOutcome outcome =
+            set_verification(result, options, c, k, 1);
+        constructed =
+            outcome != gpu_suite::VerificationOutcome::construction_error;
+        pass = outcome == gpu_suite::VerificationOutcome::pass;
+        result.failure_origin =
+            pass ? nullptr : (constructed ? "verification" : "benchmark");
+        if (!constructed)
+          result.verification_status = "skipped";
         any_failure = any_failure || !pass;
+        fatal_failure = fatal_failure || !constructed;
       } else {
         result.verification_status = "skipped";
         result.failure_origin = "benchmark";
@@ -296,7 +355,10 @@ int main(int argc, char **argv) {
       result.attempted = true;
       result.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
       result.status = pass ? "success" : "failure";
-      result.message = pass ? "" : "OpenACC cuBLAS end-to-end trial failed";
+      result.message =
+          pass ? ""
+               : (constructed ? "OpenACC cuBLAS end-to-end trial failed"
+                              : "verification result construction failed");
       if (!writer.write(result)) {
         fatal_failure = true;
         any_failure = true;
@@ -315,6 +377,15 @@ int main(int argc, char **argv) {
     if (!emitted_result_rows && options.trials > 0)
       gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
                                  "OpenACC cuBLAS setup/warmup failed");
+  }
+  } catch (const std::length_error &) {
+    gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
+                               "host vector size exceeds max_size");
+    any_failure = true;
+  } catch (const std::bad_alloc &) {
+    gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
+                               "host allocation failed");
+    any_failure = true;
   }
   if (!writer.close())
     any_failure = true;

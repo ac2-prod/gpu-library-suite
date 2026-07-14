@@ -1,6 +1,23 @@
 #include "fftw3.h"
 
+#include <math.h>
 #include <stdlib.h>
+#include <string.h>
+
+static int fixture_nonfinite(float *value) {
+  const char *requested = getenv("GPU_SUITE_TEST_NONFINITE");
+  if (requested == NULL)
+    return 0;
+  if (strcmp(requested, "nan") == 0)
+    *value = NAN;
+  else if (strcmp(requested, "inf") == 0)
+    *value = INFINITY;
+  else if (strcmp(requested, "-inf") == 0)
+    *value = -INFINITY;
+  else
+    return 0;
+  return 1;
+}
 
 struct gpu_suite_fake_fftw_plan {
   int n;
@@ -70,6 +87,8 @@ void fftwf_execute(const fftwf_plan plan) {
       plan->output[output_index][1] = frequency == 0 ? (float)imag_sum : 0.0F;
     }
   }
+  if (plan->batch > 0 && plan->n > 1)
+    (void)fixture_nonfinite(&plan->output[plan->output_stride][0]);
 }
 
 void fftwf_destroy_plan(fftwf_plan plan) { free(plan); }

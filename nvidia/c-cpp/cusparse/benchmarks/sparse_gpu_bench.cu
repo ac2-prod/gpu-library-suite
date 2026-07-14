@@ -8,6 +8,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
+#include <new>
+#include <stdexcept>
 #include <vector>
 
 static int make_poisson2d_csr(int nx, int ny, int *r, int *c, double *v) {
@@ -93,30 +96,32 @@ static void destroy(Context &q) {
 static bool create(Context &q, int n, int nnz, const std::vector<int> &r,
                    const std::vector<int> &c, const std::vector<double> &v,
                    const std::vector<double> &x, const std::vector<double> &y,
+                   std::size_t row_bytes, std::size_t column_bytes,
+                   std::size_t value_bytes, std::size_t vector_bytes,
                    double alpha, double beta) {
-  if (!cuda_ok(cudaMalloc((void **)&q.dr, r.size() * sizeof(int)),
+  if (!cuda_ok(cudaMalloc((void **)&q.dr, row_bytes),
                "cudaMalloc CSR row") ||
-      !cuda_ok(cudaMalloc((void **)&q.dc, c.size() * sizeof(int)),
+      !cuda_ok(cudaMalloc((void **)&q.dc, column_bytes),
                "cudaMalloc CSR column") ||
-      !cuda_ok(cudaMalloc((void **)&q.dv, v.size() * sizeof(double)),
+      !cuda_ok(cudaMalloc((void **)&q.dv, value_bytes),
                "cudaMalloc CSR value") ||
-      !cuda_ok(cudaMalloc((void **)&q.dx, x.size() * sizeof(double)),
+      !cuda_ok(cudaMalloc((void **)&q.dx, vector_bytes),
                "cudaMalloc x") ||
-      !cuda_ok(cudaMalloc((void **)&q.dy, y.size() * sizeof(double)),
+      !cuda_ok(cudaMalloc((void **)&q.dy, vector_bytes),
                "cudaMalloc y") ||
-      !cuda_ok(cudaMemcpy(q.dr, r.data(), r.size() * sizeof(int),
+      !cuda_ok(cudaMemcpy(q.dr, r.data(), row_bytes,
                           cudaMemcpyHostToDevice),
                "cudaMemcpy CSR row") ||
-      !cuda_ok(cudaMemcpy(q.dc, c.data(), c.size() * sizeof(int),
+      !cuda_ok(cudaMemcpy(q.dc, c.data(), column_bytes,
                           cudaMemcpyHostToDevice),
                "cudaMemcpy CSR column") ||
-      !cuda_ok(cudaMemcpy(q.dv, v.data(), v.size() * sizeof(double),
+      !cuda_ok(cudaMemcpy(q.dv, v.data(), value_bytes,
                           cudaMemcpyHostToDevice),
                "cudaMemcpy CSR value") ||
-      !cuda_ok(cudaMemcpy(q.dx, x.data(), x.size() * sizeof(double),
+      !cuda_ok(cudaMemcpy(q.dx, x.data(), vector_bytes,
                           cudaMemcpyHostToDevice),
                "cudaMemcpy x") ||
-      !cuda_ok(cudaMemcpy(q.dy, y.data(), y.size() * sizeof(double),
+      !cuda_ok(cudaMemcpy(q.dy, y.data(), vector_bytes,
                           cudaMemcpyHostToDevice),
                "cudaMemcpy y") ||
       !sparse_ok(cusparseCreate(&q.h), "cusparseCreate") ||
@@ -142,6 +147,44 @@ static bool apply(Context &q, double a, double b) {
                                 CUSPARSE_SPMV_ALG_DEFAULT, q.work),
                    "cusparseSpMV");
 }
+
+static bool run_end_to_end_pipeline(
+    const gpu_suite_options &options,
+    int n, int nnz, const std::vector<int> &row,
+    const std::vector<int> &column, const std::vector<double> &values,
+    const std::vector<double> &x, std::vector<double> &y,
+    std::size_t row_bytes, std::size_t column_bytes, std::size_t value_bytes,
+    std::size_t vector_bytes, double alpha, double beta, int repeat_index,
+    bool measure, char start_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY],
+    char end_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY], char *error,
+    std::size_t error_size, double *elapsed_total) {
+  Context context;
+  struct timespec start;
+  struct timespec end;
+  bool ok = !measure ||
+            (repeat_index == 0
+                 ? gpu_suite_measurement_start(start_timestamp, &start, error,
+                                               error_size)
+                 : gpu_suite_clock_now(&start, error, error_size)) ==
+                GPU_SUITE_OK;
+  ok = ok && create(context, n, nnz, row, column, values, x, y, row_bytes,
+                    column_bytes, value_bytes, vector_bytes, alpha, beta) &&
+       apply(context, alpha, beta) &&
+       cuda_ok(cudaDeviceSynchronize(), "end-to-end synchronize") &&
+       cuda_ok(cudaMemcpy(y.data(), context.dy, vector_bytes,
+                          cudaMemcpyDeviceToHost),
+               "copy end-to-end y");
+  if (ok && measure) {
+    ok = (repeat_index + 1 == options.repeat
+              ? gpu_suite_measurement_end(&end, end_timestamp, error,
+                                          error_size)
+              : gpu_suite_clock_now(&end, error, error_size)) == GPU_SUITE_OK;
+    if (ok)
+      *elapsed_total += gpu_suite_clock_elapsed(&start, &end);
+  }
+  destroy(context);
+  return ok;
+}
 int main(int argc, char **argv) {
   gpu_suite_options o;
   char e[256] = {0};
@@ -154,24 +197,57 @@ int main(int argc, char **argv) {
   }
   if (p != GPU_SUITE_PARSE_OK)
     return 1;
-  int nx = (int)(o.size_set ? root(o.size) : o.nx),
-      ny = (int)(o.size_set ? root(o.size) : o.ny), n = nx * ny,
-      nnz = 5 * n - 2 * nx - 2 * ny;
-  std::vector<int> row(n + 1), col(nnz);
-  std::vector<double> val(nnz), x(n, 1), y(n, 1);
-  make_poisson2d_csr(nx, ny, row.data(), col.data(), val.data());
   gpu_suite::ResultWriter w;
   if (!w.open(o))
     return 1;
+  const std::uint64_t nx_value = o.size_set ? root(o.size) : o.nx;
+  const std::uint64_t ny_value = o.size_set ? root(o.size) : o.ny;
+  int nx = 0, ny = 0, n = 0, nnz = 0;
+  std::size_t row_count = 0;
+  std::size_t row_bytes = 0, column_bytes = 0, value_bytes = 0,
+              vector_bytes = 0;
+  if (!gpu_suite_checked_poisson2d_dimensions(
+          nx_value, ny_value, &nx, &ny, &n, &nnz, &row_count) ||
+      !gpu_suite_checked_bytes(row_count, sizeof(int), &row_bytes) ||
+      !gpu_suite_checked_bytes(static_cast<std::size_t>(nnz), sizeof(int),
+                               &column_bytes) ||
+      !gpu_suite_checked_bytes(static_cast<std::size_t>(nnz), sizeof(double),
+                               &value_bytes) ||
+      !gpu_suite_checked_bytes(static_cast<std::size_t>(n), sizeof(double),
+                               &vector_bytes)) {
+    std::fprintf(stderr, "CSR dimensions or byte counts exceed supported range\n");
+    gpu_suite::emit_unmeasured(
+        w, o, 0, false, "prerequisite",
+        "CSR dimensions exceed supported integer or byte range");
+    (void)w.close();
+    return 1;
+  }
+  bool any_failure = false;
+  try {
+  std::vector<int> row(row_count), col(static_cast<std::size_t>(nnz));
+  std::vector<double> val(static_cast<std::size_t>(nnz));
+  std::vector<double> x(static_cast<std::size_t>(n), 1.0);
+  std::vector<double> y(static_cast<std::size_t>(n), 1.0);
+  make_poisson2d_csr(nx, ny, row.data(), col.data(), val.data());
   Context q;
-  bool fatal_failure =
-      !cuda_ok(cudaSetDevice(o.device), "cudaSetDevice") ||
-      !create(q, n, nnz, row, col, val, x, y, o.alpha, o.beta);
-  bool any_failure = fatal_failure;
-  for (int warm = 0; warm < o.warmup && !fatal_failure; ++warm)
-    fatal_failure = !apply(q, o.alpha, o.beta);
-  if (!fatal_failure)
-    fatal_failure = !cuda_ok(cudaDeviceSynchronize(), "warmup synchronize");
+  bool fatal_failure = !cuda_ok(cudaSetDevice(o.device), "cudaSetDevice");
+  if (!fatal_failure && o.scope == GPU_SUITE_SCOPE_COMPUTE) {
+    fatal_failure = !create(q, n, nnz, row, col, val, x, y, row_bytes,
+                            column_bytes, value_bytes, vector_bytes, o.alpha,
+                            o.beta);
+    for (int warm = 0; warm < o.warmup && !fatal_failure; ++warm)
+      fatal_failure = !apply(q, o.alpha, o.beta);
+    if (!fatal_failure)
+      fatal_failure = !cuda_ok(cudaDeviceSynchronize(), "warmup synchronize");
+  } else if (!fatal_failure) {
+    for (int warm = 0; warm < o.warmup && !fatal_failure; ++warm) {
+      std::fill(y.begin(), y.end(), 1.0);
+      fatal_failure = !run_end_to_end_pipeline(
+          o, n, nnz, row, col, val, x, y, row_bytes, column_bytes,
+          value_bytes, vector_bytes, o.alpha, o.beta, 0, false, nullptr,
+          nullptr, e, sizeof(e), nullptr);
+    }
+  }
   if (fatal_failure) {
     gpu_suite::emit_unmeasured(w, o, 0, true, "benchmark",
                                "cuSPARSE setup/warmup failed");
@@ -191,7 +267,7 @@ int main(int argc, char **argv) {
     double elapsed = 0;
     bool ok = true;
     if (o.scope == GPU_SUITE_SCOPE_COMPUTE) {
-      ok = cuda_ok(cudaMemcpy(q.dy, y.data(), y.size() * sizeof(double),
+      ok = cuda_ok(cudaMemcpy(q.dy, y.data(), vector_bytes,
                               cudaMemcpyHostToDevice),
                    "restore y") &&
            cuda_ok(cudaDeviceSynchronize(), "pre-timing synchronize") &&
@@ -203,29 +279,16 @@ int main(int argc, char **argv) {
       if (ok)
         elapsed = gpu_suite_clock_elapsed(&ts, &te);
       if (ok)
-        ok = cuda_ok(cudaMemcpy(y.data(), q.dy, y.size() * sizeof(double),
+        ok = cuda_ok(cudaMemcpy(y.data(), q.dy, vector_bytes,
                                cudaMemcpyDeviceToHost),
                      "copy result y");
     } else {
       for (int rep = 0; rep < o.repeat && ok; ++rep) {
         std::fill(y.begin(), y.end(), 1);
-        Context temp;
-        ok = (rep == 0 ? gpu_suite_measurement_start(st, &ts, e, sizeof(e))
-                       : gpu_suite_clock_now(&ts, e, sizeof(e))) ==
-                 GPU_SUITE_OK &&
-             create(temp, n, nnz, row, col, val, x, y, o.alpha, o.beta) &&
-             apply(temp, o.alpha, o.beta) &&
-             cuda_ok(cudaDeviceSynchronize(), "end-to-end synchronize") &&
-             cuda_ok(cudaMemcpy(y.data(), temp.dy, y.size() * sizeof(double),
-                                cudaMemcpyDeviceToHost),
-                     "copy end-to-end y");
-        if (ok)
-          ok = (rep + 1 == o.repeat
-                    ? gpu_suite_measurement_end(&te, et, e, sizeof(e))
-                    : gpu_suite_clock_now(&te, e, sizeof(e))) == GPU_SUITE_OK;
-        if (ok)
-          elapsed += gpu_suite_clock_elapsed(&ts, &te);
-        destroy(temp);
+        ok = run_end_to_end_pipeline(
+            o, n, nnz, row, col, val, x, y, row_bytes, column_bytes,
+            value_bytes, vector_bytes, o.alpha, o.beta, rep, true, st, et, e,
+            sizeof(e), &elapsed);
       }
     }
     int updates = o.scope == GPU_SUITE_SCOPE_COMPUTE ? o.repeat : 1;
@@ -234,14 +297,23 @@ int main(int argc, char **argv) {
       r.measurement_end_timestamp = et;
       r.elapsed_total_sec = gpu_suite_optional_double_value(elapsed);
       r.elapsed_sec = gpu_suite_optional_double_value(elapsed / o.repeat);
-      bool pass =
+      const gpu_suite::VerificationOutcome outcome =
           gpu_suite_cusparse::set_spmv_verification(r, o, y, nx, ny, updates);
+      const bool constructed =
+          outcome != gpu_suite::VerificationOutcome::construction_error;
+      bool pass = outcome == gpu_suite::VerificationOutcome::pass;
       r.attempted = true;
-      r.failure_origin = pass ? nullptr : "verification";
+      r.failure_origin =
+          pass ? nullptr : (constructed ? "verification" : "benchmark");
+      if (!constructed)
+        r.verification_status = "skipped";
       r.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
       r.status = pass ? "success" : "failure";
-      r.message = pass ? "" : "SpMV verification failed";
+      r.message = pass ? ""
+                       : (constructed ? "SpMV verification failed"
+                                      : "verification result construction failed");
       any_failure = any_failure || !pass;
+      ok = ok && constructed;
     } else {
       r.attempted = true;
       r.failure_origin = "benchmark";
@@ -264,6 +336,23 @@ int main(int argc, char **argv) {
     }
   }
   destroy(q);
+  } catch (const std::length_error &) {
+    std::fprintf(stderr, "cuSPARSE host vector length is unsupported\n");
+    gpu_suite::emit_unmeasured(w, o, 0, true, "benchmark",
+                               "host vector length exceeds max_size");
+    any_failure = true;
+  } catch (const std::bad_alloc &) {
+    std::fprintf(stderr, "cuSPARSE host allocation failed\n");
+    gpu_suite::emit_unmeasured(w, o, 0, true, "benchmark",
+                               "host allocation failed");
+    any_failure = true;
+  } catch (const std::exception &exception) {
+    std::fprintf(stderr, "cuSPARSE host allocation failed: %s\n",
+                 exception.what());
+    gpu_suite::emit_unmeasured(w, o, 0, true, "benchmark",
+                               "host allocation or vector length failed");
+    any_failure = true;
+  }
   if (!w.close())
     any_failure = true;
   return any_failure ? 1 : 0;

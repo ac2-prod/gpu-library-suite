@@ -552,6 +552,36 @@ phase gates below:
   `git diff --check` gates pass. Actual CUDA, NVHPC, GPU, and Pegasus execution
   remains explicitly manual when unavailable.
 
+### Second independent-review completion gate
+
+Before merge readiness, the initial schema-version-1 implementation also
+requires the following mutually consistent corrections and regressions:
+
+- C and Python raw validators enforce identical success/failure/skipped,
+  verification-origin, positive-size, non-negative-device, safe-hostname,
+  exact-block-ID, and primary-metric membership invariants;
+- `run_suite.py` compares every config-, manifest-, provenance-, and execution-
+  context-owned raw field before its sole writer accepts the subprocess row,
+  including library-specific verification threshold operands;
+- common checked arithmetic covers unsigned-to-API conversions, dimension
+  products/additions, and element byte counts, and all 18 benchmarks reject
+  overflow, API-range truncation, zero/negative workspace mistakes, and C++
+  length/allocation failures with schema-valid outcomes;
+- compute warm-up uses and retains only its persistent compute context, while
+  end-to-end warm-up executes complete temporary end-to-end pipelines and
+  leaves no persistent compute resource before measurement; and
+- all numerical verification checks finiteness before maxima/norm reductions,
+  records nonfinite metrics as JSON null with overall verification failure, and
+  treats JSON object/allocation/insertion failure as fatal result construction.
+
+Required evidence includes C/C++ schema invariants, runner mismatch rejection,
+overflow boundary tests, scope-specific warm-up lifetime tests, injected NaN
+and both infinities, the complete Mac CPU/non-Git/Python/shell/documentation
+gates, and `git diff --check`. The Linux GCC/Clang workflow keeps the same
+dependency-free matrix and uses the approved current checkout action major.
+Real CUDA, NVHPC, GPU, and Pegasus validation remains a separately reported
+human gate when unavailable locally.
+
 ## Phase 1 — Common benchmark infrastructure
 
 ### Specification delta synchronization gate

@@ -116,6 +116,18 @@ Every production suite invocation passes the complete verification object from
 its effective configuration. Built-in CLI defaults exist only for standalone
 teaching/smoke use and are not an alternative source of production thresholds.
 
+Runtime dimensions, library API integer arguments, element-count products, and
+allocation byte counts are checked before allocation or library entry. An
+unsupported range is reported as a structured prerequisite/benchmark result;
+it is never truncated into a smaller workload. Warm-up follows the selected
+scope: compute reuses its persistent context, while end-to-end uses complete
+temporary pipelines and leaves no warm-up resources alive. Verification treats
+NaN or infinity in inputs, intermediates, or metrics as an explicit
+`verification_status=nonfinite` failure, stores the primary metric as JSON
+`null`, and never serializes non-standard `NaN`/`Infinity` tokens. Exact rules
+are in [`docs/BENCHMARK_PROTOCOL.md`](docs/BENCHMARK_PROTOCOL.md) and
+[`docs/RESULT_SCHEMA.md`](docs/RESULT_SCHEMA.md).
+
 ## CPU baselines and verification notes
 
 Pegasus cuFFT primary speedup uses `cpu-fftw-threaded`. The
