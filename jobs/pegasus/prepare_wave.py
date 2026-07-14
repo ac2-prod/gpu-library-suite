@@ -86,14 +86,36 @@ def _git_provenance(
     manifest: Mapping[str, Any], git_diff_sha256: Optional[str],
     source_snapshot_sha256: Optional[str], run_mode: str,
 ) -> Dict[str, Any]:
+    availability_values = {
+        entry["git_metadata_available"] for entry in manifest["entries"]
+    }
     commits = {entry["git_commit"] for entry in manifest["entries"]}
     dirty_values = {entry["git_dirty"] for entry in manifest["entries"]}
-    if len(commits) != 1 or len(dirty_values) != 1:
+    if (len(availability_values) != 1 or len(commits) != 1 or
+            len(dirty_values) != 1):
         raise WavePreparationError("manifest has mixed Git provenance")
+    available = next(iter(availability_values))
     dirty = next(iter(dirty_values))
     if git_diff_sha256 is not None and source_snapshot_sha256 is not None:
         raise WavePreparationError("select one authoritative dirty-source hash")
-    if dirty:
+    if not available:
+        if run_mode == "production":
+            raise WavePreparationError(
+                "production requires available Git metadata"
+            )
+        if git_diff_sha256 is not None:
+            raise WavePreparationError(
+                "Git-unavailable source cannot use a Git-diff hash"
+            )
+        if source_snapshot_sha256 is None:
+            raise WavePreparationError(
+                "Git-unavailable source requires a source-snapshot hash"
+            )
+        dirty_source = {
+            "kind": "source-snapshot",
+            "sha256": source_snapshot_sha256,
+        }
+    elif dirty:
         if run_mode == "production":
             raise WavePreparationError("production requires a clean worktree")
         if git_diff_sha256 is None and source_snapshot_sha256 is None:
@@ -108,6 +130,7 @@ def _git_provenance(
         dirty_source = None
     return {
         "dirty_source_provenance": dirty_source,
+        "git_metadata_available": available,
         "git_commit": next(iter(commits)),
         "git_dirty": dirty,
     }
@@ -123,6 +146,7 @@ def _immutable_run_metadata(
         "dirty_source_provenance": git["dirty_source_provenance"],
         "effective_config_sha256": config_sha256,
         "executables_manifest_sha256": manifest_sha256,
+        "git_metadata_available": git["git_metadata_available"],
         "git_commit": git["git_commit"],
         "git_dirty": git["git_dirty"],
         "launcher": {"name": "prepare_wave.py", "schema_version": 1},

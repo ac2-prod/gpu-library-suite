@@ -25,6 +25,10 @@ typedef enum {
   OPTION_WAVE,
   OPTION_SEED,
   OPTION_CPU_THREADS,
+  OPTION_CPU_THREADS_EFFECTIVE,
+  OPTION_CPU_BACKEND_ROLE,
+  OPTION_SERIES_ROLE,
+  OPTION_CPU_PARALLELISM,
   OPTION_IMPLEMENTATION_ORDER,
   OPTION_ABS_TOLERANCE,
   OPTION_REL_TOLERANCE,
@@ -72,6 +76,10 @@ static const option_definition OPTION_DEFINITIONS[] = {
     {"--wave", OPTION_WAVE},
     {"--seed", OPTION_SEED},
     {"--cpu-threads", OPTION_CPU_THREADS},
+    {"--cpu-threads-effective", OPTION_CPU_THREADS_EFFECTIVE},
+    {"--cpu-backend-role", OPTION_CPU_BACKEND_ROLE},
+    {"--series-role", OPTION_SERIES_ROLE},
+    {"--cpu-parallelism", OPTION_CPU_PARALLELISM},
     {"--implementation-order", OPTION_IMPLEMENTATION_ORDER},
     {"--abs-tolerance", OPTION_ABS_TOLERANCE},
     {"--rel-tolerance", OPTION_REL_TOLERANCE},
@@ -311,6 +319,13 @@ void gpu_suite_options_init(gpu_suite_options *options,
   options->wave = 0;
   options->seed = 1234U;
   options->cpu_threads = 1;
+  options->cpu_threads_effective = 0;
+  (void)snprintf(options->cpu_backend_role,
+                 sizeof(options->cpu_backend_role), "production");
+  (void)snprintf(options->series_role, sizeof(options->series_role),
+                 "primary");
+  (void)snprintf(options->cpu_parallelism,
+                 sizeof(options->cpu_parallelism), "unknown");
   options->abs_tolerance = 1.0e-12;
   options->rel_tolerance = 1.0e-10;
   options->sigma_multiplier = 6.0;
@@ -425,6 +440,20 @@ static int parse_option_value(gpu_suite_options *options, option_id option,
     return parse_u64(value, &options->seed, true, error, error_size);
   case OPTION_CPU_THREADS:
     return parse_int(value, &options->cpu_threads, false, error, error_size);
+  case OPTION_CPU_THREADS_EFFECTIVE:
+    return parse_int(value, &options->cpu_threads_effective, false, error,
+                     error_size);
+  case OPTION_CPU_BACKEND_ROLE:
+    return copy_value(options->cpu_backend_role,
+                      sizeof(options->cpu_backend_role), value, error,
+                      error_size);
+  case OPTION_SERIES_ROLE:
+    return copy_value(options->series_role, sizeof(options->series_role),
+                      value, error, error_size);
+  case OPTION_CPU_PARALLELISM:
+    return copy_value(options->cpu_parallelism,
+                      sizeof(options->cpu_parallelism), value, error,
+                      error_size);
   case OPTION_IMPLEMENTATION_ORDER:
     return copy_value(options->implementation_order,
                       sizeof(options->implementation_order), value, error,
@@ -578,7 +607,7 @@ int gpu_suite_options_validate(const gpu_suite_options *options, char *error,
   }
   if (options->warmup < 0 || options->repeat <= 0 || options->trials <= 0 ||
       options->device < 0 || options->node_index < 0 || options->wave < 0 ||
-      options->cpu_threads <= 0) {
+      options->cpu_threads <= 0 || options->cpu_threads_effective < 0) {
     set_error(error, error_size, "invalid common numeric option");
     return GPU_SUITE_ERROR_INVALID;
   }
@@ -612,6 +641,24 @@ int gpu_suite_options_validate(const gpu_suite_options *options, char *error,
       options->cpu_backend[0] == '\0') {
     set_error(error, error_size, "CPU implementation requires --cpu-backend");
     return GPU_SUITE_ERROR_INVALID;
+  }
+  if (strcmp(options->series_role, "primary") != 0 &&
+      strcmp(options->series_role, "auxiliary") != 0) {
+    set_error(error, error_size, "invalid --series-role");
+    return GPU_SUITE_ERROR_INVALID;
+  }
+  if (options->implementation == GPU_SUITE_IMPLEMENTATION_CPU) {
+    if (strcmp(options->cpu_backend_role, "production") != 0 &&
+        strcmp(options->cpu_backend_role, "reference") != 0) {
+      set_error(error, error_size, "invalid --cpu-backend-role");
+      return GPU_SUITE_ERROR_INVALID;
+    }
+    if (strcmp(options->cpu_parallelism, "serial") != 0 &&
+        strcmp(options->cpu_parallelism, "threaded") != 0 &&
+        strcmp(options->cpu_parallelism, "unknown") != 0) {
+      set_error(error, error_size, "invalid --cpu-parallelism");
+      return GPU_SUITE_ERROR_INVALID;
+    }
   }
 
   switch (options->benchmark) {
@@ -700,7 +747,9 @@ void gpu_suite_options_usage(FILE *stream, const char *program,
                 "--format csv|jsonl --device N\n"
                 "        --run-id ID --system-label LABEL --node-index N "
                 "--wave N --seed N\n"
-                "        --cpu-threads N --implementation-order LIST "
+                "        --cpu-threads N [--cpu-threads-effective N] "
+                "--cpu-backend-role ROLE --series-role ROLE "
+                "--cpu-parallelism KIND --implementation-order LIST "
                 "--abs-tolerance X --rel-tolerance X --help\n",
                 program == NULL ? "benchmark" : program,
                 gpu_suite_benchmark_name(benchmark));

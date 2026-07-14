@@ -63,30 +63,35 @@ int main(int argc, char **argv) {
       struct timespec start, end;
       double value = 0.0;
       double elapsed = 0.0;
-      bool ok = gpu_suite_utc_timestamp(start_timestamp, error,
-                                        sizeof(error)) == GPU_SUITE_OK;
-      if (options.scope == GPU_SUITE_SCOPE_COMPUTE && ok) {
-        ok = gpu_suite_clock_now(&start, error, sizeof(error)) == GPU_SUITE_OK;
+      bool ok = true;
+      if (options.scope == GPU_SUITE_SCOPE_COMPUTE) {
+        ok = gpu_suite_measurement_start(start_timestamp, &start, error,
+                                         sizeof(error)) == GPU_SUITE_OK;
         for (int repeat = 0; repeat < options.repeat && ok; ++repeat)
           value = reduce_values(values);
-        ok = ok &&
-             gpu_suite_clock_now(&end, error, sizeof(error)) == GPU_SUITE_OK;
+        ok = ok && gpu_suite_measurement_end(&end, end_timestamp, error,
+                                              sizeof(error)) == GPU_SUITE_OK;
         if (ok)
           elapsed = gpu_suite_clock_elapsed(&start, &end);
       } else if (ok) {
         for (int repeat = 0; repeat < options.repeat && ok; ++repeat) {
-          ok =
-              gpu_suite_clock_now(&start, error, sizeof(error)) == GPU_SUITE_OK;
+          ok = (repeat == 0
+                    ? gpu_suite_measurement_start(start_timestamp, &start,
+                                                  error, sizeof(error))
+                    : gpu_suite_clock_now(&start, error, sizeof(error))) ==
+               GPU_SUITE_OK;
           if (!ok)
             break;
           value = reduce_values(values);
-          ok = gpu_suite_clock_now(&end, error, sizeof(error)) == GPU_SUITE_OK;
+          ok = (repeat + 1 == options.repeat
+                    ? gpu_suite_measurement_end(&end, end_timestamp, error,
+                                                sizeof(error))
+                    : gpu_suite_clock_now(&end, error, sizeof(error))) ==
+               GPU_SUITE_OK;
           if (ok)
             elapsed += gpu_suite_clock_elapsed(&start, &end);
         }
       }
-      ok = ok && gpu_suite_utc_timestamp(end_timestamp, error, sizeof(error)) ==
-                     GPU_SUITE_OK;
       if (ok) {
         result.measurement_start_timestamp = start_timestamp;
         result.measurement_end_timestamp = end_timestamp;

@@ -66,6 +66,17 @@ OpenACC tree requires its CMake CUDA Toolkit selection to match the Toolkit
 selected by NVHPC. See [`docs/PORTABILITY.md`](docs/PORTABILITY.md) and the
 [Pegasus job README](jobs/pegasus/README.md).
 
+CMake build metadata records `global_configure_flags` for each compiler
+language. That field is deliberately limited to global CMake configure flags;
+it does not claim target compile definitions/options, provider flags, OpenACC
+interoperation options, or link options. OpenACC and Thrust interoperation
+flags are stored separately in build metadata.
+
+A source copy without `.git` still produces valid metadata with
+`git_metadata_available=false`, `git_commit=null`, and `git_dirty=null`.
+Archive/local validation may build that source, but production execution
+rejects unknown Git provenance instead of treating it as clean.
+
 ## Benchmark configuration and output
 
 [`configs/pilot.json`](configs/pilot.json) and
@@ -101,6 +112,10 @@ started and failed (`attempted=true`, `status=failure`) from a remaining trial
 that never started (`attempted=false`, `status=skipped`). The schema and exact
 provenance contract are in [`docs/RESULT_SCHEMA.md`](docs/RESULT_SCHEMA.md).
 
+Every production suite invocation passes the complete verification object from
+its effective configuration. Built-in CLI defaults exist only for standalone
+teaching/smoke use and are not an alternative source of production thresholds.
+
 ## CPU baselines and verification notes
 
 Pegasus cuFFT primary speedup uses `cpu-fftw-threaded`. The
@@ -123,6 +138,14 @@ not submit, query, cancel, or otherwise operate the scheduler. Account, queue,
 module versions, Toolkit selection, architecture, and output paths remain
 human-supplied.
 
+Each node obtains its own GPU name, UUID, NVIDIA package-driver identity, and
+CUDA Driver API/Runtime versions from node-local `libcudart`. GPU benchmarks
+independently query CUDA device/runtime and library APIs; successful rows must
+agree with that node metadata. One node's identity is never reused for all
+nodes. For prebuilt binaries, `nvcc`, `nvc`, and `nvc++` are
+optional provenance probes, while the driver, runtime, and resolved shared
+libraries are runtime prerequisites.
+
 A recovered node records benchmark or verification failure but normally exits
 zero so another node can finish artifact recovery. After the measurement
 launch, the job master collector checks every expected node and owns the final
@@ -137,6 +160,11 @@ dependency probe fixtures, CPU benchmark fixtures, runner/aggregation/plot
 logic, Python 3.9 compatibility, shell syntax, ShellCheck when available, job
 rendering, telemetry parsing, and multi-node failure simulation. See
 [`docs/VALIDATION_REPORT.md`](docs/VALIDATION_REPORT.md).
+
+Clean Linux GCC and Clang CPU-only builds, including fake-provider fixtures and
+the `.git`-less source-copy test, are mandatory pre-merge gates. The minimal
+workflow is [`.github/workflows/cpu-linux.yml`](.github/workflows/cpu-linux.yml);
+a workflow definition is not itself evidence that either job executed.
 
 No real CUDA GPU, CUDA Toolkit, NVHPC compiler, Pegasus scheduler, or production
 CPU-library installation was exercised by that local validation. Those checks

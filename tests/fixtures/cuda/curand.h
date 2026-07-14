@@ -11,6 +11,7 @@ enum { CURAND_STATUS_SUCCESS = 0, CURAND_RNG_PSEUDO_DEFAULT = 100 };
 
 curandStatus_t curandCreateGenerator(curandGenerator_t *generator,
                                      curandRngType_t type);
+curandStatus_t curandGetVersion(int *version);
 curandStatus_t curandDestroyGenerator(curandGenerator_t generator);
 curandStatus_t curandSetPseudoRandomGeneratorSeed(curandGenerator_t generator,
                                                   unsigned long long seed);

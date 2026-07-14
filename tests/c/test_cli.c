@@ -3,6 +3,8 @@
 #include "test_support.h"
 #include <string.h>
 
+#define ARRAY_COUNT(values) ((int)(sizeof(values) / sizeof((values)[0])))
+
 static gpu_suite_parse_result parse(gpu_suite_options *options, int argc,
                                     char **argv) {
   char error[256] = {0};
@@ -29,7 +31,17 @@ int main(void) {
                    "--run-id",
                    "run.1",
                    "--implementation-order",
-                   "openacc,cuda,cpu"};
+                   "openacc,cuda,cpu",
+                   "--cpu-threads",
+                   "48",
+                   "--cpu-threads-effective",
+                   "4",
+                   "--cpu-backend-role",
+                   "production",
+                   "--series-role",
+                   "primary",
+                   "--cpu-parallelism",
+                   "threaded"};
   char *duplicate[] = {"bench", "--size", "16", "--size", "32"};
   char *bad_run[] = {"bench", "--size", "16", "--run-id", "../bad"};
   char *bad_bool[] = {"bench", "--size", "16", "--verify", "True"};
@@ -44,46 +56,59 @@ int main(void) {
 
   gpu_suite_options_init(&options, GPU_SUITE_BENCHMARK_CUFFT,
                          GPU_SUITE_IMPLEMENTATION_CPU);
-  CHECK(parse(&options, (int)(sizeof(valid) / sizeof(valid[0])), valid) ==
-        GPU_SUITE_PARSE_OK);
+  CHECK(parse(&options, ARRAY_COUNT(valid), valid) == GPU_SUITE_PARSE_OK);
   CHECK(options.size == 256U && options.batch == 8U);
   CHECK(options.warmup == 0 && options.repeat == 2 && options.trials == 3);
   CHECK(options.scope == GPU_SUITE_SCOPE_END_TO_END && !options.verify);
   CHECK(strcmp(options.run_id, "run.1") == 0);
+  CHECK(options.cpu_threads == 48 && options.cpu_threads_effective == 4);
+  CHECK(strcmp(options.cpu_backend_role, "production") == 0);
+  CHECK(strcmp(options.series_role, "primary") == 0);
+  CHECK(strcmp(options.cpu_parallelism, "threaded") == 0);
 
   gpu_suite_options_init(&options, GPU_SUITE_BENCHMARK_CUFFT,
                          GPU_SUITE_IMPLEMENTATION_CPU);
-  CHECK(parse(&options, 5, duplicate) == GPU_SUITE_PARSE_ERROR);
+  CHECK(parse(&options, ARRAY_COUNT(duplicate), duplicate) ==
+        GPU_SUITE_PARSE_ERROR);
   gpu_suite_options_init(&options, GPU_SUITE_BENCHMARK_CUFFT,
                          GPU_SUITE_IMPLEMENTATION_CPU);
-  CHECK(parse(&options, 5, bad_run) == GPU_SUITE_PARSE_ERROR);
+  CHECK(parse(&options, ARRAY_COUNT(bad_run), bad_run) ==
+        GPU_SUITE_PARSE_ERROR);
   gpu_suite_options_init(&options, GPU_SUITE_BENCHMARK_CUFFT,
                          GPU_SUITE_IMPLEMENTATION_CPU);
-  CHECK(parse(&options, 5, bad_bool) == GPU_SUITE_PARSE_ERROR);
+  CHECK(parse(&options, ARRAY_COUNT(bad_bool), bad_bool) ==
+        GPU_SUITE_PARSE_ERROR);
   gpu_suite_options_init(&options, GPU_SUITE_BENCHMARK_CUFFT,
                          GPU_SUITE_IMPLEMENTATION_CPU);
-  CHECK(parse(&options, 5, bad_order) == GPU_SUITE_PARSE_ERROR);
+  CHECK(parse(&options, ARRAY_COUNT(bad_order), bad_order) ==
+        GPU_SUITE_PARSE_ERROR);
 
   gpu_suite_options_init(&options, GPU_SUITE_BENCHMARK_CUBLAS,
                          GPU_SUITE_IMPLEMENTATION_CPU);
-  CHECK(parse(&options, 11, blas_bad) == GPU_SUITE_PARSE_ERROR);
+  CHECK(ARRAY_COUNT(blas_bad) == 9);
+  CHECK(parse(&options, ARRAY_COUNT(blas_bad), blas_bad) ==
+        GPU_SUITE_PARSE_ERROR);
   gpu_suite_options_init(&options, GPU_SUITE_BENCHMARK_CUBLAS,
                          GPU_SUITE_IMPLEMENTATION_CPU);
-  CHECK(parse(&options, 7, blas_ok) == GPU_SUITE_PARSE_OK);
+  CHECK(parse(&options, ARRAY_COUNT(blas_ok), blas_ok) == GPU_SUITE_PARSE_OK);
 
   gpu_suite_options_init(&options, GPU_SUITE_BENCHMARK_CUSPARSE,
                          GPU_SUITE_IMPLEMENTATION_CPU);
-  CHECK(parse(&options, 3, sparse_bad) == GPU_SUITE_PARSE_ERROR);
+  CHECK(parse(&options, ARRAY_COUNT(sparse_bad), sparse_bad) ==
+        GPU_SUITE_PARSE_ERROR);
   gpu_suite_options_init(&options, GPU_SUITE_BENCHMARK_CUSOLVER,
                          GPU_SUITE_IMPLEMENTATION_CPU);
-  CHECK(parse(&options, 5, solver_bad) == GPU_SUITE_PARSE_ERROR);
+  CHECK(parse(&options, ARRAY_COUNT(solver_bad), solver_bad) ==
+        GPU_SUITE_PARSE_ERROR);
 
   gpu_suite_options_init(&options, GPU_SUITE_BENCHMARK_THRUST,
                          GPU_SUITE_IMPLEMENTATION_CPU);
-  CHECK(parse(&options, 2, help) == GPU_SUITE_PARSE_HELP);
+  CHECK(parse(&options, ARRAY_COUNT(help), help) == GPU_SUITE_PARSE_HELP);
   CHECK(gpu_suite_run_id_validate("a-b_c.1"));
   CHECK(!gpu_suite_run_id_validate(".hidden"));
   CHECK(!gpu_suite_run_id_validate("a..b"));
   CHECK(!gpu_suite_run_id_validate("a/b"));
   return 0;
 }
+
+#undef ARRAY_COUNT

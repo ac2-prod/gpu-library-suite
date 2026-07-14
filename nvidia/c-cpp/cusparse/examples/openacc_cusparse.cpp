@@ -47,7 +47,10 @@ int main() {
   size_t rs = row.size(), cs = col.size(), vs = val.size(), xs = x.size(),
          ys = y.size();
   cusparseHandle_t handle = nullptr;
-  cusparseCreate(&handle);
+  if (cusparseCreate(&handle) != CUSPARSE_STATUS_SUCCESS) {
+    std::fprintf(stderr, "cusparseCreate failed\n");
+    return EXIT_FAILURE;
+  }
   bool ok = true;
 #pragma acc data copyin(rp[0 : rs], cp[0 : cs], vp[0 : vs], xp[0 : xs])        \
     copy(yp[0 : ys])
@@ -70,7 +73,7 @@ int main() {
                    handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matrix,
                    vecx, &beta, vecy, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT,
                    &workspace_size) == CUSPARSE_STATUS_SUCCESS;
-    if (ok)
+    if (ok && workspace_size > 0)
       ok = cudaMalloc(&workspace, workspace_size) == cudaSuccess;
     if (ok)
       ok =

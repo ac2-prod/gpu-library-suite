@@ -126,6 +126,7 @@ collect_node() {
   classification_argument=()
   if [[ -f "${scratch}/${raw_name}" ]]; then
     if python3 "${node_tools}" classify --raw "${scratch}/${raw_name}" \
+      --node-metadata "${scratch}/node-metadata.json" \
       --output "${classification_path}" \
       >"${scratch}/logs/classification.stdout" \
       2>"${scratch}/logs/classification.stderr"; then
@@ -209,6 +210,28 @@ trap collect_node EXIT
 trap 'handle_signal HUP 129' HUP
 trap 'handle_signal INT 130' INT
 trap 'handle_signal TERM 143' TERM
+
+export GPU_SUITE_NODE_GPU_QUERY_STATUS="unavailable"
+export GPU_SUITE_NODE_GPU_QUERY_DIAGNOSTIC="nvidia-smi is unavailable"
+if command -v nvidia-smi >/dev/null 2>&1; then
+  node_gpu_name="$(nvidia-smi -i 0 --query-gpu=name --format=csv,noheader,nounits \
+    2>"${scratch}/logs/node-gpu-query.stderr")"
+  node_gpu_uuid="$(nvidia-smi -i 0 --query-gpu=uuid --format=csv,noheader,nounits \
+    2>>"${scratch}/logs/node-gpu-query.stderr")"
+  node_driver_version="$(nvidia-smi -i 0 --query-gpu=driver_version \
+    --format=csv,noheader,nounits 2>>"${scratch}/logs/node-gpu-query.stderr")"
+  if [[ -n "${node_gpu_name}" && -n "${node_gpu_uuid}" &&
+        -n "${node_driver_version}" ]]; then
+    export GPU_SUITE_GPU_NAME="${node_gpu_name}"
+    export GPU_SUITE_GPU_UUID="${node_gpu_uuid}"
+    export GPU_SUITE_NVIDIA_DRIVER_VERSION="${node_driver_version}"
+    export GPU_SUITE_NODE_GPU_QUERY_STATUS="success"
+    export GPU_SUITE_NODE_GPU_QUERY_DIAGNOSTIC=""
+  else
+    export GPU_SUITE_NODE_GPU_QUERY_STATUS="failure"
+    export GPU_SUITE_NODE_GPU_QUERY_DIAGNOSTIC="device-0 query returned incomplete data"
+  fi
+fi
 
 if ! python3 "${node_tools}" metadata --config "${config}" --manifest "${manifest}" \
   --run-id "${run_id}" --wave "${wave}" --node-index "${node_index}" \

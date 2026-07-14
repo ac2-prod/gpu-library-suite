@@ -107,6 +107,7 @@ def collect_runtime_environment(
     executor: CommandExecutor = _default_executor,
     which: Callable[[str], Optional[str]] = shutil.which,
     require_ldd: bool = False, require_gpu_tools: bool = False,
+    require_runtime_compilers: bool = False,
 ) -> Dict[str, Any]:
     manifest, manifest_sha256 = load_manifest(manifest_path)
     cpu_environment = {}  # type: Dict[str, str]
@@ -201,11 +202,16 @@ def collect_runtime_environment(
     nvcxx = command_record(["nvc++", "--version"], executor, which)
     if require_gpu_tools:
         for name, probe in (
-            ("NVIDIA driver", driver), ("nvcc", nvcc), ("nvc", nvc),
-            ("nvc++", nvcxx),
+            ("NVIDIA driver", driver), ("node GPU identity", gpu_identity),
         ):
             if probe["status"] != "success":
                 raise RuntimeEnvironmentError(name + " runtime probe failed")
+    if require_runtime_compilers:
+        for name, probe in (("nvcc", nvcc), ("nvc", nvc), ("nvc++", nvcxx)):
+            if probe["status"] != "success":
+                raise RuntimeEnvironmentError(
+                    name + " compiler probe failed under explicit site policy"
+                )
 
     library_versions = {
         "fftw3f": _library_probe(("fftw3f",), executor, which),
@@ -223,6 +229,10 @@ def collect_runtime_environment(
             "serial_cpu_baseline_effective_threads": 1,
         },
         "cuda": {
+            "compiler_probe_policy": (
+                "required-site-policy" if require_runtime_compilers
+                else "optional-metadata"
+            ),
             "configured_toolkit_root": configured_cuda_root,
             "configured_toolkit_version": configured_cuda_version,
             "nvcc": nvcc,
@@ -246,6 +256,10 @@ def collect_runtime_environment(
             "NVHPC_CUDA_HOME": environment.get("NVHPC_CUDA_HOME"),
             "compiler_nvc": nvc,
             "compiler_nvcxx": nvcxx,
+            "compiler_probe_policy": (
+                "required-site-policy" if require_runtime_compilers
+                else "optional-metadata"
+            ),
             "selected_cuda_toolkit": selected_home,
         },
         "resolved_shared_library_paths": sorted(all_resolved_paths),
@@ -269,6 +283,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--require-ldd", action="store_true")
     parser.add_argument("--require-gpu-tools", action="store_true")
+    parser.add_argument("--require-runtime-compilers", action="store_true")
     arguments = parser.parse_args(argv)
     try:
         document = collect_runtime_environment(
@@ -276,6 +291,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             arguments.cuda_toolkit_root, arguments.cuda_toolkit_version,
             arguments.nvhpc_cuda_home, require_ldd=arguments.require_ldd,
             require_gpu_tools=arguments.require_gpu_tools,
+            require_runtime_compilers=arguments.require_runtime_compilers,
         )
         content = dump_bytes(document)
         exclusive_write(arguments.output, content)

@@ -32,6 +32,8 @@ SERIES_KEYS = {
     "implementation",
     "cpu_backend",
     "cpu_backend_role",
+    "cpu_parallelism",
+    "cpu_threads_effective",
     "series_role",
 }
 PARAMETER_KEYS = {
@@ -140,10 +142,22 @@ def _validate_series(benchmark: str, definition: Mapping[str, Any]) -> None:
                 item["cpu_backend_role"] in {"production", "reference"},
                 "CPU series requires a backend role",
             )
+            _require(
+                item["cpu_parallelism"] in {"serial", "threaded", "unknown"},
+                "CPU series requires explicit parallelism",
+            )
+            effective = item["cpu_threads_effective"]
+            _require(
+                effective is None or _positive_integer(effective),
+                "CPU effective threads must be positive or null",
+            )
         else:
             _require(
-                item["cpu_backend"] is None and item["cpu_backend_role"] is None,
-                "GPU series cannot name a CPU backend",
+                item["cpu_backend"] is None
+                and item["cpu_backend_role"] is None
+                and item["cpu_parallelism"] is None
+                and item["cpu_threads_effective"] is None,
+                "GPU series cannot contain CPU metadata",
             )
         key = (implementation, item["cpu_backend"])
         _require(key not in seen, "duplicate configured series")

@@ -12,6 +12,15 @@
 
 typedef int cudaError_t;
 
+typedef struct {
+  char bytes[16];
+} cudaUUID_t;
+
+typedef struct {
+  char name[256];
+  cudaUUID_t uuid;
+} cudaDeviceProp;
+
 enum {
   cudaSuccess = 0,
   cudaMemcpyHostToDevice = 1,
@@ -27,5 +36,8 @@ cudaError_t cudaMemcpy(void *destination, const void *source, size_t size,
 cudaError_t cudaMemset(void *destination, int value, size_t size);
 cudaError_t cudaDeviceSynchronize(void);
 cudaError_t cudaSetDevice(int device);
+cudaError_t cudaGetDeviceProperties(cudaDeviceProp *properties, int device);
+cudaError_t cudaDriverGetVersion(int *version);
+cudaError_t cudaRuntimeGetVersion(int *version);
 
 #endif

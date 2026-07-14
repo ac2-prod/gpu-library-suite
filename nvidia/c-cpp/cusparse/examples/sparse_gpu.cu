@@ -79,12 +79,15 @@ int main() {
       cusparseSpMV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
                               matrix, vecx, &beta, vecy, CUDA_R_64F,
                               CUSPARSE_SPMV_ALG_DEFAULT,
-                              &workspace_size) != CUSPARSE_STATUS_SUCCESS ||
-      cudaMalloc(&workspace, workspace_size) != cudaSuccess ||
+                              &workspace_size) != CUSPARSE_STATUS_SUCCESS)
+    goto cleanup;
+  if (workspace_size > 0 &&
+      cudaMalloc(&workspace, workspace_size) != cudaSuccess)
+    goto cleanup;
+  if (
       cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matrix,
                    vecx, &beta, vecy, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT,
                    workspace) != CUSPARSE_STATUS_SUCCESS ||
-      cudaDeviceSynchronize() != cudaSuccess ||
       cudaMemcpy(y.data(), dy, y.size() * sizeof(double),
                  cudaMemcpyDeviceToHost) != cudaSuccess)
     goto cleanup;

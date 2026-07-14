@@ -105,6 +105,49 @@ class RuntimeEnvironmentTests(unittest.TestCase):
                     environment,
                 )
 
+    def test_runtime_compilers_are_optional_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            inputs = write_campaign_inputs(directory)
+            module_list = directory / "module-list.txt"
+            module_list.write_text("runtime/1\n", encoding="utf-8")
+
+            def which(name):
+                if name in {"nvcc", "nvc", "nvc++"}:
+                    return None
+                return "/fake/" + name
+
+            def execute(arguments):
+                name = Path(arguments[0]).name
+                if name == "ldd":
+                    return 0, "libfixture.so => /lib/libfixture.so (0x1)\n"
+                if name == "nvidia-smi":
+                    return 0, "fixture-gpu\n"
+                if name == "pkg-config":
+                    return 1, ""
+                return 0, "fixture\n"
+
+            environment = dict(CPU_ENVIRONMENT)
+            environment["NVHPC_CUDA_HOME"] = str(directory / "cuda")
+            document = collect_runtime_environment(
+                inputs["manifest"], [inputs["metadata"]], module_list,
+                str(directory / "cuda"), "fixture-toolkit",
+                str(directory / "cuda"), environment, execute, which,
+                require_ldd=True, require_gpu_tools=True,
+            )
+            self.assertEqual(document["cuda"]["nvcc"]["status"],
+                             "unavailable")
+            self.assertEqual(document["nvhpc"]["compiler_nvc"]["status"],
+                             "unavailable")
+            with self.assertRaises(RuntimeEnvironmentError):
+                collect_runtime_environment(
+                    inputs["manifest"], [inputs["metadata"]], module_list,
+                    str(directory / "cuda"), "fixture-toolkit",
+                    str(directory / "cuda"), environment, execute, which,
+                    require_ldd=True, require_gpu_tools=True,
+                    require_runtime_compilers=True,
+                )
+
 
 class TelemetryTests(unittest.TestCase):
     RAW = (

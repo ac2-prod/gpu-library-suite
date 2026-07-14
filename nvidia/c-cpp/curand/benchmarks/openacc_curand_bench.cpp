@@ -11,20 +11,36 @@
 
 namespace {
 
+bool cuda_success(cudaError_t status, const char *api) {
+  if (status == cudaSuccess)
+    return true;
+  std::fprintf(stderr, "%s: %s\n", api, cudaGetErrorString(status));
+  return false;
+}
+
+bool curand_success(curandStatus_t status, const char *api) {
+  if (status == CURAND_STATUS_SUCCESS)
+    return true;
+  std::fprintf(stderr, "%s: cuRAND status %d\n", api,
+               static_cast<int>(status));
+  return false;
+}
+
 bool configure_generator(curandGenerator_t generator,
                          const gpu_suite_options &options) {
-  return curandSetPseudoRandomGeneratorSeed(generator, options.seed) ==
-             CURAND_STATUS_SUCCESS &&
-         curandSetGeneratorOffset(generator, options.offset) ==
-             CURAND_STATUS_SUCCESS;
+  return curand_success(
+             curandSetPseudoRandomGeneratorSeed(generator, options.seed),
+             "curandSetPseudoRandomGeneratorSeed") &&
+         curand_success(curandSetGeneratorOffset(generator, options.offset),
+                        "curandSetGeneratorOffset");
 }
 
 bool generate(curandGenerator_t generator, double *values, std::size_t count) {
   bool ok = true;
 #pragma acc host_data use_device(values)
   {
-    ok = curandGenerateUniformDouble(generator, values, count) ==
-         CURAND_STATUS_SUCCESS;
+    ok = curand_success(curandGenerateUniformDouble(generator, values, count),
+                        "curandGenerateUniformDouble");
   }
   return ok;
 }
@@ -59,7 +75,7 @@ int main(int argc, char **argv) {
   try {
     std::vector<double> values(count);
     double *values_ptr = values.data();
-    if (cudaSetDevice(options.device) != cudaSuccess) {
+    if (!cuda_success(cudaSetDevice(options.device), "cudaSetDevice")) {
       gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
                                  "cudaSetDevice failed");
       writer.close();
@@ -69,36 +85,44 @@ int main(int argc, char **argv) {
     if (options.scope == GPU_SUITE_SCOPE_COMPUTE) {
       curandGenerator_t generator = nullptr;
       bool setup_ok =
-          curandCreateGenerator(&generator, CURAND_RNG_PSEUDO_DEFAULT) ==
-              CURAND_STATUS_SUCCESS &&
+          curand_success(
+              curandCreateGenerator(&generator, CURAND_RNG_PSEUDO_DEFAULT),
+              "curandCreateGenerator") &&
           configure_generator(generator, options);
 #pragma acc data copyout(values_ptr[0 : count])
       {
         for (int warmup = 0; warmup < options.warmup && setup_ok; ++warmup) {
           setup_ok = generate(generator, values_ptr, count) &&
-                     cudaDeviceSynchronize() == cudaSuccess;
+                     cuda_success(cudaDeviceSynchronize(),
+                                  "warmup synchronize");
         }
         for (int trial = 0; trial < options.trials && setup_ok; ++trial) {
           gpu_suite_result result;
-          gpu_suite::initialize_result(result, options, trial);
+          if (!gpu_suite::initialize_result(result, options, trial)) {
+            setup_ok = false;
+            any_failure = true;
+            break;
+          }
           char start_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
           char end_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
           struct timespec start;
           struct timespec end;
           bool ok =
               configure_generator(generator, options) &&
-              gpu_suite_utc_timestamp(start_timestamp, error, sizeof(error)) ==
-                  GPU_SUITE_OK &&
-              cudaDeviceSynchronize() == cudaSuccess &&
-              gpu_suite_clock_now(&start, error, sizeof(error)) == GPU_SUITE_OK;
+              cuda_success(cudaDeviceSynchronize(),
+                           "pre-timing synchronize") &&
+              gpu_suite_measurement_start(start_timestamp, &start, error,
+                                           sizeof(error)) == GPU_SUITE_OK;
           for (int repeat = 0; repeat < options.repeat && ok; ++repeat) {
             ok = generate(generator, values_ptr, count);
           }
-          ok = ok && cudaDeviceSynchronize() == cudaSuccess &&
-               gpu_suite_clock_now(&end, error, sizeof(error)) == GPU_SUITE_OK;
+          ok = ok && cuda_success(cudaDeviceSynchronize(),
+                                  "post-timing synchronize") &&
+               gpu_suite_measurement_end(&end, end_timestamp, error,
+                                          sizeof(error)) == GPU_SUITE_OK;
 #pragma acc update self(values_ptr[0 : count])
-          ok = ok && gpu_suite_utc_timestamp(end_timestamp, error,
-                                             sizeof(error)) == GPU_SUITE_OK;
+          ok = ok && cuda_success(cudaDeviceSynchronize(),
+                                  "OpenACC update self random output");
           if (ok) {
             const double elapsed = gpu_suite_clock_elapsed(&start, &end);
             result.measurement_start_timestamp = start_timestamp;
@@ -124,7 +148,10 @@ int main(int argc, char **argv) {
             result.message = "OpenACC cuRAND compute pipeline failed";
             any_failure = true;
           }
-          writer.write(result);
+          if (!writer.write(result)) {
+            ok = false;
+            any_failure = true;
+          }
           gpu_suite_result_destroy(&result);
           if (!ok) {
             gpu_suite::emit_unmeasured(writer, options, trial + 1, false,
@@ -144,37 +171,46 @@ int main(int argc, char **argv) {
     } else {
       for (int trial = 0; trial < options.trials; ++trial) {
         gpu_suite_result result;
-        gpu_suite::initialize_result(result, options, trial);
+        if (!gpu_suite::initialize_result(result, options, trial)) {
+          any_failure = true;
+          break;
+        }
         char start_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
         char end_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
         double elapsed_total = 0.0;
-        bool ok = gpu_suite_utc_timestamp(start_timestamp, error,
-                                          sizeof(error)) == GPU_SUITE_OK;
+        bool ok = true;
         for (int repeat = 0; repeat < options.repeat && ok; ++repeat) {
           curandGenerator_t generator = nullptr;
           struct timespec start;
           struct timespec end;
-          ok = gpu_suite_clock_now(&start, error, sizeof(error)) ==
+          ok = (repeat == 0
+                    ? gpu_suite_measurement_start(start_timestamp, &start,
+                                                  error, sizeof(error))
+                    : gpu_suite_clock_now(&start, error, sizeof(error))) ==
                    GPU_SUITE_OK &&
-               curandCreateGenerator(&generator, CURAND_RNG_PSEUDO_DEFAULT) ==
-                   CURAND_STATUS_SUCCESS &&
+               curand_success(
+                   curandCreateGenerator(&generator, CURAND_RNG_PSEUDO_DEFAULT),
+                   "curandCreateGenerator") &&
                configure_generator(generator, options);
 #pragma acc data copyout(values_ptr[0 : count])
           {
             if (ok) {
               ok = generate(generator, values_ptr, count) &&
-                   cudaDeviceSynchronize() == cudaSuccess;
+                   cuda_success(cudaDeviceSynchronize(),
+                                "generation synchronize");
             }
           }
-          ok = ok &&
-               gpu_suite_clock_now(&end, error, sizeof(error)) == GPU_SUITE_OK;
+          if (ok)
+            ok = (repeat + 1 == options.repeat
+                      ? gpu_suite_measurement_end(&end, end_timestamp, error,
+                                                  sizeof(error))
+                      : gpu_suite_clock_now(&end, error, sizeof(error))) ==
+                 GPU_SUITE_OK;
           if (ok)
             elapsed_total += gpu_suite_clock_elapsed(&start, &end);
           if (generator != nullptr)
             curandDestroyGenerator(generator);
         }
-        ok = ok && gpu_suite_utc_timestamp(end_timestamp, error,
-                                           sizeof(error)) == GPU_SUITE_OK;
         if (ok) {
           result.measurement_start_timestamp = start_timestamp;
           result.measurement_end_timestamp = end_timestamp;
@@ -200,7 +236,10 @@ int main(int argc, char **argv) {
           result.message = "OpenACC end-to-end cuRAND pipeline failed";
           any_failure = true;
         }
-        writer.write(result);
+        if (!writer.write(result)) {
+          ok = false;
+          any_failure = true;
+        }
         gpu_suite_result_destroy(&result);
         if (!ok) {
           gpu_suite::emit_unmeasured(writer, options, trial + 1, false,

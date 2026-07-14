@@ -13,7 +13,13 @@ from gpu_suite.hashing import sha256_bytes, sha256_file
 from gpu_suite.manifest import artifact_id
 from gpu_suite.ordering import implementation_order
 from gpu_suite.results_io import load_raw_results
-from gpu_suite.runner import execute_schedule, load_manifest, synthetic_result
+from gpu_suite.runner import (
+    RunnerError,
+    build_schedule,
+    execute_schedule,
+    load_manifest,
+    synthetic_result,
+)
 from gpu_suite.schema import validate_raw_result
 from gpu_suite.strict_json import dump_bytes, dumps, loads
 from gpu_suite.validation import validate_campaign
@@ -39,6 +45,8 @@ def execution_fixture(trials=3, continue_on_failure=True):
         "compiler": "TestCompiler",
         "compiler_language": "c",
         "compiler_version": "1.0",
+        "global_configure_flags": "-O3",
+        "git_metadata_available": True,
         "git_commit": "abc",
         "git_dirty": False,
         "supported_cpu_backends": ["cpu-fftw-threaded", "cpu-fftw-serial"],
@@ -47,11 +55,12 @@ def execution_fixture(trials=3, continue_on_failure=True):
         entry["build_metadata_sha256"]: {
             "build_profile": "cpu-cuda",
             "build_type": "Release",
+            "git_metadata_available": True,
             "git_commit": "abc",
             "git_dirty": False,
             "c": {
                 "compiler": "TestCompiler",
-                "compiler_flags": "-O3",
+                "global_configure_flags": "-O3",
                 "compiler_version": "1.0",
             },
         }
@@ -75,6 +84,8 @@ def execution_fixture(trials=3, continue_on_failure=True):
             "implementation": "cpu",
             "cpu_backend": "cpu-fftw-threaded",
             "cpu_backend_role": "production",
+            "cpu_parallelism": "threaded",
+            "cpu_threads_effective": 48,
             "series_role": "primary",
         },
     }
@@ -130,6 +141,50 @@ def verification_failure_record(item, context, metadata, trial):
 
 
 class RunnerTests(unittest.TestCase):
+    def test_duplicate_benchmark_manifest_entry_is_defensively_rejected(self):
+        _, context, _ = execution_fixture()
+        entry = {
+            "artifact_id": "a" * 64,
+            "executable_role": "benchmark",
+            "implementation": "cpu",
+            "library": "cufft",
+        }
+        duplicate = dict(entry)
+        duplicate["artifact_id"] = "b" * 64
+        with self.assertRaisesRegex(
+            RunnerError, "duplicate benchmark manifest entry: cufft/cpu"
+        ):
+            build_schedule(
+                pilot_config(),
+                {"entries": [entry, duplicate], "manifest_schema_version": 1},
+                context,
+            )
+
+    def test_schedule_uses_config_owned_cpu_metadata_and_thresholds(self):
+        item, context, _ = execution_fixture()
+        schedule = build_schedule(
+            pilot_config(),
+            {"entries": [item["entry"]], "manifest_schema_version": 1},
+            context,
+        )
+        threaded = next(
+            candidate for candidate in schedule
+            if candidate["benchmark"] == "cufft"
+            and candidate["series"]["cpu_backend"] == "cpu-fftw-threaded"
+            and candidate["scope"] == "compute"
+        )
+        command = threaded["argv"]
+
+        def value(name):
+            return command[command.index(name) + 1]
+
+        self.assertEqual(value("--cpu-backend-role"), "production")
+        self.assertEqual(value("--series-role"), "primary")
+        self.assertEqual(value("--cpu-parallelism"), "threaded")
+        self.assertEqual(value("--cpu-threads-effective"), "48")
+        self.assertEqual(value("--abs-tolerance"), "0.0001")
+        self.assertEqual(value("--rel-tolerance"), "1e-05")
+
     def test_verification_failure_can_be_followed_by_restored_trials(self):
         item, context, metadata = execution_fixture()
         emitted = [
@@ -240,9 +295,10 @@ class RunnerTests(unittest.TestCase):
                 "build_type": "Release",
                 "c": {
                     "compiler": "TestCompiler",
-                    "compiler_flags": "-O3",
+                    "global_configure_flags": "-O3",
                     "compiler_version": "1.0",
                 },
+                "git_metadata_available": True,
                 "git_commit": "abc",
                 "git_dirty": False,
             }
@@ -263,6 +319,8 @@ class RunnerTests(unittest.TestCase):
                 "compiler": "TestCompiler",
                 "compiler_language": "c",
                 "compiler_version": "1.0",
+                "global_configure_flags": "-O3",
+                "git_metadata_available": True,
                 "git_commit": "abc",
                 "git_dirty": False,
                 "supported_cpu_backends": [

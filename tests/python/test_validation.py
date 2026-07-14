@@ -61,6 +61,8 @@ class ValidationTests(unittest.TestCase):
             "compiler": "TestCompiler",
             "compiler_language": "c",
             "compiler_version": "1.0",
+            "global_configure_flags": "-O3",
+            "git_metadata_available": True,
             "git_commit": "abc",
             "git_dirty": False,
             "supported_cpu_backends": [
@@ -72,7 +74,7 @@ class ValidationTests(unittest.TestCase):
             "c" * 64: {
                 "c": {
                     "compiler": "TestCompiler",
-                    "compiler_flags": "-O3",
+                    "global_configure_flags": "-O3",
                     "compiler_version": "1.0",
                 }
             }

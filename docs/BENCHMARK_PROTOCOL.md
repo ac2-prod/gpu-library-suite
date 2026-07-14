@@ -55,6 +55,10 @@ Every benchmark supports:
 | `--wave` | Non-negative campaign wave supplied by the runner. |
 | `--seed` | Explicit seed where the workload uses randomness. |
 | `--cpu-threads` | Requested CPU thread count. |
+| `--cpu-threads-effective` | Positive observed/configured effective CPU thread count; omit when unknown. |
+| `--cpu-backend-role` | Config-owned CPU role: `production` or `reference`. |
+| `--series-role` | Config-owned series role: `primary` or `auxiliary`. |
+| `--cpu-parallelism` | Config-owned/observed CPU execution kind: `serial`, `threaded`, or `unknown`. |
 | `--implementation-order <list>` | Runner-computed comma-separated list such as `cpu,cuda,openacc`. |
 | `--abs-tolerance` | Non-negative absolute verification tolerance from the effective configuration. |
 | `--rel-tolerance` | Non-negative relative verification tolerance from the effective configuration. |
@@ -250,6 +254,16 @@ Raw results distinguish:
   when it cannot be established; and
 - `cpu_parallelism`: `serial`, `threaded`, or `unknown`.
 
+The effective configuration is authoritative for `cpu_backend_role`,
+`series_role`, and the expected parallelism/known effective-thread metadata of
+each configured series. `run_suite.py` passes those values to the benchmark and
+validates emitted rows against the same series object. Common result code must
+not infer a role from a backend-name substring, special-case one backend name
+to choose a series role, or classify every non-serial name as threaded. A
+requested thread count is never copied into `cpu_threads_effective` merely
+because no better observation exists. An unobservable effective count is null;
+unestablished parallelism is `unknown`.
+
 Backend-specific thread control is as follows:
 
 - OpenMP code uses the requested value through `OMP_NUM_THREADS` and, where the
@@ -438,6 +452,15 @@ unexplained tolerance magic numbers. Ordinary numerical error passes when:
 ```text
 error <= abs_tolerance + rel_tolerance * reference_scale
 ```
+
+Suite execution requires each benchmark's complete verification object in the
+effective configuration and passes every operand explicitly on the benchmark
+command line. The runner rejects missing operands. Standalone invocation keeps
+documented smoke defaults: absolute `1e-12` and relative `1e-10`, except cuFFT
+absolute `1e-4` and relative `1e-5`; cuRAND uses
+`sigma_multiplier=6`, `expected_mean=0.5`, and
+`expected_second_central_moment=1/12`. These built-in defaults are not
+production-suite configuration and never override an effective configuration.
 
 Every benchmark, including single-metric cases, emits objects:
 

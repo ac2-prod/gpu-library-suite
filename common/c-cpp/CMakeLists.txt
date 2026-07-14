@@ -1,3 +1,9 @@
+add_library(gpu_suite_math INTERFACE)
+add_library(gpu_suite::math ALIAS gpu_suite_math)
+if(UNIX AND NOT APPLE)
+  target_link_libraries(gpu_suite_math INTERFACE m)
+endif()
+
 add_library(gpu_suite_common STATIC
   src/checked.c
   src/benchmark.c
@@ -8,6 +14,8 @@ add_library(gpu_suite_common STATIC
   src/metadata.c)
 
 add_library(gpu_suite::common ALIAS gpu_suite_common)
+
+target_link_libraries(gpu_suite_common PUBLIC gpu_suite::math)
 
 target_include_directories(gpu_suite_common
   PUBLIC

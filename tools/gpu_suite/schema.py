@@ -57,10 +57,11 @@ RAW_FIELDS = (
     "cuda_driver_version",
     "compiler",
     "compiler_version",
-    "compiler_flags",
+    "global_configure_flags",
     "library_name",
     "library_version",
     "cuda_runtime_version",
+    "git_metadata_available",
     "git_commit",
     "git_dirty",
     "git_diff_sha256",
@@ -149,7 +150,7 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
              record["measurement_start_timestamp"] is not None,
              "measurement end requires a start")
     for name in ("system_label", "hostname", "compiler", "compiler_version",
-                 "compiler_flags", "library_name", "git_commit", "message"):
+                 "global_configure_flags", "library_name", "message"):
         _require(isinstance(record[name], str), "{0} must be a string".format(name))
     for name in ("wave", "node_index", "warmup", "repeat", "trial"):
         _require(_is_integer(record[name]) and record[name] >= 0,
@@ -180,6 +181,33 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
     for name in ("cpu_threads_requested", "cpu_threads_effective", "getrf_info",
                  "getrs_info", "device_id", "exit_code"):
         _require(_optional_integer(record[name]), "invalid {0}".format(name))
+    if record["implementation"] == "cpu":
+        _require(isinstance(record["cpu_backend"], str) and
+                 record["cpu_backend"] != "", "CPU backend is required")
+        _require(record["cpu_backend_role"] in {"production", "reference"},
+                 "invalid CPU backend role")
+        _require(record["cpu_parallelism"] in {"serial", "threaded", "unknown"},
+                 "invalid CPU parallelism")
+        _require(_is_integer(record["cpu_threads_requested"]) and
+                 record["cpu_threads_requested"] > 0,
+                 "CPU requested threads must be positive")
+        _require(record["cpu_threads_effective"] is None or
+                 record["cpu_threads_effective"] > 0,
+                 "CPU effective threads must be positive or null")
+    else:
+        _require(record["cpu_backend"] is None and
+                 record["cpu_backend_role"] is None and
+                 record["cpu_threads_requested"] is None and
+                 record["cpu_threads_effective"] is None and
+                 record["cpu_parallelism"] is None,
+                 "GPU row contains CPU metadata")
+        if record["status"] == "success":
+            for name in (
+                "gpu_name", "gpu_uuid", "cuda_driver_version",
+                "cuda_runtime_version", "library_version",
+            ):
+                _require(isinstance(record[name], str) and record[name] != "",
+                         "successful GPU row requires {0}".format(name))
     _require(isinstance(record["attempted"], bool), "attempted must be boolean")
     origin = record["failure_origin"]
     _require(origin is None or origin in FAILURE_ORIGINS, "invalid failure_origin")
@@ -201,7 +229,18 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
     _require(record["verification_status"] in
              {"pass", "failure", "skipped", "nonfinite"},
              "invalid verification_status")
-    _require(isinstance(record["git_dirty"], bool), "git_dirty must be boolean")
+    available = record["git_metadata_available"]
+    _require(isinstance(available, bool),
+             "git_metadata_available must be boolean")
+    if available:
+        _require(isinstance(record["git_commit"], str) and
+                 record["git_commit"] != "",
+                 "available Git metadata requires a commit")
+        _require(isinstance(record["git_dirty"], bool),
+                 "available Git metadata requires dirty state")
+    else:
+        _require(record["git_commit"] is None and record["git_dirty"] is None,
+                 "unavailable Git metadata requires null commit and dirty")
     for name in ("config_sha256", "runtime_environment_sha256", "binary_sha256"):
         _require(isinstance(record[name], str) and
                  SHA256_RE.fullmatch(record[name]) is not None,

@@ -68,10 +68,11 @@ typedef struct {
   const char *cuda_driver_version;
   const char *compiler;
   const char *compiler_version;
-  const char *compiler_flags;
+  const char *global_configure_flags;
   const char *library_name;
   const char *library_version;
   const char *cuda_runtime_version;
+  bool git_metadata_available;
   const char *git_commit;
   bool git_dirty;
   const char *git_diff_sha256;
@@ -87,6 +88,11 @@ typedef struct {
   char block_id_storage[GPU_SUITE_RUN_ID_CAPACITY + GPU_SUITE_LABEL_CAPACITY +
                         32];
   char record_timestamp_storage[GPU_SUITE_TIMESTAMP_CAPACITY];
+  char gpu_name_storage[GPU_SUITE_LABEL_CAPACITY];
+  char gpu_uuid_storage[64];
+  char cuda_driver_version_storage[32];
+  char cuda_runtime_version_storage[32];
+  char library_version_storage[32];
 } gpu_suite_result;
 
 int gpu_suite_result_init(gpu_suite_result *result);

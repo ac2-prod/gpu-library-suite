@@ -117,19 +117,22 @@ int main(int argc, char **argv) {
 
     for (int trial = 0; trial < options.trials; ++trial) {
       gpu_suite_result result;
-      gpu_suite::initialize_result(result, options, trial);
+      if (!gpu_suite::initialize_result(result, options, trial)) {
+        any_failure = true;
+        break;
+      }
       char start_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
       char end_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
       struct timespec start;
       struct timespec end;
       double elapsed_total = 0.0;
-      bool ok = gpu_suite_utc_timestamp(start_timestamp, error,
-                                        sizeof(error)) == GPU_SUITE_OK;
+      bool ok = true;
 
-      if (options.scope == GPU_SUITE_SCOPE_COMPUTE && ok) {
+      if (options.scope == GPU_SUITE_SCOPE_COMPUTE) {
         ok = reset_generator(persistent, options) &&
              cuda_success(cudaDeviceSynchronize(), "pre-timing synchronize") &&
-             gpu_suite_clock_now(&start, error, sizeof(error)) == GPU_SUITE_OK;
+             gpu_suite_measurement_start(start_timestamp, &start, error,
+                                          sizeof(error)) == GPU_SUITE_OK;
         for (int repeat = 0; repeat < options.repeat && ok; ++repeat) {
           ok = curand_success(curandGenerateUniformDouble(persistent.generator,
                                                           persistent.values,
@@ -139,7 +142,8 @@ int main(int argc, char **argv) {
         ok = ok &&
              cuda_success(cudaDeviceSynchronize(),
                           "post-generation synchronize") &&
-             gpu_suite_clock_now(&end, error, sizeof(error)) == GPU_SUITE_OK;
+             gpu_suite_measurement_end(&end, end_timestamp, error,
+                                        sizeof(error)) == GPU_SUITE_OK;
         if (ok) {
           elapsed_total = gpu_suite_clock_elapsed(&start, &end);
           ok = cuda_success(cudaMemcpy(values.data(), persistent.values,
@@ -147,11 +151,14 @@ int main(int argc, char **argv) {
                                        cudaMemcpyDeviceToHost),
                             "copy random output");
         }
-      } else if (ok) {
+      } else {
         for (int repeat = 0; repeat < options.repeat && ok; ++repeat) {
           RandomContext current;
           ok =
-              gpu_suite_clock_now(&start, error, sizeof(error)) ==
+              (repeat == 0
+                   ? gpu_suite_measurement_start(start_timestamp, &start,
+                                                 error, sizeof(error))
+                   : gpu_suite_clock_now(&start, error, sizeof(error))) ==
                   GPU_SUITE_OK &&
               create_context(current, count, options) &&
               curand_success(curandGenerateUniformDouble(current.generator,
@@ -161,16 +168,19 @@ int main(int argc, char **argv) {
               cuda_success(cudaMemcpy(values.data(), current.values,
                                       count * sizeof(double),
                                       cudaMemcpyDeviceToHost),
-                           "copy random output") &&
-              gpu_suite_clock_now(&end, error, sizeof(error)) == GPU_SUITE_OK;
+                           "copy random output");
+          if (ok)
+            ok = (repeat + 1 == options.repeat
+                      ? gpu_suite_measurement_end(&end, end_timestamp, error,
+                                                  sizeof(error))
+                      : gpu_suite_clock_now(&end, error, sizeof(error))) ==
+                 GPU_SUITE_OK;
           if (ok)
             elapsed_total += gpu_suite_clock_elapsed(&start, &end);
           destroy_context(current);
         }
       }
 
-      ok = ok && gpu_suite_utc_timestamp(end_timestamp, error, sizeof(error)) ==
-                     GPU_SUITE_OK;
       if (ok) {
         result.measurement_start_timestamp = start_timestamp;
         result.measurement_end_timestamp = end_timestamp;

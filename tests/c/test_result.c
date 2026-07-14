@@ -41,6 +41,7 @@ int main(void) {
   gpu_suite_options options;
   gpu_suite_result result;
   gpu_suite_result skipped;
+  gpu_suite_result gpu;
   char error[256] = {0};
   FILE *stream;
   char *content;
@@ -100,6 +101,24 @@ int main(void) {
   assert(gpu_suite_result_validate(&skipped, error, sizeof(error)) !=
          GPU_SUITE_OK);
 
+  gpu_suite_options_init(&options, GPU_SUITE_BENCHMARK_CUFFT,
+                         GPU_SUITE_IMPLEMENTATION_CUDA);
+  options.size = 256U;
+  options.size_set = true;
+  options.batch = 8U;
+  options.repeat = 2;
+  assert(gpu_suite_result_init(&gpu) == GPU_SUITE_OK);
+  assert(gpu_suite_result_apply_options(&gpu, &options, error,
+                                        sizeof(error)) == GPU_SUITE_OK);
+  finalize_success(&gpu);
+  assert(gpu_suite_result_validate(&gpu, error, sizeof(error)) != GPU_SUITE_OK);
+  gpu.gpu_name = "Test GPU";
+  gpu.gpu_uuid = "GPU-11111111-1111-1111-1111-111111111111";
+  gpu.cuda_driver_version = "12.8.0";
+  gpu.cuda_runtime_version = "12.8.0";
+  gpu.library_version = "12080";
+  assert(gpu_suite_result_validate(&gpu, error, sizeof(error)) == GPU_SUITE_OK);
+
   descriptor = mkstemp(path);
   assert(descriptor >= 0);
   assert(close(descriptor) == 0);
@@ -114,6 +133,7 @@ int main(void) {
   assert(unlink(path) == 0);
 
   gpu_suite_result_destroy(&skipped);
+  gpu_suite_result_destroy(&gpu);
   gpu_suite_result_destroy(&result);
   return 0;
 }

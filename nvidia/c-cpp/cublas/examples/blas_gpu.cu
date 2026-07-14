@@ -37,7 +37,6 @@ int main() {
       cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, device_a,
                   m, device_b, k, &beta, device_c,
                   m) != CUBLAS_STATUS_SUCCESS ||
-      cudaDeviceSynchronize() != cudaSuccess ||
       cudaMemcpy(c.data(), device_c, c.size() * sizeof(double),
                  cudaMemcpyDeviceToHost) != cudaSuccess) {
     std::fprintf(stderr, "cuBLAS DGEMM pipeline failed\n");

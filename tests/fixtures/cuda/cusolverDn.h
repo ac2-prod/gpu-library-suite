@@ -7,8 +7,14 @@ typedef void *cusolverDnHandle_t;
 typedef int cusolverStatus_t;
 
 enum { CUSOLVER_STATUS_SUCCESS = 0 };
+typedef enum {
+  MAJOR_VERSION = 0,
+  MINOR_VERSION = 1,
+  PATCH_LEVEL = 2
+} libraryPropertyType;
 
 cusolverStatus_t cusolverDnCreate(cusolverDnHandle_t *handle);
+cusolverStatus_t cusolverGetProperty(libraryPropertyType type, int *value);
 cusolverStatus_t cusolverDnDestroy(cusolverDnHandle_t handle);
 cusolverStatus_t cusolverDnDgetrf_bufferSize(cusolverDnHandle_t handle, int m,
                                              int n, double *a, int lda,

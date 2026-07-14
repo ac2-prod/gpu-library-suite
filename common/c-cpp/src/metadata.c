@@ -4,12 +4,18 @@
 
 #include <string.h>
 
+bool gpu_suite_build_git_metadata_available(void) {
+  return GPU_SUITE_BUILD_GIT_METADATA_AVAILABLE != 0;
+}
+
 const char *gpu_suite_build_git_commit(void) {
-  return GPU_SUITE_BUILD_GIT_COMMIT;
+  return gpu_suite_build_git_metadata_available() ? GPU_SUITE_BUILD_GIT_COMMIT
+                                                   : NULL;
 }
 
 bool gpu_suite_build_git_dirty(void) {
-  return strcmp(GPU_SUITE_BUILD_GIT_DIRTY, "true") == 0;
+  return gpu_suite_build_git_metadata_available() &&
+         GPU_SUITE_BUILD_GIT_DIRTY != 0;
 }
 
 const char *gpu_suite_build_type(void) { return GPU_SUITE_BUILD_TYPE; }
@@ -44,12 +50,13 @@ gpu_suite_build_compiler_version(gpu_suite_implementation implementation) {
 }
 
 const char *
-gpu_suite_build_compiler_flags(gpu_suite_implementation implementation) {
+gpu_suite_build_global_configure_flags(
+    gpu_suite_implementation implementation) {
   if (implementation == GPU_SUITE_IMPLEMENTATION_CUDA) {
     return GPU_SUITE_BUILD_CUDA_FLAGS;
   }
   if (implementation == GPU_SUITE_IMPLEMENTATION_OPENACC) {
-    return GPU_SUITE_BUILD_OPENACC_COMPILE_FLAGS;
+    return GPU_SUITE_BUILD_CXX_FLAGS;
   }
   return GPU_SUITE_BUILD_C_FLAGS;
 }
@@ -77,17 +84,13 @@ const char *gpu_suite_build_benchmark_compiler_version(
   return gpu_suite_build_compiler_version(implementation);
 }
 
-const char *gpu_suite_build_benchmark_compiler_flags(
+const char *gpu_suite_build_benchmark_global_configure_flags(
     gpu_suite_implementation implementation, const char *benchmark) {
-  if (implementation == GPU_SUITE_IMPLEMENTATION_OPENACC &&
-      benchmark != NULL && strcmp(benchmark, "thrust") == 0) {
-    return GPU_SUITE_BUILD_OPENACC_THRUST_COMPILE_FLAGS;
-  }
   if (implementation == GPU_SUITE_IMPLEMENTATION_CPU &&
       cpu_benchmark_uses_cxx(benchmark)) {
     return GPU_SUITE_BUILD_CXX_FLAGS;
   }
-  return gpu_suite_build_compiler_flags(implementation);
+  return gpu_suite_build_global_configure_flags(implementation);
 }
 
 const char *gpu_suite_build_cuda_toolkit_version(void) {

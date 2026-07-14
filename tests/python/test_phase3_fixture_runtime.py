@@ -28,7 +28,9 @@ class Phase3FixtureRuntimeTests(unittest.TestCase):
         records, stderr = run_benchmark(
             os.environ["GPU_SUITE_CBLAS_FIXTURE_BENCH"],
             ["--size", "8", "--warmup", "1", "--repeat", "2", "--trials", "2",
-             "--scope", "compute", "--verify", "true", "--cpu-backend", "cpu-onemkl"],
+             "--scope", "compute", "--verify", "true", "--cpu-backend", "cpu-onemkl",
+             "--cpu-threads", "48", "--cpu-backend-role", "production",
+             "--series-role", "primary", "--cpu-parallelism", "threaded"],
         )
         self.assertEqual(stderr, "")
         validate_trial_indices(records, 2)
@@ -41,7 +43,9 @@ class Phase3FixtureRuntimeTests(unittest.TestCase):
         records, _ = run_benchmark(
             os.environ["GPU_SUITE_SPARSE_FIXTURE_BENCH"],
             ["--size", "16", "--warmup", "1", "--repeat", "2", "--trials", "2",
-             "--scope", "compute", "--verify", "true", "--cpu-backend", "cpu-onemkl"],
+             "--scope", "compute", "--verify", "true", "--cpu-backend", "cpu-onemkl",
+             "--cpu-threads", "48", "--cpu-backend-role", "production",
+             "--series-role", "primary", "--cpu-parallelism", "threaded"],
         )
         validate_trial_indices(records, 2)
         self.assertTrue(all(record["verification_metrics"]["max_abs_error"] == 0.0 for record in records))
@@ -52,7 +56,9 @@ class Phase3FixtureRuntimeTests(unittest.TestCase):
             os.environ["GPU_SUITE_SOLVER_FIXTURE_BENCH"],
             ["--size", "8", "--nrhs", "2", "--warmup", "1", "--repeat", "1",
              "--trials", "2", "--scope", "end-to-end", "--verify", "true",
-             "--cpu-backend", "cpu-onemkl"],
+             "--cpu-backend", "cpu-onemkl", "--cpu-threads", "48",
+             "--cpu-backend-role", "production", "--series-role", "primary",
+             "--cpu-parallelism", "threaded"],
         )
         validate_trial_indices(records, 2)
         for record in records:
@@ -67,7 +73,9 @@ class Phase3FixtureRuntimeTests(unittest.TestCase):
             os.environ["GPU_SUITE_RAND_CPU_BENCH"],
             ["--size", "65536", "--warmup", "1", "--repeat", "2", "--trials", "1",
              "--scope", "compute", "--verify", "true",
-             "--cpu-backend", "cpu-std-random-serial"],
+             "--cpu-backend", "cpu-std-random-serial", "--cpu-threads", "48",
+             "--cpu-threads-effective", "1", "--cpu-backend-role", "production",
+             "--series-role", "primary", "--cpu-parallelism", "serial"],
         )
         record = records[0]
         metrics = record["verification_metrics"]
@@ -85,11 +93,14 @@ class Phase3FixtureRuntimeTests(unittest.TestCase):
         records, _ = run_benchmark(
             os.environ["GPU_SUITE_REDUCE_CPU_BENCH"],
             ["--size", "4096", "--warmup", "1", "--repeat", "1", "--trials", "2",
-             "--scope", "end-to-end", "--verify", "true", "--cpu-backend", "cpu-stl-serial"],
+             "--scope", "end-to-end", "--verify", "true", "--cpu-backend", "cpu-stl-serial",
+             "--cpu-threads", "48", "--cpu-threads-effective", "1",
+             "--cpu-backend-role", "production", "--series-role", "primary",
+             "--cpu-parallelism", "serial"],
         )
         validate_trial_indices(records, 2)
         self.assertTrue(all(record["verification_metrics"]["absolute_error"] == 0.0 for record in records))
-        self.assertTrue(all(record["cpu_threads_requested"] == 1 for record in records))
+        self.assertTrue(all(record["cpu_threads_requested"] == 48 for record in records))
         self.assertTrue(all(record["cpu_threads_effective"] == 1 for record in records))
 
 

@@ -25,6 +25,10 @@ static void restore(int n, int nrhs, double *a, double *b, lapack_int *piv,
   *getrf_info = 0;
   *getrs_info = 0;
 }
+static void report_lapack_info(const char *api, lapack_int info) {
+  if (info != 0)
+    fprintf(stderr, "%s: LAPACKE info %lld\n", api, (long long)info);
+}
 static int set_verification(gpu_suite_result *result,
                             const gpu_suite_options *options,
                             const double *solution, const double *a0,
@@ -108,8 +112,14 @@ int main(int argc, char **argv) {
   lapack_int *piv = malloc((size_t)n * sizeof(*piv));
   gpu_suite_benchmark_writer writer;
   if (gpu_suite_benchmark_writer_open(&writer, &options, error,
-                                      sizeof(error)) != GPU_SUITE_OK)
+                                      sizeof(error)) != GPU_SUITE_OK) {
+    free(piv);
+    free(b0);
+    free(a0);
+    free(b);
+    free(a);
     return EXIT_FAILURE;
+  }
   if (!a || !b || !a0 || !b0 || !piv) {
     gpu_suite_benchmark_emit_unmeasured(&writer, &options, 0, true, "benchmark",
                                         "dense-system allocation failed", error,
@@ -123,26 +133,42 @@ int main(int argc, char **argv) {
     info1 = LAPACKE_dgetrf(LAPACK_COL_MAJOR, n, n, a, n, piv);
     if (info1 == 0)
       info2 = LAPACKE_dgetrs(LAPACK_COL_MAJOR, 'N', n, nrhs, a, n, piv, b, n);
+    report_lapack_info("warmup LAPACKE_dgetrf", info1);
+    report_lapack_info("warmup LAPACKE_dgetrs", info2);
+    if (info1 != 0 || info2 != 0) {
+      (void)gpu_suite_benchmark_emit_unmeasured(
+          &writer, &options, 0, true, "benchmark",
+          "LAPACKE warmup failed", error, sizeof(error));
+      goto failed;
+    }
   }
   restore(n, nrhs, a, b, piv, &info1, &info2, a0, b0);
   int any_failure = 0;
   for (int trial = 0; trial < options.trials; ++trial) {
     gpu_suite_result result;
-    gpu_suite_benchmark_result_init(&result, &options, trial, error,
-                                    sizeof(error));
+    if (gpu_suite_benchmark_result_init(&result, &options, trial, error,
+                                        sizeof(error)) != GPU_SUITE_OK) {
+      fprintf(stderr, "gpu_suite_benchmark_result_init: %s\n", error);
+      (void)gpu_suite_benchmark_emit_unmeasured(
+          &writer, &options, trial, true, "benchmark",
+          "gpu_suite_benchmark_result_init failed", error, sizeof(error));
+      any_failure = 1;
+      break;
+    }
     restore(n, nrhs, a, b, piv, &info1, &info2, a0, b0);
     char sts[GPU_SUITE_TIMESTAMP_CAPACITY] = {0},
          ets[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
     struct timespec start, end;
-    int ok =
-        gpu_suite_utc_timestamp(sts, error, sizeof(error)) == GPU_SUITE_OK &&
-        gpu_suite_clock_now(&start, error, sizeof(error)) == GPU_SUITE_OK;
+    int ok = gpu_suite_measurement_start(sts, &start, error, sizeof(error)) ==
+             GPU_SUITE_OK;
     if (ok) {
       info1 = LAPACKE_dgetrf(LAPACK_COL_MAJOR, n, n, a, n, piv);
       if (info1 == 0)
         info2 = LAPACKE_dgetrs(LAPACK_COL_MAJOR, 'N', n, nrhs, a, n, piv, b, n);
-      ok = gpu_suite_clock_now(&end, error, sizeof(error)) == GPU_SUITE_OK &&
-           gpu_suite_utc_timestamp(ets, error, sizeof(error)) == GPU_SUITE_OK;
+      report_lapack_info("LAPACKE_dgetrf", info1);
+      report_lapack_info("LAPACKE_dgetrs", info2);
+      ok = gpu_suite_measurement_end(&end, ets, error, sizeof(error)) ==
+           GPU_SUITE_OK;
     }
     if (ok) {
       double elapsed = gpu_suite_clock_elapsed(&start, &end);
@@ -171,7 +197,13 @@ int main(int argc, char **argv) {
       result.message = "solver timing failed";
       any_failure = 1;
     }
-    gpu_suite_benchmark_writer_write(&writer, &result, error, sizeof(error));
+    if (gpu_suite_benchmark_writer_write(&writer, &result, error,
+                                         sizeof(error)) != GPU_SUITE_OK) {
+      fprintf(stderr, "gpu_suite_benchmark_writer_write: %s\n", error);
+      any_failure = 1;
+      gpu_suite_result_destroy(&result);
+      break;
+    }
     gpu_suite_result_destroy(&result);
     if (!ok) {
       gpu_suite_benchmark_emit_unmeasured(
@@ -185,7 +217,11 @@ int main(int argc, char **argv) {
   free(a0);
   free(b);
   free(a);
-  gpu_suite_benchmark_writer_close(&writer, error, sizeof(error));
+  if (gpu_suite_benchmark_writer_close(&writer, error, sizeof(error)) !=
+      GPU_SUITE_OK) {
+    fprintf(stderr, "gpu_suite_benchmark_writer_close: %s\n", error);
+    any_failure = 1;
+  }
   return any_failure ? EXIT_FAILURE : EXIT_SUCCESS;
 failed:
   free(piv);

@@ -74,11 +74,14 @@ def validate_campaign(
     if {record["config_sha256"] for record in validated} != {config_sha256}:
         raise CampaignValidationError("raw configuration hash mismatch")
 
-    entries = {
-        (entry["library"], entry["implementation"]): entry
-        for entry in manifest["entries"]
-        if entry["executable_role"] == "benchmark"
-    }
+    entries = {}
+    for entry in manifest["entries"]:
+        if entry["executable_role"] != "benchmark":
+            continue
+        key = (entry["library"], entry["implementation"])
+        if key in entries:
+            raise CampaignValidationError("duplicate benchmark manifest entry")
+        entries[key] = entry
     expected = _configured_invocations(config)
     groups = defaultdict(list)  # type: DefaultDict[Tuple[Any, ...], List[Mapping[str, Any]]]
     blocks = {}  # type: Dict[str, Mapping[str, Any]]
@@ -114,7 +117,11 @@ def validate_campaign(
                 raise CampaignValidationError("raw binary hash mismatch")
             if record["compiler"] != entry["compiler"] or record["compiler_version"] != entry["compiler_version"]:
                 raise CampaignValidationError("raw compiler metadata mismatch")
-            if record["git_commit"] != entry["git_commit"] or record["git_dirty"] != entry["git_dirty"]:
+            if record["global_configure_flags"] != entry["global_configure_flags"]:
+                raise CampaignValidationError("raw configure flags mismatch")
+            if (record["git_metadata_available"] != entry["git_metadata_available"] or
+                    record["git_commit"] != entry["git_commit"] or
+                    record["git_dirty"] != entry["git_dirty"]):
                 raise CampaignValidationError("raw Git metadata mismatch")
 
     for block_id in blocks:
@@ -136,7 +143,10 @@ def validate_campaign(
                 if record["warmup"] != scope["warmup"] or record["repeat"] != scope["repeat"]:
                     raise CampaignValidationError("scope settings differ across implementation")
                 series = definition["series"]
-                if record["cpu_backend_role"] != series["cpu_backend_role"] or record["series_role"] != series["series_role"]:
+                if (record["cpu_backend_role"] != series["cpu_backend_role"] or
+                        record["series_role"] != series["series_role"] or
+                        record["cpu_parallelism"] != series["cpu_parallelism"] or
+                        record["cpu_threads_effective"] != series["cpu_threads_effective"]):
                     raise CampaignValidationError("series classification mismatch")
                 if record["precision"] != definition["precision"]:
                     raise CampaignValidationError("precision differs from configuration")

@@ -57,7 +57,6 @@ int main() {
                             nfft, CUFFT_C2C, batch));
   plan_created = true;
   CUFFT_CHECK(cufftExecC2C(plan, device_input, device_output, CUFFT_FORWARD));
-  CUDA_CHECK(cudaDeviceSynchronize());
   CUDA_CHECK(cudaMemcpy(output.data(), device_output,
                         count * sizeof(*device_output),
                         cudaMemcpyDeviceToHost));

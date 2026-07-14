@@ -67,6 +67,16 @@ python3 tools/hash_source_snapshot.py /path/to/repository
 
 Inspect the rendered file and run `bash -n` before a human submits it. The
 renderer itself never runs `qsub` or any Pegasus inspection command.
+Both configured PBS stdout and stderr parent directories must already exist
+before rendering/submission. The renderer validates those parents and never
+creates them implicitly.
+
+The benchmark runtime preflight requires the NVIDIA driver/runtime and every
+resolved shared library needed by the prebuilt binaries. `nvcc`, `nvc`, and
+`nvc++` are collected as optional metadata and their absence does not fail the
+standard runtime preflight. A site that requires runtime compiler commands must
+set `require_runtime_compilers=true` and document that separate policy; the
+canonical example defaults it to false.
 
 ## Runtime flow and failure ownership
 
@@ -87,6 +97,13 @@ recorded in `node-status.json`; after successful recovery the node process exits
 zero so one failed benchmark does not make `mpirun` kill other nodes. Scratch,
 shared-directory, status-write, or artifact-copy failure is fatal and may exit
 nonzero.
+
+Before node metadata is written, each node independently queries device 0 for
+GPU name, UUID, and NVIDIA package-driver version. It also loads node-local
+`libcudart` and queries CUDA Driver API and Runtime versions without requiring a
+compiler. Successful CUDA/OpenACC raw rows are checked against that node's name,
+UUID, Driver API, and Runtime values. An unavailable query is stored as null
+plus a diagnostic; no job-master or neighboring-node identity is substituted.
 
 The collector, not an individual node, owns final job success. Missing status,
 benchmark failure, verification failure, or collection failure makes the

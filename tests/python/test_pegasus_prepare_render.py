@@ -29,6 +29,22 @@ from render_job import render_job  # noqa: E402
 
 
 class PegasusConfigurationAndRenderTests(unittest.TestCase):
+    def test_renderer_requires_existing_pbs_output_parent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "results").mkdir()
+            (directory / "scratch").mkdir()
+            config_path = directory / "pegasus.json"
+            config_path.write_bytes(dump_bytes(pegasus_config(directory)))
+            inputs = write_campaign_inputs(directory)
+            with self.assertRaisesRegex(ValueError, "parent directory"):
+                render_job(
+                    PEGASUS_DIRECTORY / "run_benchmarks.pbs.in", config_path,
+                    ROOT, inputs["config"], inputs["manifest"],
+                    [inputs["metadata"]], "render-run", 0, "pegasus-test",
+                    "gpu-suite-test",
+                )
+
     def test_rendered_job_has_separate_runtime_modules_and_all_cpu_variables(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -55,6 +71,21 @@ class PegasusConfigurationAndRenderTests(unittest.TestCase):
                             rendered.index("run_node.sh"))
             self.assertLess(rendered.index("run_node.sh"),
                             rendered.index("collect_results.py"))
+            self.assertEqual(rendered.count("mpirun ${NQSV_MPIOPTS}"), 2)
+            self.assertNotIn('mpirun "${NQSV_MPIOPTS}"', rendered)
+            self.assertNotIn("--require-runtime-compilers", rendered)
+
+            strict_config = dict(config_document)
+            strict_config["require_runtime_compilers"] = True
+            strict_path = directory / "strict-pegasus.json"
+            strict_path.write_bytes(dump_bytes(strict_config))
+            strict_rendered = render_job(
+                PEGASUS_DIRECTORY / "run_benchmarks.pbs.in", strict_path,
+                ROOT, inputs["config"], inputs["manifest"],
+                [inputs["metadata"]], "render-run-strict", 0,
+                "pegasus-test", "gpu-suite-test",
+            )
+            self.assertIn("--require-runtime-compilers", strict_rendered)
             rendered_path = directory / "rendered.pbs"
             rendered_path.write_text(rendered, encoding="utf-8")
             completed = subprocess.run(

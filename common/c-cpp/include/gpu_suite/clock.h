@@ -16,6 +16,13 @@ double gpu_suite_clock_elapsed(const struct timespec *start,
                                const struct timespec *end);
 int gpu_suite_utc_timestamp(char output[GPU_SUITE_TIMESTAMP_CAPACITY],
                             char *error, size_t error_size);
+int gpu_suite_measurement_start(
+    char timestamp[GPU_SUITE_TIMESTAMP_CAPACITY], struct timespec *monotonic,
+    char *error, size_t error_size);
+int gpu_suite_measurement_end(
+    struct timespec *monotonic,
+    char timestamp[GPU_SUITE_TIMESTAMP_CAPACITY], char *error,
+    size_t error_size);
 
 #ifdef __cplusplus
 }

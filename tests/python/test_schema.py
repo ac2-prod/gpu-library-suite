@@ -56,10 +56,11 @@ def success_record(trial=0):
         "cuda_driver_version": None,
         "compiler": "AppleClang",
         "compiler_version": "21",
-        "compiler_flags": "-O3",
+        "global_configure_flags": "-O3",
         "library_name": "fftw3f_threads",
         "library_version": None,
         "cuda_runtime_version": None,
+        "git_metadata_available": True,
         "git_commit": "abc",
         "git_dirty": True,
         "git_diff_sha256": ZERO_HASH,
@@ -119,6 +120,18 @@ class SchemaTests(unittest.TestCase):
             validate_trial_indices([records[0], records[0]], 2)
         with self.assertRaises(SchemaError):
             validate_trial_indices([success_record(2)], 2)
+
+    def test_unavailable_git_metadata_is_not_clean(self):
+        record = success_record()
+        record["git_metadata_available"] = False
+        record["git_commit"] = None
+        record["git_dirty"] = None
+        record["git_diff_sha256"] = None
+        self.assertIsNone(validate_raw_result(record)["git_dirty"])
+
+        record["git_dirty"] = False
+        with self.assertRaises(SchemaError):
+            validate_raw_result(record)
 
 
 if __name__ == "__main__":

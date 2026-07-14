@@ -143,9 +143,8 @@ bool run_compute_trial(const DeviceContext &context,
     message = "could not restore canonical device state";
     return false;
   }
-  if (gpu_suite_utc_timestamp(start_timestamp, error, sizeof(error)) !=
-          GPU_SUITE_OK ||
-      gpu_suite_clock_now(&start, error, sizeof(error)) != GPU_SUITE_OK) {
+  if (gpu_suite_measurement_start(start_timestamp, &start, error,
+                                  sizeof(error)) != GPU_SUITE_OK) {
     message = "could not read measurement start clock";
     return false;
   }
@@ -158,8 +157,7 @@ bool run_compute_trial(const DeviceContext &context,
     }
   }
   if (!cuda_ok(cudaDeviceSynchronize(), "cudaDeviceSynchronize after timing") ||
-      gpu_suite_clock_now(&end, error, sizeof(error)) != GPU_SUITE_OK ||
-      gpu_suite_utc_timestamp(end_timestamp, error, sizeof(error)) !=
+      gpu_suite_measurement_end(&end, end_timestamp, error, sizeof(error)) !=
           GPU_SUITE_OK) {
     message = "could not complete synchronized timing";
     return false;
@@ -187,12 +185,12 @@ bool run_end_to_end_trial(const gpu_suite_options &options,
     struct timespec start;
     struct timespec end;
     canonical_host(input, output);
-    if (repeat == 0 && gpu_suite_utc_timestamp(start_timestamp, error,
-                                               sizeof(error)) != GPU_SUITE_OK) {
-      message = "could not read measurement start timestamp";
-      return false;
-    }
-    if (gpu_suite_clock_now(&start, error, sizeof(error)) != GPU_SUITE_OK) {
+    const int start_status =
+        repeat == 0
+            ? gpu_suite_measurement_start(start_timestamp, &start, error,
+                                          sizeof(error))
+            : gpu_suite_clock_now(&start, error, sizeof(error));
+    if (start_status != GPU_SUITE_OK) {
       message = "could not read measurement start clock";
       return false;
     }
@@ -210,18 +208,18 @@ bool run_end_to_end_trial(const gpu_suite_options &options,
       message = "end-to-end cuFFT pipeline failed";
       return false;
     }
-    if (gpu_suite_clock_now(&end, error, sizeof(error)) != GPU_SUITE_OK) {
+    const int end_status =
+        repeat + 1 == options.repeat
+            ? gpu_suite_measurement_end(&end, end_timestamp, error,
+                                        sizeof(error))
+            : gpu_suite_clock_now(&end, error, sizeof(error));
+    if (end_status != GPU_SUITE_OK) {
       destroy_context(context);
       message = "could not read measurement end clock";
       return false;
     }
     elapsed_total += gpu_suite_clock_elapsed(&start, &end);
     destroy_context(context);
-  }
-  if (gpu_suite_utc_timestamp(end_timestamp, error, sizeof(error)) !=
-      GPU_SUITE_OK) {
-    message = "could not read measurement end timestamp";
-    return false;
   }
   return true;
 }

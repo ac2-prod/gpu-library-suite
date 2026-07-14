@@ -76,7 +76,8 @@ int main(int argc, char **argv) {
   gpu_suite::ResultWriter w;
   if (!w.open(o))
     return 1;
-  bool failed = false;
+  bool any_failure = false;
+  bool fatal_failure = false;
   try {
     std::vector<double> a((size_t)m * k, 1), b((size_t)k * n, 1),
         c((size_t)m * n, 1);
@@ -95,45 +96,66 @@ int main(int argc, char **argv) {
         !blas_ok(cublasCreate(&h), "cublasCreate")) {
       gpu_suite::emit_unmeasured(w, o, 0, true, "benchmark",
                                  "cuBLAS setup failed");
-      failed = true;
+      any_failure = true;
+      fatal_failure = true;
     } else {
       for (int warm = 0; warm < o.warmup; ++warm) {
-        cudaMemcpy(dc, c.data(), cb, cudaMemcpyHostToDevice);
-        cublasDgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &o.alpha, da, m, db,
-                    k, &o.beta, dc, m);
+        if (!cuda_ok(cudaMemcpy(dc, c.data(), cb, cudaMemcpyHostToDevice),
+                     "warmup restore C") ||
+            !blas_ok(cublasDgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k,
+                                 &o.alpha, da, m, db, k, &o.beta, dc, m),
+                     "warmup cublasDgemm")) {
+          fatal_failure = true;
+          break;
+        }
       }
-      cudaDeviceSynchronize();
-      for (int trial = 0; trial < o.trials && !failed; ++trial) {
+      if (!fatal_failure &&
+          !cuda_ok(cudaDeviceSynchronize(), "warmup synchronize"))
+        fatal_failure = true;
+      if (fatal_failure) {
+        gpu_suite::emit_unmeasured(w, o, 0, true, "benchmark",
+                                   "cuBLAS warmup failed");
+        any_failure = true;
+      }
+      for (int trial = 0; trial < o.trials && !fatal_failure; ++trial) {
         gpu_suite_result r;
-        gpu_suite::initialize_result(r, o, trial);
+        if (!gpu_suite::initialize_result(r, o, trial)) {
+          fatal_failure = true;
+          any_failure = true;
+          break;
+        }
         fill(c, 1);
         char st[GPU_SUITE_TIMESTAMP_CAPACITY] = {0},
              et[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
         struct timespec ts, te;
         double elapsed = 0;
-        bool ok =
-            gpu_suite_utc_timestamp(st, error, sizeof(error)) == GPU_SUITE_OK;
-        if (o.scope == GPU_SUITE_SCOPE_COMPUTE && ok) {
+        bool ok = true;
+        if (o.scope == GPU_SUITE_SCOPE_COMPUTE) {
           ok = cuda_ok(cudaMemcpy(dc, c.data(), cb, cudaMemcpyHostToDevice),
                        "restore C") &&
                cuda_ok(cudaDeviceSynchronize(), "sync before") &&
-               gpu_suite_clock_now(&ts, error, sizeof(error)) == GPU_SUITE_OK;
+               gpu_suite_measurement_start(st, &ts, error, sizeof(error)) ==
+                   GPU_SUITE_OK;
           for (int rep = 0; rep < o.repeat && ok; ++rep)
             ok = blas_ok(cublasDgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k,
                                      &o.alpha, da, m, db, k, &o.beta, dc, m),
                          "cublasDgemm");
           ok = ok && cuda_ok(cudaDeviceSynchronize(), "sync after") &&
-               gpu_suite_clock_now(&te, error, sizeof(error)) == GPU_SUITE_OK;
+               gpu_suite_measurement_end(&te, et, error, sizeof(error)) ==
+                   GPU_SUITE_OK;
           if (ok)
             elapsed = gpu_suite_clock_elapsed(&ts, &te);
-        } else if (ok) {
+        } else {
           for (int rep = 0; rep < o.repeat && ok; ++rep) {
             fill(c, 1);
             double *ta = nullptr, *tb = nullptr, *tc = nullptr;
             cublasHandle_t th = nullptr;
-            ok = gpu_suite_clock_now(&ts, error, sizeof(error)) ==
+            ok = (rep == 0
+                      ? gpu_suite_measurement_start(st, &ts, error,
+                                                    sizeof(error))
+                      : gpu_suite_clock_now(&ts, error, sizeof(error))) ==
                      GPU_SUITE_OK &&
-                 cuda_ok(cudaMalloc((void **)&ta, ab), "alloc A") &&
+                 cuda_ok(cudaMalloc((void **)&ta, ab), "cudaMalloc A") &&
                  cuda_ok(cudaMalloc((void **)&tb, bb), "alloc B") &&
                  cuda_ok(cudaMalloc((void **)&tc, cb), "alloc C") &&
                  cuda_ok(cudaMemcpy(ta, a.data(), ab, cudaMemcpyHostToDevice),
@@ -148,8 +170,13 @@ int main(int argc, char **argv) {
                          "gemm") &&
                  cuda_ok(cudaDeviceSynchronize(), "sync") &&
                  cuda_ok(cudaMemcpy(c.data(), tc, cb, cudaMemcpyDeviceToHost),
-                         "copy out") &&
-                 gpu_suite_clock_now(&te, error, sizeof(error)) == GPU_SUITE_OK;
+                         "copy out");
+            if (ok)
+              ok = (rep + 1 == o.repeat
+                        ? gpu_suite_measurement_end(&te, et, error,
+                                                    sizeof(error))
+                        : gpu_suite_clock_now(&te, error, sizeof(error))) ==
+                   GPU_SUITE_OK;
             if (ok)
               elapsed += gpu_suite_clock_elapsed(&ts, &te);
             if (th)
@@ -165,8 +192,6 @@ int main(int argc, char **argv) {
         if (ok && o.scope == GPU_SUITE_SCOPE_COMPUTE)
           ok = cuda_ok(cudaMemcpy(c.data(), dc, cb, cudaMemcpyDeviceToHost),
                        "copy result");
-        ok = ok &&
-             gpu_suite_utc_timestamp(et, error, sizeof(error)) == GPU_SUITE_OK;
         if (ok) {
           r.measurement_start_timestamp = st;
           r.measurement_end_timestamp = et;
@@ -178,7 +203,7 @@ int main(int argc, char **argv) {
           r.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
           r.status = pass ? "success" : "failure";
           r.message = pass ? "" : "DGEMM verification failed";
-          failed |= !pass;
+          any_failure = any_failure || !pass;
         } else {
           r.attempted = true;
           r.failure_origin = "benchmark";
@@ -186,11 +211,15 @@ int main(int argc, char **argv) {
           r.exit_code = gpu_suite_optional_int_value(1);
           r.status = "failure";
           r.message = "cuBLAS pipeline failed";
-          failed = true;
+          any_failure = true;
+          fatal_failure = true;
         }
-        w.write(r);
+        if (!w.write(r)) {
+          fatal_failure = true;
+          any_failure = true;
+        }
         gpu_suite_result_destroy(&r);
-        if (failed) {
+        if (fatal_failure) {
           gpu_suite::emit_unmeasured(w, o, trial + 1, false, "prior-failure",
                                      "prior cuBLAS failure");
           break;
@@ -208,9 +237,10 @@ int main(int argc, char **argv) {
   } catch (const std::bad_alloc &) {
     gpu_suite::emit_unmeasured(w, o, 0, true, "benchmark",
                                "host allocation failed");
-    failed = true;
+    any_failure = true;
+    fatal_failure = true;
   }
   if (!w.close())
-    failed = true;
-  return failed ? 1 : 0;
+    any_failure = true;
+  return any_failure ? 1 : 0;
 }

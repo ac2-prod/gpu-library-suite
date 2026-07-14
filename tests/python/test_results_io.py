@@ -44,7 +44,7 @@ class ResultIoTests(unittest.TestCase):
             value = record[name]
             if value is None:
                 row.append("")
-            elif name in {"attempted", "git_dirty"}:
+            elif name in {"attempted", "git_dirty", "git_metadata_available"}:
                 row.append("true" if value else "false")
             elif name in {
                 "implementation_order", "parameters", "verification_metrics",

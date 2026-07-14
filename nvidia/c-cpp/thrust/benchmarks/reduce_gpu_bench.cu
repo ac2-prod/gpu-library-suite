@@ -14,6 +14,13 @@
 
 namespace {
 
+bool cuda_success(cudaError_t status, const char *api) {
+  if (status == cudaSuccess)
+    return true;
+  std::fprintf(stderr, "%s: %s\n", api, cudaGetErrorString(status));
+  return false;
+}
+
 struct SquareValue {
   __host__ __device__ double operator()(double value) const {
     return value * value;
@@ -54,7 +61,7 @@ int main(int argc, char **argv) {
   bool any_failure = false;
   try {
     const std::vector<double> host_values(count, 1.0);
-    if (cudaSetDevice(options.device) != cudaSuccess) {
+    if (!cuda_success(cudaSetDevice(options.device), "cudaSetDevice")) {
       gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
                                  "cudaSetDevice failed");
       writer.close();
@@ -64,7 +71,7 @@ int main(int argc, char **argv) {
     for (int warmup = 0; warmup < options.warmup; ++warmup) {
       (void)transform_reduce(persistent);
     }
-    if (cudaDeviceSynchronize() != cudaSuccess) {
+    if (!cuda_success(cudaDeviceSynchronize(), "warmup synchronize")) {
       gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
                                  "Thrust warmup failed");
       writer.close();
@@ -73,44 +80,56 @@ int main(int argc, char **argv) {
 
     for (int trial = 0; trial < options.trials; ++trial) {
       gpu_suite_result result;
-      gpu_suite::initialize_result(result, options, trial);
+      if (!gpu_suite::initialize_result(result, options, trial)) {
+        any_failure = true;
+        break;
+      }
       char start_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
       char end_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
       struct timespec start;
       struct timespec end;
       double reduced_value = 0.0;
       double elapsed_total = 0.0;
-      bool ok = gpu_suite_utc_timestamp(start_timestamp, error,
-                                        sizeof(error)) == GPU_SUITE_OK;
-      if (options.scope == GPU_SUITE_SCOPE_COMPUTE && ok) {
-        ok = cudaDeviceSynchronize() == cudaSuccess &&
-             gpu_suite_clock_now(&start, error, sizeof(error)) == GPU_SUITE_OK;
+      bool ok = true;
+      if (options.scope == GPU_SUITE_SCOPE_COMPUTE) {
+        ok = cuda_success(cudaDeviceSynchronize(),
+                          "pre-timing synchronize") &&
+             gpu_suite_measurement_start(start_timestamp, &start, error,
+                                          sizeof(error)) == GPU_SUITE_OK;
         for (int repeat = 0; repeat < options.repeat && ok; ++repeat) {
           reduced_value = transform_reduce(persistent);
         }
-        ok = ok && cudaDeviceSynchronize() == cudaSuccess &&
-             gpu_suite_clock_now(&end, error, sizeof(error)) == GPU_SUITE_OK;
+        ok = ok && cuda_success(cudaDeviceSynchronize(),
+                                "post-timing synchronize") &&
+             gpu_suite_measurement_end(&end, end_timestamp, error,
+                                        sizeof(error)) == GPU_SUITE_OK;
         if (ok)
           elapsed_total = gpu_suite_clock_elapsed(&start, &end);
-      } else if (ok) {
+      } else {
         for (int repeat = 0; repeat < options.repeat && ok; ++repeat) {
-          ok =
-              gpu_suite_clock_now(&start, error, sizeof(error)) == GPU_SUITE_OK;
+          ok = (repeat == 0
+                    ? gpu_suite_measurement_start(start_timestamp, &start,
+                                                  error, sizeof(error))
+                    : gpu_suite_clock_now(&start, error, sizeof(error))) ==
+               GPU_SUITE_OK;
           std::unique_ptr<thrust::device_vector<double>> current;
           if (ok) {
             current.reset(new thrust::device_vector<double>(host_values));
             reduced_value = transform_reduce(*current);
-            ok =
-                cudaDeviceSynchronize() == cudaSuccess &&
-                gpu_suite_clock_now(&end, error, sizeof(error)) == GPU_SUITE_OK;
+            ok = cuda_success(cudaDeviceSynchronize(),
+                              "end-to-end synchronize");
           }
+          if (ok)
+            ok = (repeat + 1 == options.repeat
+                      ? gpu_suite_measurement_end(&end, end_timestamp, error,
+                                                  sizeof(error))
+                      : gpu_suite_clock_now(&end, error, sizeof(error))) ==
+                 GPU_SUITE_OK;
           if (ok)
             elapsed_total += gpu_suite_clock_elapsed(&start, &end);
           current.reset();
         }
       }
-      ok = ok && gpu_suite_utc_timestamp(end_timestamp, error, sizeof(error)) ==
-                     GPU_SUITE_OK;
       if (ok) {
         result.measurement_start_timestamp = start_timestamp;
         result.measurement_end_timestamp = end_timestamp;

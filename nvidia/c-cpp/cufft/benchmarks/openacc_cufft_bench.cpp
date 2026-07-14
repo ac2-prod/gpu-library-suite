@@ -111,12 +111,12 @@ bool run_end_to_end_trial(const gpu_suite_options &options,
     struct timespec start;
     struct timespec end;
     canonical_host(input, output);
-    if (repeat == 0 && gpu_suite_utc_timestamp(start_timestamp, error,
-                                               sizeof(error)) != GPU_SUITE_OK) {
-      message = "could not read measurement start timestamp";
-      return false;
-    }
-    if (gpu_suite_clock_now(&start, error, sizeof(error)) != GPU_SUITE_OK) {
+    const int start_status =
+        repeat == 0
+            ? gpu_suite_measurement_start(start_timestamp, &start, error,
+                                          sizeof(error))
+            : gpu_suite_clock_now(&start, error, sizeof(error));
+    if (start_status != GPU_SUITE_OK) {
       message = "could not read measurement start clock";
       return false;
     }
@@ -130,8 +130,12 @@ bool run_end_to_end_trial(const gpu_suite_options &options,
       success =
           execute_device_plan(plan, input_data, output_data, 1, "cufftExecC2C");
     }
-    if (!success ||
-        gpu_suite_clock_now(&end, error, sizeof(error)) != GPU_SUITE_OK) {
+    const int end_status =
+        repeat + 1 == options.repeat
+            ? gpu_suite_measurement_end(&end, end_timestamp, error,
+                                        sizeof(error))
+            : gpu_suite_clock_now(&end, error, sizeof(error));
+    if (!success || end_status != GPU_SUITE_OK) {
       (void)cufft_ok(cufftDestroy(plan), "cufftDestroy");
       message = success ? "could not read measurement end clock"
                         : "OpenACC cuFFT pipeline failed";
@@ -142,11 +146,6 @@ bool run_end_to_end_trial(const gpu_suite_options &options,
       message = "cufftDestroy failed";
       return false;
     }
-  }
-  if (gpu_suite_utc_timestamp(end_timestamp, error, sizeof(error)) !=
-      GPU_SUITE_OK) {
-    message = "could not read measurement end timestamp";
-    return false;
   }
   return true;
 }
@@ -238,19 +237,16 @@ int main(int argc, char **argv) {
           bool operation_ok =
               cuda_ok(cudaDeviceSynchronize(),
                       "cudaDeviceSynchronize before timing") &&
-              gpu_suite_utc_timestamp(start_timestamp, error, sizeof(error)) ==
-                  GPU_SUITE_OK &&
-              gpu_suite_clock_now(&start, error, sizeof(error)) == GPU_SUITE_OK;
+              gpu_suite_measurement_start(start_timestamp, &start, error,
+                                           sizeof(error)) == GPU_SUITE_OK;
           if (operation_ok) {
             operation_ok = execute_device_plan(plan, input_data, output_data,
                                                options.repeat, "cufftExecC2C");
           }
           if (operation_ok) {
-            operation_ok =
-                gpu_suite_clock_now(&end, error, sizeof(error)) ==
-                    GPU_SUITE_OK &&
-                gpu_suite_utc_timestamp(end_timestamp, error, sizeof(error)) ==
-                    GPU_SUITE_OK;
+            operation_ok = gpu_suite_measurement_end(
+                               &end, end_timestamp, error, sizeof(error)) ==
+                           GPU_SUITE_OK;
           }
           if (operation_ok) {
             elapsed_total = gpu_suite_clock_elapsed(&start, &end);

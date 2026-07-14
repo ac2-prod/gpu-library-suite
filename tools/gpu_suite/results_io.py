@@ -30,7 +30,8 @@ FLOAT_FIELDS = {
     "elapsed_sec",
     "clock_resolution_sec",
 }
-BOOLEAN_FIELDS = {"attempted", "git_dirty"}
+BOOLEAN_FIELDS = {"attempted", "git_dirty", "git_metadata_available"}
+NULLABLE_BOOLEAN_FIELDS = {"git_dirty"}
 JSON_FIELDS = {
     "implementation_order",
     "parameters",
@@ -52,6 +53,7 @@ NULLABLE_STRING_FIELDS = {
     "cuda_driver_version",
     "library_version",
     "cuda_runtime_version",
+    "git_commit",
     "git_diff_sha256",
     "source_snapshot_sha256",
 }
@@ -93,7 +95,11 @@ def parse_csv_record(row: Mapping[str, str]) -> Dict[str, Any]:
         elif name in FLOAT_FIELDS:
             result[name] = None if name in NULLABLE_FLOAT_FIELDS and value == "" else float(value)
         elif name in BOOLEAN_FIELDS:
-            result[name] = _parse_boolean(value, name)
+            result[name] = (
+                None
+                if name in NULLABLE_BOOLEAN_FIELDS and value == ""
+                else _parse_boolean(value, name)
+            )
         elif name in JSON_FIELDS:
             result[name] = loads(value)
         else:

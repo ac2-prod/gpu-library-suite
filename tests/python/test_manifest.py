@@ -30,6 +30,8 @@ def manifest_entry(target="fft_cpu", role="example", path="/build/fft_cpu"):
         "compiler": "AppleClang",
         "compiler_language": "c",
         "compiler_version": "21",
+        "global_configure_flags": "-O3",
+        "git_metadata_available": True,
         "git_commit": "abc",
         "git_dirty": True,
         "supported_cpu_backends": ["cpu-fftw-threaded", "cpu-fftw-serial"],
@@ -84,13 +86,14 @@ class ManifestTests(unittest.TestCase):
     def test_build_metadata_comparison(self):
         entry = manifest_entry()
         metadata = {
+            "git_metadata_available": entry["git_metadata_available"],
             "git_commit": entry["git_commit"],
             "git_dirty": entry["git_dirty"],
             "build_type": entry["build_type"],
             "build_profile": entry["build_profile"],
             "c": {
                 "compiler": entry["compiler"],
-                "compiler_flags": "-O3",
+                "global_configure_flags": "-O3",
                 "compiler_version": entry["compiler_version"],
             },
         }
@@ -98,6 +101,16 @@ class ManifestTests(unittest.TestCase):
         metadata["c"]["compiler"] = "wrong"
         with self.assertRaises(ManifestError):
             validate_build_metadata(entry, metadata)
+
+    def test_unavailable_git_metadata_is_explicit(self):
+        entry = manifest_entry()
+        entry["git_metadata_available"] = False
+        entry["git_commit"] = None
+        entry["git_dirty"] = None
+        self.assertEqual(entry, merge_entries([[entry]])[0])
+        entry["git_dirty"] = False
+        with self.assertRaises(ManifestError):
+            merge_entries([[entry]])
 
     def test_canonical_example_manifest_is_valid_and_deterministic(self):
         path = ROOT / "configs" / "executables.json.example"

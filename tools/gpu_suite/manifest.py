@@ -25,6 +25,8 @@ REQUIRED_FIELDS = {
     "compiler",
     "compiler_language",
     "compiler_version",
+    "global_configure_flags",
+    "git_metadata_available",
     "git_commit",
     "git_dirty",
     "supported_cpu_backends",
@@ -72,8 +74,16 @@ def validate_entry(entry: Mapping[str, Any]) -> Dict[str, Any]:
             character not in "0123456789abcdef" for character in value
         ):
             raise ManifestError("invalid {0}".format(name))
-    if not isinstance(entry["git_dirty"], bool):
-        raise ManifestError("git_dirty must be boolean")
+    available = entry["git_metadata_available"]
+    if not isinstance(available, bool):
+        raise ManifestError("git_metadata_available must be boolean")
+    if available:
+        if not isinstance(entry["git_commit"], str) or entry["git_commit"] == "":
+            raise ManifestError("available Git metadata requires a commit")
+        if not isinstance(entry["git_dirty"], bool):
+            raise ManifestError("available Git metadata requires dirty state")
+    elif entry["git_commit"] is not None or entry["git_dirty"] is not None:
+        raise ManifestError("unavailable Git metadata requires null fields")
     supported = entry["supported_cpu_backends"]
     if (
         not isinstance(supported, list)
@@ -83,9 +93,12 @@ def validate_entry(entry: Mapping[str, Any]) -> Dict[str, Any]:
         raise ManifestError("invalid supported_cpu_backends")
     if entry["implementation"] != "cpu" and supported:
         raise ManifestError("GPU artifacts cannot advertise CPU backends")
-    for name in REQUIRED_FIELDS.difference(
-        {"git_dirty", "supported_cpu_backends"}
-    ):
+    if not isinstance(entry["global_configure_flags"], str):
+        raise ManifestError("global_configure_flags must be a string")
+    for name in REQUIRED_FIELDS.difference({
+        "git_metadata_available", "git_commit", "git_dirty",
+        "global_configure_flags", "supported_cpu_backends",
+    }):
         if not isinstance(entry[name], str) or entry[name] == "":
             raise ManifestError("{0} must be a nonempty string".format(name))
     return dict(entry)
@@ -146,6 +159,7 @@ def validate_build_metadata(entry: Mapping[str, Any], metadata: Mapping[str, Any
     comparisons = {
         "git_commit": "git_commit",
         "git_dirty": "git_dirty",
+        "git_metadata_available": "git_metadata_available",
         "build_type": "build_type",
         "build_profile": "build_profile",
     }
@@ -162,3 +176,7 @@ def validate_build_metadata(entry: Mapping[str, Any], metadata: Mapping[str, Any
         raise ManifestError("build metadata mismatch for compiler")
     if entry["compiler_version"] != compiler.get("compiler_version"):
         raise ManifestError("build metadata mismatch for compiler_version")
+    if entry["global_configure_flags"] != compiler.get(
+        "global_configure_flags"
+    ):
+        raise ManifestError("build metadata mismatch for global_configure_flags")

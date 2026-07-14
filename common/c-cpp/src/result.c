@@ -25,8 +25,9 @@ static const char CSV_HEADER[] =
     "elapsed_total_sec,elapsed_sec,clock_id,clock_resolution_sec,"
     "verification_metrics,verification_thresholds,verification_primary_metric,"
     "verification_status,getrf_info,getrs_info,device_id,gpu_name,gpu_uuid,"
-    "cuda_driver_version,compiler,compiler_version,compiler_flags,library_name,"
-    "library_version,cuda_runtime_version,git_commit,git_dirty,git_diff_sha256,"
+    "cuda_driver_version,compiler,compiler_version,global_configure_flags,"
+    "library_name,library_version,cuda_runtime_version,"
+    "git_metadata_available,git_commit,git_dirty,git_diff_sha256,"
     "source_snapshot_sha256,config_sha256,runtime_environment_sha256,"
     "binary_sha256,exit_code,status,message";
 
@@ -395,12 +396,6 @@ void gpu_suite_result_destroy(gpu_suite_result *result) {
   result->verification_thresholds = NULL;
 }
 
-static bool is_serial_backend(const char *backend) {
-  return backend != NULL && (strstr(backend, "-serial") != NULL ||
-                             strcmp(backend, "cpu-stl-serial") == 0 ||
-                             strcmp(backend, "cpu-reference-csr") == 0);
-}
-
 int gpu_suite_result_apply_options(gpu_suite_result *result,
                                    const gpu_suite_options *options,
                                    char *error, size_t error_size) {
@@ -463,28 +458,23 @@ int gpu_suite_result_apply_options(gpu_suite_result *result,
 
   if (options->implementation == GPU_SUITE_IMPLEMENTATION_CPU) {
     result->cpu_backend = options->cpu_backend;
-    result->cpu_backend_role = strstr(options->cpu_backend, "reference") == NULL
-                                   ? "production"
-                                   : "reference";
-    result->series_role = strcmp(options->cpu_backend, "cpu-fftw-serial") == 0
-                              ? "auxiliary"
-                              : "primary";
+    result->cpu_backend_role = options->cpu_backend_role;
+    result->series_role = options->series_role;
     result->cpu_threads_requested =
         gpu_suite_optional_int_value(options->cpu_threads);
-    if (is_serial_backend(options->cpu_backend)) {
-      result->cpu_threads_effective = gpu_suite_optional_int_value(1);
-      result->cpu_parallelism = "serial";
-    } else {
+    if (options->cpu_threads_effective > 0) {
       result->cpu_threads_effective =
-          gpu_suite_optional_int_value(options->cpu_threads);
-      result->cpu_parallelism = "threaded";
+          gpu_suite_optional_int_value(options->cpu_threads_effective);
+    } else {
+      result->cpu_threads_effective = gpu_suite_optional_int_null();
     }
+    result->cpu_parallelism = options->cpu_parallelism;
     result->device_id = gpu_suite_optional_int_null();
     result->library_name = options->cpu_backend;
   } else {
     result->cpu_backend = NULL;
     result->cpu_backend_role = NULL;
-    result->series_role = "primary";
+    result->series_role = options->series_role;
     result->cpu_threads_requested = gpu_suite_optional_int_null();
     result->cpu_threads_effective = gpu_suite_optional_int_null();
     result->cpu_parallelism = NULL;
@@ -504,8 +494,11 @@ void gpu_suite_result_apply_build_metadata(gpu_suite_result *result,
   result->compiler = gpu_suite_build_benchmark_compiler(impl, result->benchmark);
   result->compiler_version =
       gpu_suite_build_benchmark_compiler_version(impl, result->benchmark);
-  result->compiler_flags =
-      gpu_suite_build_benchmark_compiler_flags(impl, result->benchmark);
+  result->global_configure_flags =
+      gpu_suite_build_benchmark_global_configure_flags(impl,
+                                                       result->benchmark);
+  result->git_metadata_available =
+      gpu_suite_build_git_metadata_available();
   result->git_commit = gpu_suite_build_git_commit();
   result->git_dirty = gpu_suite_build_git_dirty();
 }
@@ -588,6 +581,10 @@ int gpu_suite_result_validate(const gpu_suite_result *result, char *error,
                                         "prior-failure", "prerequisite"};
   static const char *const verification_statuses[] = {"pass", "failure",
                                                       "skipped", "nonfinite"};
+  static const char *const series_roles[] = {"primary", "auxiliary"};
+  static const char *const backend_roles[] = {"production", "reference"};
+  static const char *const parallelism_values[] = {"serial", "threaded",
+                                                    "unknown"};
   char
       expected_block[GPU_SUITE_RUN_ID_CAPACITY + GPU_SUITE_LABEL_CAPACITY + 32];
   int written;
@@ -618,8 +615,8 @@ int gpu_suite_result_validate(const gpu_suite_result *result, char *error,
       strcmp(result->clock_id, "CLOCK_MONOTONIC") != 0 ||
       !isfinite(result->clock_resolution_sec) ||
       result->clock_resolution_sec <= 0.0 || result->compiler == NULL ||
-      result->compiler_version == NULL || result->compiler_flags == NULL ||
-      result->library_name == NULL || result->git_commit == NULL ||
+      result->compiler_version == NULL ||
+      result->global_configure_flags == NULL || result->library_name == NULL ||
       !sha256_valid(result->config_sha256) ||
       !sha256_valid(result->runtime_environment_sha256) ||
       !sha256_valid(result->binary_sha256) || result->message == NULL ||
@@ -627,8 +624,44 @@ int gpu_suite_result_validate(const gpu_suite_result *result, char *error,
                  sizeof(statuses) / sizeof(statuses[0])) ||
       !string_in(result->verification_status, verification_statuses,
                  sizeof(verification_statuses) /
-                     sizeof(verification_statuses[0]))) {
+                     sizeof(verification_statuses[0])) ||
+      !string_in(result->series_role, series_roles,
+                 sizeof(series_roles) / sizeof(series_roles[0]))) {
     set_error(error, error_size, "invalid result value");
+    return GPU_SUITE_ERROR_INVALID;
+  }
+  if (strcmp(result->implementation, "cpu") == 0) {
+    if (result->cpu_backend == NULL || result->cpu_backend[0] == '\0' ||
+        !string_in(result->cpu_backend_role, backend_roles,
+                   sizeof(backend_roles) / sizeof(backend_roles[0])) ||
+        !string_in(result->cpu_parallelism, parallelism_values,
+                   sizeof(parallelism_values) /
+                       sizeof(parallelism_values[0])) ||
+        result->cpu_threads_requested.is_null ||
+        result->cpu_threads_requested.value <= 0 ||
+        (!result->cpu_threads_effective.is_null &&
+         result->cpu_threads_effective.value <= 0)) {
+      set_error(error, error_size, "invalid explicit CPU series metadata");
+      return GPU_SUITE_ERROR_INVALID;
+    }
+  } else if (result->cpu_backend != NULL || result->cpu_backend_role != NULL ||
+             result->cpu_parallelism != NULL ||
+             !result->cpu_threads_requested.is_null ||
+             !result->cpu_threads_effective.is_null) {
+    set_error(error, error_size, "GPU result contains CPU metadata");
+    return GPU_SUITE_ERROR_INVALID;
+  }
+  if (strcmp(result->implementation, "cpu") != 0 &&
+      strcmp(result->status, "success") == 0 &&
+      (result->gpu_name == NULL || result->gpu_name[0] == '\0' ||
+       result->gpu_uuid == NULL || result->gpu_uuid[0] == '\0' ||
+       result->cuda_driver_version == NULL ||
+       result->cuda_driver_version[0] == '\0' ||
+       result->cuda_runtime_version == NULL ||
+       result->cuda_runtime_version[0] == '\0' ||
+       result->library_version == NULL || result->library_version[0] == '\0')) {
+    set_error(error, error_size,
+              "successful GPU result lacks runtime identity metadata");
     return GPU_SUITE_ERROR_INVALID;
   }
   if (result->git_diff_sha256 != NULL &&
@@ -639,6 +672,12 @@ int gpu_suite_result_validate(const gpu_suite_result *result, char *error,
   if (result->source_snapshot_sha256 != NULL &&
       !sha256_valid(result->source_snapshot_sha256)) {
     set_error(error, error_size, "invalid source_snapshot_sha256");
+    return GPU_SUITE_ERROR_INVALID;
+  }
+  if ((result->git_metadata_available &&
+       (result->git_commit == NULL || result->git_commit[0] == '\0')) ||
+      (!result->git_metadata_available && result->git_commit != NULL)) {
+    set_error(error, error_size, "inconsistent Git metadata availability");
     return GPU_SUITE_ERROR_INVALID;
   }
   if (result->measurement_start_timestamp != NULL &&
@@ -794,12 +833,17 @@ static int result_json(const gpu_suite_result *result,
   ADD("cuda_driver_version", nullable_string(result->cuda_driver_version));
   ADD("compiler", gpu_suite_json_string(result->compiler));
   ADD("compiler_version", gpu_suite_json_string(result->compiler_version));
-  ADD("compiler_flags", gpu_suite_json_string(result->compiler_flags));
+  ADD("global_configure_flags",
+      gpu_suite_json_string(result->global_configure_flags));
   ADD("library_name", gpu_suite_json_string(result->library_name));
   ADD("library_version", nullable_string(result->library_version));
   ADD("cuda_runtime_version", nullable_string(result->cuda_runtime_version));
-  ADD("git_commit", gpu_suite_json_string(result->git_commit));
-  ADD("git_dirty", gpu_suite_json_bool(result->git_dirty));
+  ADD("git_metadata_available",
+      gpu_suite_json_bool(result->git_metadata_available));
+  ADD("git_commit", nullable_string(result->git_commit));
+  ADD("git_dirty", result->git_metadata_available
+                       ? gpu_suite_json_bool(result->git_dirty)
+                       : gpu_suite_json_null());
   ADD("git_diff_sha256", nullable_string(result->git_diff_sha256));
   ADD("source_snapshot_sha256",
       nullable_string(result->source_snapshot_sha256));
@@ -979,12 +1023,17 @@ static int write_csv_row(FILE *stream, const gpu_suite_result *result) {
   CSV(csv_text(stream, &first, result->cuda_driver_version));
   CSV(csv_text(stream, &first, result->compiler));
   CSV(csv_text(stream, &first, result->compiler_version));
-  CSV(csv_text(stream, &first, result->compiler_flags));
+  CSV(csv_text(stream, &first, result->global_configure_flags));
   CSV(csv_text(stream, &first, result->library_name));
   CSV(csv_text(stream, &first, result->library_version));
   CSV(csv_text(stream, &first, result->cuda_runtime_version));
+  CSV(csv_bool(stream, &first, result->git_metadata_available));
   CSV(csv_text(stream, &first, result->git_commit));
-  CSV(csv_bool(stream, &first, result->git_dirty));
+  if (result->git_metadata_available) {
+    CSV(csv_bool(stream, &first, result->git_dirty));
+  } else {
+    CSV(csv_text(stream, &first, NULL));
+  }
   CSV(csv_text(stream, &first, result->git_diff_sha256));
   CSV(csv_text(stream, &first, result->source_snapshot_sha256));
   CSV(csv_text(stream, &first, result->config_sha256));

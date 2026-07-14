@@ -272,17 +272,18 @@ int main(int argc, char **argv) {
       double elapsed = 0.0;
       int getrf_info = 0;
       int getrs_info = 0;
-      bool ok = gpu_suite_utc_timestamp(start_timestamp, error,
-                                        sizeof(error)) == GPU_SUITE_OK;
+      bool ok = true;
 
-      if (options.scope == GPU_SUITE_SCOPE_COMPUTE && ok) {
+      if (options.scope == GPU_SUITE_SCOPE_COMPUTE) {
         ok =
             restore_context(persistent, matrix, rhs) &&
             cuda_success(cudaDeviceSynchronize(), "pre-timing synchronize") &&
-            gpu_suite_clock_now(&start, error, sizeof(error)) == GPU_SUITE_OK &&
+            gpu_suite_measurement_start(start_timestamp, &start, error,
+                                         sizeof(error)) == GPU_SUITE_OK &&
             solve(persistent, n, nrhs) &&
             cuda_success(cudaDeviceSynchronize(), "post-solve synchronize") &&
-            gpu_suite_clock_now(&end, error, sizeof(error)) == GPU_SUITE_OK;
+            gpu_suite_measurement_end(&end, end_timestamp, error,
+                                       sizeof(error)) == GPU_SUITE_OK;
         if (ok) {
           elapsed = gpu_suite_clock_elapsed(&start, &end);
           ok = cuda_success(cudaMemcpy(solution.data(), persistent.rhs,
@@ -296,10 +297,11 @@ int main(int argc, char **argv) {
                                        sizeof(int), cudaMemcpyDeviceToHost),
                             "copy getrs_info");
         }
-      } else if (ok) {
+      } else {
         SolverContext current;
         ok =
-            gpu_suite_clock_now(&start, error, sizeof(error)) == GPU_SUITE_OK &&
+            gpu_suite_measurement_start(start_timestamp, &start, error,
+                                         sizeof(error)) == GPU_SUITE_OK &&
             create_context(current, n, nrhs, matrix, rhs) &&
             solve(current, n, nrhs) &&
             cuda_success(cudaDeviceSynchronize(), "solve synchronize") &&
@@ -313,14 +315,13 @@ int main(int argc, char **argv) {
             cuda_success(cudaMemcpy(&getrs_info, current.getrs_info,
                                     sizeof(int), cudaMemcpyDeviceToHost),
                          "copy getrs_info") &&
-            gpu_suite_clock_now(&end, error, sizeof(error)) == GPU_SUITE_OK;
+            gpu_suite_measurement_end(&end, end_timestamp, error,
+                                       sizeof(error)) == GPU_SUITE_OK;
         if (ok)
           elapsed = gpu_suite_clock_elapsed(&start, &end);
         destroy_context(current);
       }
 
-      ok = ok && gpu_suite_utc_timestamp(end_timestamp, error, sizeof(error)) ==
-                     GPU_SUITE_OK;
       if (ok) {
         result.measurement_start_timestamp = start_timestamp;
         result.measurement_end_timestamp = end_timestamp;

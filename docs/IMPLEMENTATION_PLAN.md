@@ -267,6 +267,8 @@ benchmarks
       implementation
       cpu_backend
       cpu_backend_role
+      cpu_parallelism
+      cpu_threads_effective
       series_role
     default_speedup_cpu_backend
     verification
@@ -503,6 +505,52 @@ fixes in-scope gate failures without waiting for user input. A correctly
 diagnosed optional dependency absence and target disable is not a gate failure;
 failure of an unaffected required target or of the disable logic is a gate
 failure.
+
+### Pre-merge code-review remediation gate
+
+The initial implementation remains pre-merge, so review-driven compatible
+schema corrections are incorporated into schema version 1. No version-suffixed
+schema or canonical filename is introduced. Before the implementation can be
+reported review-ready, all of the following are required in addition to the
+phase gates below:
+
+- strict Linux C17 tests expose POSIX declarations on each test target and all
+  C executables/tests that use mathematics link the platform math interface;
+- every C argv fixture derives its own argument count, and sanitizer or exact
+  count coverage prevents out-of-bounds parser access;
+- fixture build and Python cache directories stay below the current
+  `CMAKE_BINARY_DIR`, so source copies and consecutive build trees cannot share
+  stale CMake caches;
+- `.git`-less source produces valid deterministic metadata with explicit
+  unavailable/null Git semantics, never inferred clean state, while production
+  rejects unavailable Git provenance;
+- CPU role/series/parallelism/effective-thread fields have one configuration
+  source of truth, runner manifest lookup rejects duplicate benchmark keys, and
+  C++ result initialization releases partially initialized state;
+- raw/manifest flag metadata uses the scoped
+  `global_configure_flags` name, and suite commands always carry every
+  verification operand from effective configuration;
+- all 18 benchmarks pass timestamp-placement, fatal-versus-verification
+  continuation, setup/warm-up/API return checking, and GPU/runtime/library
+  metadata source-policy tests; OpenACC cuSOLVER copies both info values back as
+  part of end-to-end result retrieval;
+- canonical examples remove redundant direct-CUDA synchronization, retain the
+  required OpenACC completion boundary, use default public CPU headers, keep
+  oneMKL Sparse as the canonical sparse lesson, check major API results, and
+  handle a zero-byte cuSPARSE workspace;
+- Pegasus preflight and measurement both preserve word splitting for
+  `NQSV_MPIOPTS`, runtime compiler commands are optional by default, GPU identity
+  is node-local, failure isolation remains intact, and PBS output parents are
+  checked before human submission;
+- CBLAS/LAPACKE discovery uses provider-specific cache variables and rejects
+  mixed provider headers/libraries after a provider change;
+- all six library READMEs contain the common required sections, the validation
+  report distinguishes Mac evidence from Linux portability, and a minimal
+  dependency-free Linux GCC/Clang CPU-only CI gate is present; and
+- Mac CPU-only, clean Linux GCC, available Linux Clang, `.git`-less source,
+  Python 3.9 syntax/bytecode/unit, shell, documentation/policy, and
+  `git diff --check` gates pass. Actual CUDA, NVHPC, GPU, and Pegasus execution
+  remains explicitly manual when unavailable.
 
 ## Phase 1 — Common benchmark infrastructure
 

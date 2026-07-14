@@ -2,11 +2,13 @@
 """Create deterministic node metadata, raw classification, and final status."""
 
 import argparse
+import ctypes
+import ctypes.util
 import os
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -20,7 +22,6 @@ from gpu_suite.ordering import (  # noqa: E402
 )
 from gpu_suite.results_io import load_raw_results  # noqa: E402
 from gpu_suite.runner import (  # noqa: E402
-    SERIAL_CPU_BACKENDS,
     load_manifest,
     utc_timestamp,
     validate_execution_context,
@@ -32,6 +33,95 @@ from job_config import CPU_ENVIRONMENT_KEYS  # noqa: E402
 
 class NodeToolError(ValueError):
     pass
+
+
+CudaRuntimeProbe = Callable[[], Mapping[str, Any]]
+
+
+def _format_cuda_version(value: int) -> str:
+    return "{0}.{1}.{2}".format(
+        value // 1000, (value % 1000) // 10, value % 10,
+    )
+
+
+def probe_node_cuda_runtime() -> Dict[str, Any]:
+    """Query the node-local CUDA Runtime without requiring a compiler."""
+
+    candidates = []
+    located = ctypes.util.find_library("cudart")
+    if located:
+        candidates.append(located)
+    candidates.append("libcudart.so")
+    for directory in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep):
+        if not directory:
+            continue
+        try:
+            candidates.extend(
+                str(path) for path in sorted(Path(directory).glob("libcudart.so*"))
+                if path.is_file()
+            )
+        except OSError:
+            continue
+    unique_candidates = []
+    for candidate in candidates:
+        if candidate not in unique_candidates:
+            unique_candidates.append(candidate)
+
+    runtime = None
+    load_errors = []
+    loaded_library = None
+    for candidate in unique_candidates:
+        try:
+            runtime = ctypes.CDLL(candidate)
+            loaded_library = candidate
+            break
+        except OSError as error:
+            load_errors.append("{0}: {1}".format(candidate, error))
+    if runtime is None:
+        return {
+            "cuda_driver_api_version": None,
+            "cuda_runtime_version": None,
+            "diagnostic": "; ".join(load_errors) or "libcudart was not found",
+            "loaded_library": None,
+            "query_status": "unavailable",
+        }
+
+    try:
+        driver_function = runtime.cudaDriverGetVersion
+        runtime_function = runtime.cudaRuntimeGetVersion
+        for function in (driver_function, runtime_function):
+            function.argtypes = [ctypes.POINTER(ctypes.c_int)]
+            function.restype = ctypes.c_int
+        driver_value = ctypes.c_int()
+        runtime_value = ctypes.c_int()
+        driver_status = int(driver_function(ctypes.byref(driver_value)))
+        runtime_status = int(runtime_function(ctypes.byref(runtime_value)))
+    except (AttributeError, TypeError, ValueError) as error:
+        return {
+            "cuda_driver_api_version": None,
+            "cuda_runtime_version": None,
+            "diagnostic": "CUDA version API lookup failed: {0}".format(error),
+            "loaded_library": loaded_library,
+            "query_status": "failure",
+        }
+    if driver_status != 0 or runtime_status != 0:
+        return {
+            "cuda_driver_api_version": None,
+            "cuda_runtime_version": None,
+            "diagnostic": (
+                "cudaDriverGetVersion/cudaRuntimeGetVersion returned {0}/{1}"
+                .format(driver_status, runtime_status)
+            ),
+            "loaded_library": loaded_library,
+            "query_status": "failure",
+        }
+    return {
+        "cuda_driver_api_version": _format_cuda_version(driver_value.value),
+        "cuda_runtime_version": _format_cuda_version(runtime_value.value),
+        "diagnostic": None,
+        "loaded_library": loaded_library,
+        "query_status": "success",
+    }
 
 
 def _exclusive_write(path: Path, document: Mapping[str, Any]) -> None:
@@ -53,6 +143,7 @@ def build_node_metadata(
     config_path: Path, manifest_path: Path, run_id: str, wave: int,
     node_index: int, hostname: str, runtime_environment_sha256: str,
     environment: Mapping[str, str] = os.environ,
+    cuda_runtime_probe: CudaRuntimeProbe = probe_node_cuda_runtime,
 ) -> Dict[str, Any]:
     validate_execution_context(run_id, "node-metadata", hostname, wave, node_index, 0)
     validate_sha256(runtime_environment_sha256, "runtime environment SHA-256")
@@ -75,8 +166,8 @@ def build_node_metadata(
                 cpu_series.append({
                     "benchmark": benchmark,
                     "cpu_backend": backend,
-                    "effective_threads": 1
-                    if backend in SERIAL_CPU_BACKENDS else config["cpu_threads"],
+                    "cpu_parallelism": item["cpu_parallelism"],
+                    "effective_threads": item["cpu_threads_effective"],
                     "requested_threads": config["cpu_threads"],
                     "series_role": item["series_role"],
                 })
@@ -94,12 +185,36 @@ def build_node_metadata(
     ]
     artifacts.sort(key=lambda item: item["artifact_id"])
     curand_parameters = config["benchmarks"]["curand"]["cases"][0]["parameters"]
+    cuda_runtime_identity = dict(cuda_runtime_probe())
+    required_runtime_fields = {
+        "cuda_driver_api_version", "cuda_runtime_version", "diagnostic",
+        "loaded_library", "query_status",
+    }
+    if set(cuda_runtime_identity) != required_runtime_fields:
+        raise NodeToolError("invalid node-local CUDA runtime probe result")
+    if cuda_runtime_identity["query_status"] not in {
+        "success", "failure", "unavailable",
+    }:
+        raise NodeToolError("invalid node-local CUDA runtime probe status")
     return {
         "artifacts": artifacts,
         "block_id": "{0}|{1}|{2}".format(run_id, wave, hostname),
         "cpu_runtime_environment": _cpu_environment(environment),
         "cpu_series_threading": cpu_series,
-        "cuda_driver_version": environment.get("GPU_SUITE_CUDA_DRIVER_VERSION"),
+        "cuda_runtime_identity": cuda_runtime_identity,
+        "gpu_identity": {
+            "diagnostic": environment.get(
+                "GPU_SUITE_NODE_GPU_QUERY_DIAGNOSTIC"
+            ) or None,
+            "name": environment.get("GPU_SUITE_GPU_NAME") or None,
+            "nvidia_driver_version": environment.get(
+                "GPU_SUITE_NVIDIA_DRIVER_VERSION"
+            ) or None,
+            "query_status": environment.get(
+                "GPU_SUITE_NODE_GPU_QUERY_STATUS", "unavailable"
+            ),
+            "uuid": environment.get("GPU_SUITE_GPU_UUID") or None,
+        },
         "curand": {
             "cpu_engine": "std::mt19937_64",
             "cuda_generator": curand_parameters["generator"],
@@ -124,8 +239,42 @@ def build_node_metadata(
     }
 
 
-def classify_raw(path: Path) -> Dict[str, Any]:
+def classify_raw(
+    path: Path, node_metadata: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
     records = load_raw_results(path)
+    if node_metadata is not None:
+        identity = node_metadata.get("gpu_identity")
+        if not isinstance(identity, Mapping):
+            raise NodeToolError("node metadata lacks gpu_identity")
+        expected_name = identity.get("name")
+        expected_uuid = identity.get("uuid")
+        runtime_identity = node_metadata.get("cuda_runtime_identity")
+        if not isinstance(runtime_identity, Mapping):
+            raise NodeToolError("node metadata lacks cuda_runtime_identity")
+        expected_driver = runtime_identity.get("cuda_driver_api_version")
+        expected_runtime = runtime_identity.get("cuda_runtime_version")
+        for record in records:
+            if record["implementation"] not in {"cuda", "openacc"}:
+                continue
+            comparisons = (
+                ("gpu_name", expected_name, "GPU name"),
+                ("gpu_uuid", expected_uuid, "GPU UUID"),
+                ("cuda_driver_version", expected_driver,
+                 "CUDA Driver API version"),
+                ("cuda_runtime_version", expected_runtime,
+                 "CUDA Runtime version"),
+            )
+            for field, expected, label in comparisons:
+                observed = record[field]
+                if expected is not None and observed is not None and observed != expected:
+                    raise NodeToolError(
+                        "raw {0} differs from node metadata".format(label)
+                    )
+                if record["status"] == "success" and expected is not None and observed is None:
+                    raise NodeToolError(
+                        "successful raw row lacks node-matched {0}".format(label)
+                    )
     statuses = Counter(record["status"] for record in records)
     verification = Counter(record["verification_status"] for record in records)
     origins = Counter(
@@ -225,6 +374,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     classify = subparsers.add_parser("classify")
     classify.add_argument("--raw", required=True, type=Path)
+    classify.add_argument("--node-metadata", type=Path)
     classify.add_argument("--output", required=True, type=Path)
 
     raw_name = subparsers.add_parser("raw-name")
@@ -262,7 +412,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             _exclusive_write(arguments.output, document)
         elif arguments.command == "classify":
-            _exclusive_write(arguments.output, classify_raw(arguments.raw))
+            metadata_document = (
+                load(arguments.node_metadata)
+                if arguments.node_metadata is not None else None
+            )
+            _exclusive_write(
+                arguments.output,
+                classify_raw(arguments.raw, metadata_document),
+            )
         elif arguments.command == "raw-name":
             output_format = load_config(arguments.config)["output_format"]
             print("raw-results.csv" if output_format == "csv" else "raw-results.jsonl")

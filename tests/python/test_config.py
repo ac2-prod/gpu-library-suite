@@ -30,6 +30,12 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             validate_config(config)
 
+    def test_missing_production_verification_operand_is_rejected(self):
+        config = config_fixture()
+        del config["benchmarks"]["cublas"]["verification"]["rel_tolerance"]
+        with self.assertRaises(ConfigError):
+            validate_config(config)
+
     def test_solver_repeat_is_one(self):
         config = config_fixture()
         config["benchmarks"]["cusolver"]["cases"][0]["scopes"]["compute"]["repeat"] = 2

@@ -53,6 +53,7 @@ TOP_LEVEL_KEYS = {
     "pbs_stdout",
     "pbs_stderr",
     "openmpi_options",
+    "require_runtime_compilers",
     "environment_overrides",
     "cpu_runtime_environment",
 }
@@ -152,6 +153,8 @@ def validate_pegasus_config(config: Mapping[str, Any]) -> Dict[str, Any]:
     for option in options:
         _require(isinstance(option, str) and option != "" and "\n" not in option,
                  "invalid OpenMPI option")
+    _require(isinstance(config["require_runtime_compilers"], bool),
+             "require_runtime_compilers must be boolean")
     overrides = config["environment_overrides"]
     _require(isinstance(overrides, Mapping), "environment_overrides must be an object")
     for name, value in overrides.items():

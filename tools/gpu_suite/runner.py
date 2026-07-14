@@ -27,12 +27,6 @@ STEMS = {
     "curand": "rand",
     "thrust": "reduce",
 }
-SERIAL_CPU_BACKENDS = {
-    "cpu-fftw-serial",
-    "cpu-std-random-serial",
-    "cpu-stl-serial",
-    "cpu-reference-csr",
-}
 CORE_PARAMETER_KEYS = {
     "cufft": ("nfft", "batch", "transform"),
     "cublas": ("m", "n", "k", "alpha", "beta"),
@@ -119,11 +113,13 @@ def validate_manifest_artifacts(
             raise RunnerError("manifest executable does not exist: {0}".format(path))
         if sha256_file(path) != entry["binary_sha256"]:
             raise RunnerError("binary hash mismatch: {0}".format(path))
+        if run_mode == "production" and not entry["git_metadata_available"]:
+            raise RunnerError("production execution requires available Git metadata")
         if run_mode == "production" and entry["git_dirty"]:
             raise RunnerError("production execution requires clean build metadata")
         if run_mode == "production" and entry["build_type"] != "Release":
             raise RunnerError("production execution requires Release artifacts")
-        if entry["git_dirty"] and not dirty_hash_available:
+        if entry["git_dirty"] is True and not dirty_hash_available:
             raise RunnerError("dirty build requires a diff or source-snapshot hash")
 
 
@@ -223,6 +219,16 @@ def build_command(
     _option(arguments, "--implementation-order", ",".join(context["implementation_order"]))
     if series["implementation"] == "cpu":
         _option(arguments, "--cpu-backend", series["cpu_backend"])
+        _option(arguments, "--cpu-backend-role", series["cpu_backend_role"])
+        _option(arguments, "--series-role", series["series_role"])
+        _option(arguments, "--cpu-parallelism", series["cpu_parallelism"])
+        if series["cpu_threads_effective"] is not None:
+            _option(
+                arguments, "--cpu-threads-effective",
+                series["cpu_threads_effective"],
+            )
+    else:
+        _option(arguments, "--series-role", series["series_role"])
     for name, value in verification.items():
         _option(arguments, "--" + name.replace("_", "-"), value)
     return arguments
@@ -234,7 +240,12 @@ def build_schedule(
     benchmark_entries = {}
     for entry in manifest["entries"]:
         if entry["executable_role"] == "benchmark":
-            benchmark_entries[(entry["library"], entry["implementation"])] = entry
+            key = (entry["library"], entry["implementation"])
+            if key in benchmark_entries:
+                raise RunnerError(
+                    "duplicate benchmark manifest entry: {0}/{1}".format(*key)
+                )
+            benchmark_entries[key] = entry
     order = tuple(context["implementation_order"])
     schedule = []  # type: List[Dict[str, Any]]
     for benchmark in BENCHMARKS:
@@ -352,17 +363,22 @@ def synthetic_result(
     benchmark = item["benchmark"]
     primary_size, secondary_size = problem_sizes(benchmark, parameters)
     if entry is None:
-        compiler = {"compiler": "unavailable", "compiler_version": "unavailable", "compiler_flags": ""}
+        compiler = {
+            "compiler": "unavailable",
+            "compiler_version": "unavailable",
+            "global_configure_flags": "",
+        }
         binary_sha256 = ZERO_SHA256
-        git_commit = "unavailable"
-        git_dirty = False
+        git_metadata_available = False
+        git_commit = None
+        git_dirty = None
     else:
         compiler = _metadata_for_entry(entry, metadata_by_hash)
         binary_sha256 = entry["binary_sha256"]
+        git_metadata_available = entry["git_metadata_available"]
         git_commit = entry["git_commit"]
         git_dirty = entry["git_dirty"]
     cpu_backend = series["cpu_backend"] if series["implementation"] == "cpu" else None
-    serial = cpu_backend in SERIAL_CPU_BACKENDS
     record = {
         "result_schema_version": 1,
         "run_id": context["run_id"],
@@ -388,8 +404,10 @@ def synthetic_result(
         "cpu_backend_role": series["cpu_backend_role"] if cpu_backend else None,
         "series_role": series["series_role"],
         "cpu_threads_requested": context["cpu_threads"] if cpu_backend else None,
-        "cpu_threads_effective": 1 if serial else None,
-        "cpu_parallelism": ("serial" if serial else "unknown") if cpu_backend else None,
+        "cpu_threads_effective": (
+            series["cpu_threads_effective"] if cpu_backend else None
+        ),
+        "cpu_parallelism": series["cpu_parallelism"] if cpu_backend else None,
         "warmup": item["scope_settings"]["warmup"],
         "repeat": item["scope_settings"]["repeat"],
         "trial": trial,
@@ -411,14 +429,17 @@ def synthetic_result(
         "cuda_driver_version": None,
         "compiler": compiler["compiler"],
         "compiler_version": compiler["compiler_version"],
-        "compiler_flags": compiler.get("compiler_flags", ""),
+        "global_configure_flags": compiler.get("global_configure_flags", ""),
         "library_name": cpu_backend if cpu_backend else benchmark,
         "library_version": None,
         "cuda_runtime_version": None,
+        "git_metadata_available": git_metadata_available,
         "git_commit": git_commit,
         "git_dirty": git_dirty,
-        "git_diff_sha256": git_diff_sha256 if git_dirty else None,
-        "source_snapshot_sha256": source_snapshot_sha256 if git_dirty else None,
+        "git_diff_sha256": git_diff_sha256 if git_dirty is True else None,
+        "source_snapshot_sha256": (
+            source_snapshot_sha256 if git_dirty is True else None
+        ),
         "config_sha256": config_sha256,
         "runtime_environment_sha256": runtime_environment_sha256,
         "binary_sha256": binary_sha256,
@@ -462,11 +483,21 @@ def validate_subprocess_record(
         "cpu_backend": series["cpu_backend"],
         "cpu_backend_role": series["cpu_backend_role"],
         "series_role": series["series_role"],
+        "cpu_threads_effective": (
+            series["cpu_threads_effective"]
+            if series["implementation"] == "cpu" else None
+        ),
+        "cpu_parallelism": (
+            series["cpu_parallelism"]
+            if series["implementation"] == "cpu" else None
+        ),
         "config_sha256": config_sha256,
         "runtime_environment_sha256": runtime_environment_sha256,
         "binary_sha256": entry["binary_sha256"],
         "compiler": entry["compiler"],
         "compiler_version": entry["compiler_version"],
+        "global_configure_flags": entry["global_configure_flags"],
+        "git_metadata_available": entry["git_metadata_available"],
         "git_commit": entry["git_commit"],
         "git_dirty": entry["git_dirty"],
     }

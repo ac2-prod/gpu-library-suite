@@ -1,4 +1,8 @@
+#ifdef GPU_SUITE_LAPACKE_HEADER
 #include GPU_SUITE_LAPACKE_HEADER
+#else
+#include <lapacke.h>
+#endif
 
 #include <math.h>
 #include <stdio.h>

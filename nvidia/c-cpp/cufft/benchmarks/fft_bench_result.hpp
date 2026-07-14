@@ -2,6 +2,9 @@
 #define GPU_SUITE_FFT_BENCH_RESULT_HPP
 
 #include "gpu_suite/gpu_suite.h"
+#if defined(GPU_SUITE_HAVE_CUDA_RUNTIME_METADATA)
+#include "gpu_suite/cuda_metadata.hpp"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -174,13 +177,25 @@ int verify(gpu_suite_result &result, const gpu_suite_options &options,
 inline bool initialize_result(gpu_suite_result &result,
                               const gpu_suite_options &options, int trial) {
   char error[256] = {0};
-  if (gpu_suite_result_init(&result) != GPU_SUITE_OK ||
-      gpu_suite_result_apply_options(&result, &options, error, sizeof(error)) !=
-          GPU_SUITE_OK) {
+  if (gpu_suite_result_init(&result) != GPU_SUITE_OK) {
+    std::fprintf(stderr, "could not initialize result: %s\n", error);
+    return false;
+  }
+  if (gpu_suite_result_apply_options(&result, &options, error, sizeof(error)) !=
+      GPU_SUITE_OK) {
+    gpu_suite_result_destroy(&result);
     std::fprintf(stderr, "could not initialize result: %s\n", error);
     return false;
   }
   result.trial = trial;
+#if defined(GPU_SUITE_HAVE_CUDA_RUNTIME_METADATA)
+  if (options.implementation != GPU_SUITE_IMPLEMENTATION_CPU &&
+      !gpu_suite::apply_cuda_runtime_metadata(result, options.device)) {
+    gpu_suite_result_destroy(&result);
+    std::fprintf(stderr, "could not query CUDA device/cuFFT metadata\n");
+    return false;
+  }
+#endif
   return true;
 }
 

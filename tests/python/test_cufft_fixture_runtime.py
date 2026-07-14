@@ -38,6 +38,14 @@ class CufftFixtureRuntimeTests(unittest.TestCase):
             "cpu-fftw-threaded",
             "--cpu-threads",
             "4",
+            "--cpu-threads-effective",
+            "4",
+            "--cpu-backend-role",
+            "production",
+            "--series-role",
+            "primary",
+            "--cpu-parallelism",
+            "threaded",
         ]
         completed = subprocess.run(command, text=True, capture_output=True, check=False)
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -79,6 +87,16 @@ class CufftFixtureRuntimeTests(unittest.TestCase):
             "csv",
             "--cpu-backend",
             "cpu-fftw-serial",
+            "--cpu-threads",
+            "48",
+            "--cpu-threads-effective",
+            "1",
+            "--cpu-backend-role",
+            "reference",
+            "--series-role",
+            "auxiliary",
+            "--cpu-parallelism",
+            "serial",
         ]
         completed = subprocess.run(command, text=True, capture_output=True, check=False)
         self.assertEqual(completed.returncode, 0, completed.stderr)

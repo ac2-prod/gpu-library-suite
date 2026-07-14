@@ -1,6 +1,4 @@
-#ifdef GPU_SUITE_USE_MKL_SPARSE
 #include <mkl_spblas.h>
-#endif
 
 #include <math.h>
 #include <stdio.h>
@@ -42,25 +40,21 @@ int main(void) {
   double *val = (double *)malloc((size_t)nnz * sizeof(*val));
   double *x = (double *)malloc((size_t)n * sizeof(*x));
   double *y = (double *)malloc((size_t)n * sizeof(*y));
+  sparse_matrix_t matrix = NULL;
+  int status = EXIT_FAILURE;
+  double max_error = 0.0;
   if (!row || !col || !val || !x || !y) {
     fprintf(stderr, "CSR allocation failed\n");
-    free(y);
-    free(x);
-    free(val);
-    free(col);
-    free(row);
-    return EXIT_FAILURE;
+    goto cleanup;
   }
   if (make_poisson2d_csr(nx, ny, row, col, val) != nnz) {
     fprintf(stderr, "CSR generation failed\n");
-    return EXIT_FAILURE;
+    goto cleanup;
   }
   for (int i = 0; i < n; ++i) {
     x[i] = 1.0;
     y[i] = 1.0;
   }
-#ifdef GPU_SUITE_USE_MKL_SPARSE
-  sparse_matrix_t matrix = NULL;
   struct matrix_descr descr;
   descr.type = SPARSE_MATRIX_TYPE_GENERAL;
   descr.mode = SPARSE_FILL_MODE_FULL;
@@ -70,18 +64,8 @@ int main(void) {
       mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, matrix, descr, x,
                       1.0, y) != SPARSE_STATUS_SUCCESS) {
     fprintf(stderr, "oneMKL Sparse SpMV failed\n");
-    return EXIT_FAILURE;
+    goto cleanup;
   }
-  (void)mkl_sparse_destroy(matrix);
-#else
-  for (int i = 0; i < n; ++i) {
-    double sum = 0.0;
-    for (int j = row[i]; j < row[i + 1]; ++j)
-      sum += val[j] * x[col[j]];
-    y[i] = sum + y[i];
-  }
-#endif
-  double max_error = 0.0;
   for (int iy = 0; iy < ny; ++iy)
     for (int ix = 0; ix < nx; ++ix) {
       int neighbors =
@@ -90,10 +74,18 @@ int main(void) {
       max_error = fmax(max_error, fabs(y[iy * nx + ix] - expected));
     }
   printf("CPU Poisson CSR SpMV complete; max error = %.17g\n", max_error);
+  status = max_error <= 1.0e-12 ? EXIT_SUCCESS : EXIT_FAILURE;
+
+cleanup:
+  if (matrix != NULL &&
+      mkl_sparse_destroy(matrix) != SPARSE_STATUS_SUCCESS) {
+    fprintf(stderr, "mkl_sparse_destroy failed\n");
+    status = EXIT_FAILURE;
+  }
   free(y);
   free(x);
   free(val);
   free(col);
   free(row);
-  return max_error <= 1.0e-12 ? EXIT_SUCCESS : EXIT_FAILURE;
+  return status;
 }

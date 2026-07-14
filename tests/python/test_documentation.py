@@ -34,6 +34,32 @@ LIBRARY_STEMS = {
 
 
 class DocumentationTests(unittest.TestCase):
+    def test_library_readmes_have_the_required_common_sections(self):
+        headings = (
+            "## Canonical sources and targets",
+            "## Teaching default",
+            "## Dependencies",
+            "## Direct compile",
+            "## CMake configure and build",
+            "## Benchmark CLI",
+            "## Timing scopes",
+            "## Verification",
+            "## CPU backend and role",
+            "## OpenACC notes",
+            "## Known limitations and local validation",
+        )
+        for library in LIBRARY_STEMS:
+            path = (
+                REPOSITORY_ROOT / "nvidia" / "c-cpp" / library / "README.md"
+            )
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(library=library):
+                for heading in headings:
+                    self.assertIn(heading, text)
+                self.assertIn("`compute`", text)
+                self.assertIn("`end-to-end`", text)
+                self.assertIn("locally unverified", text)
+
     def test_every_canonical_name_is_in_root_and_library_readmes(self):
         root_readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         for library, stems in LIBRARY_STEMS.items():

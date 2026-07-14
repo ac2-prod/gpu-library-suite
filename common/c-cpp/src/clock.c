@@ -10,6 +10,13 @@ static void set_error(char *error, size_t error_size, const char *message) {
   }
 }
 
+static void report_api_error(char *error, size_t error_size, const char *api,
+                             const char *detail) {
+  if (error != NULL && error_size > 0U)
+    (void)snprintf(error, error_size, "%s: %s", api, detail);
+  (void)fprintf(stderr, "%s: %s\n", api, detail);
+}
+
 int gpu_suite_clock_resolution(double *resolution_sec, char *error,
                                size_t error_size) {
   struct timespec resolution;
@@ -19,7 +26,8 @@ int gpu_suite_clock_resolution(double *resolution_sec, char *error,
     return GPU_SUITE_ERROR_INVALID;
   }
   if (clock_getres(CLOCK_MONOTONIC, &resolution) != 0) {
-    set_error(error, error_size, strerror(errno));
+    report_api_error(error, error_size, "clock_getres(CLOCK_MONOTONIC)",
+                     strerror(errno));
     return GPU_SUITE_ERROR_IO;
   }
   *resolution_sec =
@@ -34,7 +42,8 @@ int gpu_suite_clock_now(struct timespec *value, char *error,
     return GPU_SUITE_ERROR_INVALID;
   }
   if (clock_gettime(CLOCK_MONOTONIC, value) != 0) {
-    set_error(error, error_size, strerror(errno));
+    report_api_error(error, error_size, "clock_gettime(CLOCK_MONOTONIC)",
+                     strerror(errno));
     return GPU_SUITE_ERROR_IO;
   }
   return GPU_SUITE_OK;
@@ -68,11 +77,12 @@ int gpu_suite_utc_timestamp(char output[GPU_SUITE_TIMESTAMP_CAPACITY],
     return GPU_SUITE_ERROR_INVALID;
   }
   if (clock_gettime(CLOCK_REALTIME, &now) != 0) {
-    set_error(error, error_size, strerror(errno));
+    report_api_error(error, error_size, "clock_gettime(CLOCK_REALTIME)",
+                     strerror(errno));
     return GPU_SUITE_ERROR_IO;
   }
   if (gmtime_r(&now.tv_sec, &utc) == NULL) {
-    set_error(error, error_size, "gmtime_r failed");
+    report_api_error(error, error_size, "gmtime_r", "failed");
     return GPU_SUITE_ERROR_IO;
   }
   written = snprintf(output, GPU_SUITE_TIMESTAMP_CAPACITY,
@@ -80,8 +90,29 @@ int gpu_suite_utc_timestamp(char output[GPU_SUITE_TIMESTAMP_CAPACITY],
                      utc.tm_mon + 1, utc.tm_mday, utc.tm_hour, utc.tm_min,
                      utc.tm_sec, now.tv_nsec / 1000000L);
   if (written != GPU_SUITE_TIMESTAMP_CAPACITY - 1) {
-    set_error(error, error_size, "timestamp formatting failed");
+    report_api_error(error, error_size, "snprintf UTC timestamp", "failed");
     return GPU_SUITE_ERROR_FORMAT;
   }
   return GPU_SUITE_OK;
+}
+
+int gpu_suite_measurement_start(
+    char timestamp[GPU_SUITE_TIMESTAMP_CAPACITY], struct timespec *monotonic,
+    char *error, size_t error_size) {
+  int status = gpu_suite_utc_timestamp(timestamp, error, error_size);
+  if (status != GPU_SUITE_OK) {
+    return status;
+  }
+  return gpu_suite_clock_now(monotonic, error, error_size);
+}
+
+int gpu_suite_measurement_end(
+    struct timespec *monotonic,
+    char timestamp[GPU_SUITE_TIMESTAMP_CAPACITY], char *error,
+    size_t error_size) {
+  int status = gpu_suite_clock_now(monotonic, error, error_size);
+  if (status != GPU_SUITE_OK) {
+    return status;
+  }
+  return gpu_suite_utc_timestamp(timestamp, error, error_size);
 }

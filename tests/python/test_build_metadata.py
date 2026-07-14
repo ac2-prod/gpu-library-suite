@@ -17,6 +17,13 @@ class BuildMetadataTests(unittest.TestCase):
         header_path = Path(os.environ["GPU_SUITE_BUILD_METADATA_HEADER"])
         content = metadata_path.read_bytes()
         metadata = loads(content)
+        self.assertIsInstance(metadata["git_metadata_available"], bool)
+        if metadata["git_metadata_available"]:
+            self.assertIsInstance(metadata["git_commit"], str)
+            self.assertIsInstance(metadata["git_dirty"], bool)
+        else:
+            self.assertIsNone(metadata["git_commit"])
+            self.assertIsNone(metadata["git_dirty"])
         self.assertEqual(content, dump_bytes(metadata))
         self.assertIn(metadata["build_profile"], {"cpu-cuda", "openacc"})
         self.assertIn("architectures", metadata["cuda"])
@@ -33,6 +40,8 @@ class BuildMetadataTests(unittest.TestCase):
                 "thrust_cuda_interop_link_flags",
             },
         )
+        for language in ("c", "cxx", "cuda"):
+            self.assertIn("global_configure_flags", metadata[language])
         digest = hashlib.sha256(content).hexdigest()
         header = header_path.read_text(encoding="utf-8")
         match = re.search(

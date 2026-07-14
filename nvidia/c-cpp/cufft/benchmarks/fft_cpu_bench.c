@@ -181,9 +181,13 @@ static int emit_unmeasured_rows(FILE *stream, bool *write_header,
   for (trial = first_trial; trial < options->trials; ++trial) {
     gpu_suite_result result;
     char error[256] = {0};
-    if (gpu_suite_result_init(&result) != GPU_SUITE_OK ||
-        gpu_suite_result_apply_options(&result, options, error,
+    if (gpu_suite_result_init(&result) != GPU_SUITE_OK) {
+      fprintf(stderr, "could not initialize failure result: %s\n", error);
+      return GPU_SUITE_ERROR_FORMAT;
+    }
+    if (gpu_suite_result_apply_options(&result, options, error,
                                        sizeof(error)) != GPU_SUITE_OK) {
+      gpu_suite_result_destroy(&result);
       fprintf(stderr, "could not initialize failure result: %s\n", error);
       return GPU_SUITE_ERROR_FORMAT;
     }
@@ -332,33 +336,32 @@ int main(int argc, char **argv) {
     const char *failure_message = "";
 
     initialize_buffers(&buffers);
-    if (gpu_suite_result_init(&result) != GPU_SUITE_OK ||
-        gpu_suite_result_apply_options(&result, &options, error,
+    if (gpu_suite_result_init(&result) != GPU_SUITE_OK) {
+      fprintf(stderr, "could not initialize result: %s\n", error);
+      (void)emit_unmeasured_rows(stream, &write_header, &options, trial, true,
+                                 "benchmark", "result initialization failed");
+      goto cleanup;
+    }
+    if (gpu_suite_result_apply_options(&result, &options, error,
                                        sizeof(error)) != GPU_SUITE_OK) {
+      gpu_suite_result_destroy(&result);
       fprintf(stderr, "could not initialize result: %s\n", error);
       (void)emit_unmeasured_rows(stream, &write_header, &options, trial, true,
                                  "benchmark", "result initialization failed");
       goto cleanup;
     }
     result.trial = trial;
-    result.cpu_threads_effective = gpu_suite_optional_int_value(
-        strcmp(options.cpu_backend, "cpu-fftw-serial") == 0
-            ? 1
-            : options.cpu_threads);
-
     if (options.scope == GPU_SUITE_SCOPE_COMPUTE) {
-      if (gpu_suite_utc_timestamp(start_timestamp, error, sizeof(error)) !=
-              GPU_SUITE_OK ||
-          gpu_suite_clock_now(&start, error, sizeof(error)) != GPU_SUITE_OK) {
+      if (gpu_suite_measurement_start(start_timestamp, &start, error,
+                                      sizeof(error)) != GPU_SUITE_OK) {
         trial_failed = true;
         failure_message = "could not read measurement start clock";
       } else {
         for (repeat = 0; repeat < options.repeat; ++repeat) {
           fftwf_execute(compute_plan);
         }
-        if (gpu_suite_clock_now(&end, error, sizeof(error)) != GPU_SUITE_OK ||
-            gpu_suite_utc_timestamp(end_timestamp, error, sizeof(error)) !=
-                GPU_SUITE_OK) {
+        if (gpu_suite_measurement_end(&end, end_timestamp, error,
+                                      sizeof(error)) != GPU_SUITE_OK) {
           trial_failed = true;
           failure_message = "could not read measurement end clock";
         } else {
@@ -369,14 +372,12 @@ int main(int argc, char **argv) {
       for (repeat = 0; repeat < options.repeat; ++repeat) {
         fftwf_plan plan;
         initialize_buffers(&buffers);
-        if (repeat == 0 &&
-            gpu_suite_utc_timestamp(start_timestamp, error, sizeof(error)) !=
-                GPU_SUITE_OK) {
-          trial_failed = true;
-          failure_message = "could not read measurement start timestamp";
-          break;
-        }
-        if (gpu_suite_clock_now(&start, error, sizeof(error)) != GPU_SUITE_OK) {
+        const int start_status =
+            repeat == 0
+                ? gpu_suite_measurement_start(start_timestamp, &start, error,
+                                              sizeof(error))
+                : gpu_suite_clock_now(&start, error, sizeof(error));
+        if (start_status != GPU_SUITE_OK) {
           trial_failed = true;
           failure_message = "could not read measurement start clock";
           break;
@@ -388,7 +389,12 @@ int main(int argc, char **argv) {
           break;
         }
         fftwf_execute(plan);
-        if (gpu_suite_clock_now(&end, error, sizeof(error)) != GPU_SUITE_OK) {
+        const int end_status =
+            repeat + 1 == options.repeat
+                ? gpu_suite_measurement_end(&end, end_timestamp, error,
+                                            sizeof(error))
+                : gpu_suite_clock_now(&end, error, sizeof(error));
+        if (end_status != GPU_SUITE_OK) {
           fftwf_destroy_plan(plan);
           trial_failed = true;
           failure_message = "could not read measurement end clock";
@@ -396,12 +402,6 @@ int main(int argc, char **argv) {
         }
         fftwf_destroy_plan(plan);
         elapsed_total += gpu_suite_clock_elapsed(&start, &end);
-      }
-      if (!trial_failed &&
-          gpu_suite_utc_timestamp(end_timestamp, error, sizeof(error)) !=
-              GPU_SUITE_OK) {
-        trial_failed = true;
-        failure_message = "could not read measurement end timestamp";
       }
     }
 

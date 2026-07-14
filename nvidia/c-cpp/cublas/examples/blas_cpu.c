@@ -1,4 +1,8 @@
+#ifdef GPU_SUITE_CBLAS_HEADER
 #include GPU_SUITE_CBLAS_HEADER
+#else
+#include <cblas.h>
+#endif
 
 #include <math.h>
 #include <stdio.h>

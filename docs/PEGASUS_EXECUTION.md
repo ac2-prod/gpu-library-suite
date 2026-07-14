@@ -164,8 +164,15 @@ job本体は次の順で準備する。
 基本起動形は次とする。
 
 ```bash
-mpirun ${NQSV_MPIOPTS} -np @NODES@ -npernode 1 --bind-to none jobs/pegasus/run_node.sh ...
+# shellcheck disable=SC2086
+mpirun ${NQSV_MPIOPTS} "${MPI_OPTIONS[@]}" \
+  -np @NODES@ -npernode 1 --bind-to none jobs/pegasus/run_node.sh ...
 ```
+
+preflightとmeasurementの両方が同じ基本形を使う。`NQSV_MPIOPTS`はsiteが複数の
+shell wordを供給するためquoteして1引数にまとめない。人間が`qsub`を行う前に、
+rendered PBSの`#PBS -o`と`#PBS -e`が指す親directoryを作成し、書込み可能である
+ことを確認する。rendererは親directoryの存在を検査するが作成しない。
 
 `node_index`には`OMPI_COMM_WORLD_RANK`を用いる。1process・48threadでは
 `--bind-to none`を用いる。追加OpenMPI optionは設定から与える。
@@ -180,6 +187,22 @@ job masterは`benchmark_runtime_modules`をloadした後、preflight前に
 compiler/runtime、`NVHPC_CUDA_HOME`またはNVHPCが実際に選択したCUDA Toolkit、
 FFTW/oneMKL/OpenBLAS/LAPACKE等のversion、全binaryの`ldd`出力、解決された
 shared-library path、およびCPU thread環境の8変数を保存する。
+
+benchmark runtimeの必須条件は、prebuilt binaryが必要とするdriver、CUDA
+runtime、およびshared libraryが解決・実行可能であることである。`nvcc`、`nvc`、
+`nvc++` commandの存在はmetadataとして取得できれば保存し、存在しなければwarning
+とnull/診断を保存するが、標準runtime preflightを失敗させない。compiler commandを
+runtimeにも必須とするsite固有方針は、標準条件と混同せず明示optionで有効化する。
+`pegasus.json`の`require_runtime_compilers=false`が標準であり、site規則が明示的に
+要求する場合だけtrueにしてrendererから`--require-runtime-compilers`を渡す。
+
+GPU identityは各node process自身がname、UUID、NVIDIA package driver versionを
+収集する。さらにcompilerを必要とせずnode-local `libcudart`をloadし、
+`cudaDriverGetVersion`と`cudaRuntimeGetVersion`を呼ぶ。job masterや別nodeで得た
+identityを全nodeへ流用しない。各nodeはその値を`node-metadata.json`に保存し、
+benchmarkも独立してCUDA APIを呼ぶ。成功raw rowのname、UUID、Driver API version、
+Runtime versionをnode metadataと一致させる。取得不能な値はnullと診断にし、
+推測値で補わない。
 
 同文書はproject-defined deterministic JSON serialization profileで保存・hashし、
 `runtime_environment_sha256`を追加waveの一致条件とする。異なるruntime環境を

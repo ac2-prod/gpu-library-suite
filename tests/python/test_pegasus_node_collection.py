@@ -16,7 +16,12 @@ PEGASUS_DIRECTORY = ROOT / "jobs" / "pegasus"
 sys.path.insert(0, str(PEGASUS_DIRECTORY))
 
 from collect_results import collect_results  # noqa: E402
-from node_tools import build_node_status  # noqa: E402
+from node_tools import (  # noqa: E402
+    NodeToolError,
+    build_node_metadata,
+    build_node_status,
+    classify_raw,
+)
 
 
 def write_wave_metadata(path, mapping):
@@ -47,6 +52,72 @@ def write_node(nodes, hostname, rank, classification):
 
 
 class CollectionTests(unittest.TestCase):
+    def test_node_metadata_uses_an_independent_cuda_runtime_probe(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            inputs = write_campaign_inputs(directory)
+            probe = {
+                "cuda_driver_api_version": "12.8.0",
+                "cuda_runtime_version": "12.8.0",
+                "diagnostic": None,
+                "loaded_library": "/node/lib/libcudart.so.12",
+                "query_status": "success",
+            }
+            environment = dict(CPU_ENVIRONMENT)
+            environment.update({
+                "GPU_SUITE_GPU_NAME": "node-local-gpu",
+                "GPU_SUITE_GPU_UUID": (
+                    "GPU-11111111-1111-1111-1111-111111111111"
+                ),
+                "GPU_SUITE_NVIDIA_DRIVER_VERSION": "575.57.08",
+                "GPU_SUITE_NODE_GPU_QUERY_DIAGNOSTIC": "",
+                "GPU_SUITE_NODE_GPU_QUERY_STATUS": "success",
+            })
+            metadata = build_node_metadata(
+                inputs["config"], inputs["manifest"], "run-1", 0, 0,
+                "node0", "0" * 64, environment,
+                cuda_runtime_probe=lambda: probe,
+            )
+            self.assertEqual(metadata["cuda_runtime_identity"], probe)
+            self.assertEqual(
+                metadata["gpu_identity"]["nvidia_driver_version"],
+                "575.57.08",
+            )
+            self.assertIsNone(metadata["gpu_identity"]["diagnostic"])
+
+    def test_gpu_raw_identity_must_match_its_node_metadata(self):
+        record = raw_success(implementation="cuda")
+        record["gpu_name"] = "node-local-gpu"
+        record["gpu_uuid"] = "GPU-11111111-1111-1111-1111-111111111111"
+        metadata = {
+            "cuda_runtime_identity": {
+                "cuda_driver_api_version": record["cuda_driver_version"],
+                "cuda_runtime_version": record["cuda_runtime_version"],
+                "diagnostic": None,
+                "loaded_library": "libcudart.so.12",
+                "query_status": "success",
+            },
+            "gpu_identity": {
+                "name": record["gpu_name"],
+                "uuid": record["gpu_uuid"],
+            }
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            raw = Path(temporary) / "raw.jsonl"
+            raw.write_text(dumps(record) + "\n", encoding="utf-8")
+            self.assertEqual(
+                classify_raw(raw, metadata)["benchmark_status"], "success"
+            )
+            metadata["gpu_identity"]["uuid"] = (
+                "GPU-22222222-2222-2222-2222-222222222222"
+            )
+            with self.assertRaisesRegex(NodeToolError, "GPU UUID"):
+                classify_raw(raw, metadata)
+            metadata["gpu_identity"]["uuid"] = record["gpu_uuid"]
+            metadata["cuda_runtime_identity"]["cuda_runtime_version"] = "12.7.0"
+            with self.assertRaisesRegex(NodeToolError, "CUDA Runtime"):
+                classify_raw(raw, metadata)
+
     def test_all_healthy_nodes_succeed(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

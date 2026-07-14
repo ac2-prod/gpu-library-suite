@@ -202,42 +202,46 @@ int main(int argc, char **argv) {
       bool operation_ok = true;
       if (!gpu_suite::initialize_result(result, options, trial))
         return EXIT_FAILURE;
-      if (gpu_suite_utc_timestamp(start_timestamp, error, sizeof(error)) !=
-          GPU_SUITE_OK)
-        operation_ok = false;
-      if (options.scope == GPU_SUITE_SCOPE_COMPUTE && operation_ok) {
+      if (options.scope == GPU_SUITE_SCOPE_COMPUTE) {
         reset_engine(engine, options);
-        if (gpu_suite_clock_now(&start, error, sizeof(error)) != GPU_SUITE_OK)
+        if (gpu_suite_measurement_start(start_timestamp, &start, error,
+                                        sizeof(error)) != GPU_SUITE_OK)
           operation_ok = false;
         for (int repeat = 0; repeat < options.repeat && operation_ok; ++repeat)
           generate(engine, distribution, values);
-        if (operation_ok &&
-            gpu_suite_clock_now(&end, error, sizeof(error)) != GPU_SUITE_OK)
+        if (operation_ok && gpu_suite_measurement_end(
+                                &end, end_timestamp, error,
+                                sizeof(error)) != GPU_SUITE_OK)
           operation_ok = false;
         if (operation_ok)
           elapsed_total = gpu_suite_clock_elapsed(&start, &end);
       } else if (operation_ok) {
         for (int repeat = 0; repeat < options.repeat && operation_ok;
              ++repeat) {
-          if (gpu_suite_clock_now(&start, error, sizeof(error)) !=
-              GPU_SUITE_OK) {
+          const int start_status =
+              repeat == 0
+                  ? gpu_suite_measurement_start(start_timestamp, &start, error,
+                                                sizeof(error))
+                  : gpu_suite_clock_now(&start, error, sizeof(error));
+          if (start_status != GPU_SUITE_OK) {
             operation_ok = false;
             break;
           }
           std::mt19937_64 repeat_engine(options.seed);
           repeat_engine.discard(options.offset);
           generate(repeat_engine, distribution, values);
-          if (gpu_suite_clock_now(&end, error, sizeof(error)) != GPU_SUITE_OK) {
+          const int end_status =
+              repeat + 1 == options.repeat
+                  ? gpu_suite_measurement_end(&end, end_timestamp, error,
+                                              sizeof(error))
+                  : gpu_suite_clock_now(&end, error, sizeof(error));
+          if (end_status != GPU_SUITE_OK) {
             operation_ok = false;
             break;
           }
           elapsed_total += gpu_suite_clock_elapsed(&start, &end);
         }
       }
-      if (operation_ok &&
-          gpu_suite_utc_timestamp(end_timestamp, error, sizeof(error)) !=
-              GPU_SUITE_OK)
-        operation_ok = false;
       if (operation_ok) {
         result.measurement_start_timestamp = start_timestamp;
         result.measurement_end_timestamp = end_timestamp;

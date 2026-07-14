@@ -48,8 +48,8 @@ def raw_success(
         if not matching:
             raise ValueError("CPU series is absent from configuration")
         series = matching[0]
-        effective_threads = 1 if "serial" in cpu_backend else 48
-        cpu_parallelism = "serial" if effective_threads == 1 else "threaded"
+        effective_threads = series["cpu_threads_effective"]
+        cpu_parallelism = series["cpu_parallelism"]
     else:
         series = next(
             item for item in definition["series"]
@@ -102,15 +102,19 @@ def raw_success(
         "getrf_info": None,
         "getrs_info": None,
         "device_id": None if implementation == "cpu" else 0,
-        "gpu_name": None,
-        "gpu_uuid": None,
-        "cuda_driver_version": None,
+        "gpu_name": None if implementation == "cpu" else "Test GPU",
+        "gpu_uuid": (
+            None if implementation == "cpu"
+            else "GPU-11111111-1111-1111-1111-111111111111"
+        ),
+        "cuda_driver_version": None if implementation == "cpu" else "12.8.0",
         "compiler": "TestCompiler",
         "compiler_version": "1.0",
-        "compiler_flags": "-O3",
+        "global_configure_flags": "-O3",
         "library_name": cpu_backend or benchmark,
-        "library_version": None,
-        "cuda_runtime_version": None,
+        "library_version": None if implementation == "cpu" else "12080",
+        "cuda_runtime_version": None if implementation == "cpu" else "12.8.0",
+        "git_metadata_available": True,
         "git_commit": "abc",
         "git_dirty": False,
         "git_diff_sha256": None,

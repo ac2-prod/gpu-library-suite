@@ -1,31 +1,130 @@
 # cuFFT C/C++ examples and benchmarks
 
-This directory contains the six canonical cuFFT programs listed in the
-[project specification](../../../docs/PROJECT_SPECIFICATION.md): a CPU, direct
-CUDA, and OpenACC teaching example and their benchmark counterparts. The
-teaching examples use the fixed batched FP32 forward transform from that
-specification. Benchmark behavior, timing scopes, and verification are defined
-by the [benchmark protocol](../../../docs/BENCHMARK_PROTOCOL.md).
+This directory compares the canonical batched FP32 forward complex transform
+through FFTW3f, direct cuFFT, and OpenACC/cuFFT. Problem mathematics belong to
+[`docs/PROJECT_SPECIFICATION.md`](../../../docs/PROJECT_SPECIFICATION.md), and
+CLI, timing, restoration, and verification belong to
+[`docs/BENCHMARK_PROTOCOL.md`](../../../docs/BENCHMARK_PROTOCOL.md).
 
-The CPU programs require FFTW3's single-precision interface. `fft_cpu_bench`
-contains the `cpu-fftw-threaded` series only when its thread initialization,
-thread-count, and cleanup symbols compile and link. On Pegasus that threaded
-series is the primary production denominator. `cpu-fftw-serial` remains an
-auxiliary teaching-correspondence series; it never replaces a missing threaded
-series and no primary cuFFT speedup is produced without the configured threaded
-denominator.
+## Canonical sources and targets
 
-Direct CUDA programs link `CUDA::cudart` and `CUDA::cufft`. OpenACC programs use
-the same imported CUDA targets together with `OpenACC::OpenACC_CXX`; the
-OpenACC-managed input/output arrays are not allocated with `cudaMalloc`.
-Architecture and NVHPC GPU target selections must be supplied by the build
-profile, not by these sources.
+| Role | Source | CMake target/executable |
+| --- | --- | --- |
+| CPU teaching | `examples/fft_cpu.c` | `fft_cpu` |
+| CUDA teaching | `examples/fft_gpu.cu` | `fft_gpu` |
+| OpenACC teaching | `examples/openacc_cufft.cpp` | `openacc_cufft` |
+| CPU benchmark | `benchmarks/fft_cpu_bench.c` | `fft_cpu_bench` |
+| CUDA benchmark | `benchmarks/fft_gpu_bench.cu` | `fft_gpu_bench` |
+| OpenACC benchmark | `benchmarks/openacc_cufft_bench.cpp` | `openacc_cufft_bench` |
 
-The canonical CMake targets and executable names are `fft_cpu`, `fft_gpu`,
-`openacc_cufft`, `fft_cpu_bench`, `fft_gpu_bench`, and
-`openacc_cufft_bench`. Missing optional dependencies disable only their affected
-targets and appear with a reason in the configure summary.
+## Teaching default
 
-GPU and NVHPC execution must be validated manually on Pegasus as described in
-[the Pegasus execution guide](../../../docs/PEGASUS_EXECUTION.md); a local
-CPU-only configure does not count as a GPU test.
+All three teaching programs perform 4,096 independent length-1,024 C2C
+forward transforms in single precision. They are complete single-source
+programs and intentionally contain no benchmark CLI or result framework.
+
+## Dependencies
+
+The CPU programs require FFTW3f; threaded benchmark support additionally
+requires the FFTW3f threads library and its initialization, thread-count, and
+cleanup symbols. CUDA programs require CUDA Runtime and cuFFT. OpenACC programs
+require NVHPC OpenACC C++, CUDA Runtime, and cuFFT. CMake uses compile-and-link
+probes and reports why an affected target is disabled.
+
+## Direct compile
+
+From the repository root, adjust ordinary compiler search paths for the local
+installation:
+
+```bash
+cc -std=c17 nvidia/c-cpp/cufft/examples/fft_cpu.c \
+  -lfftw3f -lm -o /tmp/gpu-library-suite-local-build/fft_cpu-direct
+nvcc -std=c++17 nvidia/c-cpp/cufft/examples/fft_gpu.cu \
+  -lcufft -o /tmp/gpu-library-suite-local-build/fft_gpu-direct
+nvc++ -std=c++17 -acc -cuda \
+  nvidia/c-cpp/cufft/examples/openacc_cufft.cpp -cudalib=cufft \
+  -o /tmp/gpu-library-suite-local-build/openacc_cufft-direct
+```
+
+## CMake configure and build
+
+CPU and CUDA belong to one tree; OpenACC belongs to a separate NVHPC tree. The
+commands assume that `CUDA_TOOLKIT_ROOT`, `CUDA_ARCHITECTURES`, and
+`NVHPC_GPU_TARGET` were set to explicit site-approved values.
+
+```bash
+cmake -S . -B /tmp/gpu-library-suite-local-build/cpu-cuda \
+  -DCUDAToolkit_ROOT="${CUDA_TOOLKIT_ROOT}" \
+  -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
+  -DGPU_SUITE_BUILD_CPU=ON -DGPU_SUITE_BUILD_CUDA=ON \
+  -DGPU_SUITE_BUILD_OPENACC=OFF
+cmake --build /tmp/gpu-library-suite-local-build/cpu-cuda \
+  --target fft_cpu fft_gpu fft_cpu_bench fft_gpu_bench
+
+NVHPC_CUDA_HOME="${CUDA_TOOLKIT_ROOT}" \
+cmake -S . -B /tmp/gpu-library-suite-local-build/openacc \
+  -DCMAKE_C_COMPILER=nvc -DCMAKE_CXX_COMPILER=nvc++ \
+  -DCUDAToolkit_ROOT="${CUDA_TOOLKIT_ROOT}" \
+  -DGPU_SUITE_NVHPC_GPU_TARGET="${NVHPC_GPU_TARGET}" \
+  -DGPU_SUITE_BUILD_CPU=OFF -DGPU_SUITE_BUILD_CUDA=OFF \
+  -DGPU_SUITE_BUILD_OPENACC=ON
+cmake --build /tmp/gpu-library-suite-local-build/openacc \
+  --target openacc_cufft openacc_cufft_bench
+```
+
+CUDA architecture, Toolkit root, and NVHPC GPU target remain explicit external
+inputs; portable sources do not select them.
+
+## Benchmark CLI
+
+A standalone threaded CPU smoke run is:
+
+```bash
+/tmp/gpu-library-suite-local-build/cpu-cuda/nvidia/c-cpp/cufft/fft_cpu_bench \
+  --size 256 --batch 8 --warmup 1 --repeat 2 --trials 1 \
+  --scope compute --verify true --abs-tolerance 1e-4 \
+  --rel-tolerance 1e-5 --output - --format jsonl \
+  --cpu-backend cpu-fftw-threaded --cpu-threads 48 \
+  --cpu-threads-effective 48 --cpu-backend-role production \
+  --series-role primary --cpu-parallelism threaded
+```
+
+Production suite execution obtains all counts, roles, and verification
+thresholds from the effective canonical configuration and uses
+`tools/run_suite.py` as the only node raw-file writer.
+
+## Timing scopes
+
+`compute` times only repeated transforms after plan creation, allocation,
+transfer/restoration, and pre-timing synchronization. `end-to-end` times each
+repeat's allocation, plan creation, input transfer, transform, completion, and
+output transfer; cleanup follows the end timestamp. Canonical state is restored
+before every repeat. Warm-up and verification remain outside timed intervals.
+
+## Verification
+
+The output is compared with the canonical analytical transform using the
+effective absolute and relative tolerances. A verification failure records that
+trial as failed but does not prevent a restored later trial from running.
+
+## CPU backend and role
+
+`cpu-fftw-threaded` is the Pegasus production primary denominator.
+`cpu-fftw-serial` is a reference auxiliary teaching-correspondence series. If
+the threads API is unavailable, CMake may retain serial support, but the suite
+does not silently substitute it and produces no primary cuFFT speedup.
+
+## OpenACC notes
+
+OpenACC owns input and output array storage; `host_data use_device` exposes the
+already-present device addresses to cuFFT. The target links
+`OpenACC::OpenACC_CXX`, `CUDA::cudart`, and `CUDA::cufft` in its own build tree.
+
+## Known limitations and local validation
+
+Very large batch/length combinations may fail allocation and are reported as
+failures rather than silently resized. Local CPU and fake-header syntax tests do
+not exercise a real CUDA GPU, cuFFT runtime, NVHPC compiler, or Pegasus run;
+those production dependencies remain locally unverified and require the manual
+Pegasus checks in
+[`docs/PEGASUS_EXECUTION.md`](../../../docs/PEGASUS_EXECUTION.md).

@@ -73,27 +73,44 @@ typedef struct {
   sparse_matrix_t matrix;
   struct matrix_descr descriptor;
 } sparse_context;
+static int sparse_ok(sparse_status_t status, const char *api) {
+  if (status == SPARSE_STATUS_SUCCESS)
+    return 1;
+  fprintf(stderr, "%s: oneMKL Sparse status %d\n", api, (int)status);
+  return 0;
+}
 static int context_create(sparse_context *ctx, int n, int *row, int *col,
                           double *val) {
   ctx->matrix = NULL;
   ctx->descriptor.type = SPARSE_MATRIX_TYPE_GENERAL;
   ctx->descriptor.mode = SPARSE_FILL_MODE_FULL;
   ctx->descriptor.diag = SPARSE_DIAG_NON_UNIT;
-  return mkl_sparse_d_create_csr(&ctx->matrix, SPARSE_INDEX_BASE_ZERO, n, n,
-                                 row, row + 1, col,
-                                 val) == SPARSE_STATUS_SUCCESS &&
-         mkl_sparse_set_mv_hint(ctx->matrix, SPARSE_OPERATION_NON_TRANSPOSE,
-                                ctx->descriptor, 1) == SPARSE_STATUS_SUCCESS &&
-         mkl_sparse_optimize(ctx->matrix) == SPARSE_STATUS_SUCCESS;
+  if (!sparse_ok(
+          mkl_sparse_d_create_csr(&ctx->matrix, SPARSE_INDEX_BASE_ZERO, n, n,
+                                  row, row + 1, col, val),
+          "mkl_sparse_d_create_csr"))
+    return 0;
+  if (!sparse_ok(
+          mkl_sparse_set_mv_hint(ctx->matrix, SPARSE_OPERATION_NON_TRANSPOSE,
+                                 ctx->descriptor, 1),
+          "mkl_sparse_set_mv_hint") ||
+      !sparse_ok(mkl_sparse_optimize(ctx->matrix), "mkl_sparse_optimize")) {
+    (void)sparse_ok(mkl_sparse_destroy(ctx->matrix), "mkl_sparse_destroy");
+    ctx->matrix = NULL;
+    return 0;
+  }
+  return 1;
 }
 static int apply(sparse_context *ctx, double alpha, const double *x,
                  double beta, double *y) {
-  return mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, alpha, ctx->matrix,
-                         ctx->descriptor, x, beta, y) == SPARSE_STATUS_SUCCESS;
+  return sparse_ok(
+      mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, alpha, ctx->matrix,
+                      ctx->descriptor, x, beta, y),
+      "mkl_sparse_d_mv");
 }
 static void context_destroy(sparse_context *ctx) {
   if (ctx->matrix)
-    mkl_sparse_destroy(ctx->matrix);
+    (void)sparse_ok(mkl_sparse_destroy(ctx->matrix), "mkl_sparse_destroy");
   ctx->matrix = NULL;
 }
 #else
@@ -196,8 +213,14 @@ int main(int argc, char **argv) {
          *y = malloc((size_t)n * sizeof(*y));
   gpu_suite_benchmark_writer writer;
   if (gpu_suite_benchmark_writer_open(&writer, &options, error,
-                                      sizeof(error)) != GPU_SUITE_OK)
+                                      sizeof(error)) != GPU_SUITE_OK) {
+    free(y);
+    free(x);
+    free(val);
+    free(col);
+    free(row);
     return EXIT_FAILURE;
+  }
   if (!row || !col || !val || !x || !y) {
     gpu_suite_benchmark_emit_unmeasured(&writer, &options, 0, true, "benchmark",
                                         "CSR allocation failed", error,
@@ -213,7 +236,7 @@ int main(int argc, char **argv) {
   }
   fill(x, n, 1);
   fill(y, n, 1);
-  sparse_context compute;
+  sparse_context compute = {0};
   if (!context_create(&compute, n, row, col, val)) {
     gpu_suite_benchmark_emit_unmeasured(&writer, &options, 0, true, "benchmark",
                                         "sparse descriptor setup failed", error,
@@ -232,40 +255,53 @@ int main(int argc, char **argv) {
   int any_failure = 0;
   for (int trial = 0; trial < options.trials; ++trial) {
     gpu_suite_result result;
-    gpu_suite_benchmark_result_init(&result, &options, trial, error,
-                                    sizeof(error));
+    if (gpu_suite_benchmark_result_init(&result, &options, trial, error,
+                                        sizeof(error)) != GPU_SUITE_OK) {
+      fprintf(stderr, "gpu_suite_benchmark_result_init: %s\n", error);
+      (void)gpu_suite_benchmark_emit_unmeasured(
+          &writer, &options, trial, true, "benchmark",
+          "gpu_suite_benchmark_result_init failed", error, sizeof(error));
+      any_failure = 1;
+      break;
+    }
     char sts[GPU_SUITE_TIMESTAMP_CAPACITY] = {0},
          ets[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
     struct timespec start, end;
     double elapsed = 0;
-    int ok = gpu_suite_utc_timestamp(sts, error, sizeof(error)) == GPU_SUITE_OK;
     fill(y, n, 1);
-    if (options.scope == GPU_SUITE_SCOPE_COMPUTE && ok) {
-      ok = gpu_suite_clock_now(&start, error, sizeof(error)) == GPU_SUITE_OK;
+    int ok = 1;
+    if (options.scope == GPU_SUITE_SCOPE_COMPUTE) {
+      ok = gpu_suite_measurement_start(sts, &start, error, sizeof(error)) ==
+           GPU_SUITE_OK;
       for (int r = 0; r < options.repeat && ok; ++r)
         ok = apply(&compute, options.alpha, x, options.beta, y);
-      ok =
-          ok && gpu_suite_clock_now(&end, error, sizeof(error)) == GPU_SUITE_OK;
+      ok = ok && gpu_suite_measurement_end(&end, ets, error, sizeof(error)) ==
+                     GPU_SUITE_OK;
       if (ok)
         elapsed = gpu_suite_clock_elapsed(&start, &end);
-    } else if (ok) {
+    } else {
       for (int r = 0; r < options.repeat && ok; ++r) {
         fill(y, n, 1);
         sparse_context temporary = {0};
-        ok =
-            gpu_suite_clock_now(&start, error, sizeof(error)) == GPU_SUITE_OK &&
-            context_create(&temporary, n, row, col, val);
+        ok = (r == 0 ? gpu_suite_measurement_start(sts, &start, error,
+                                                   sizeof(error))
+                     : gpu_suite_clock_now(&start, error, sizeof(error))) ==
+             GPU_SUITE_OK;
+        if (ok)
+          ok = context_create(&temporary, n, row, col, val);
         if (ok)
           ok = apply(&temporary, options.alpha, x, options.beta, y);
         if (ok)
-          ok = gpu_suite_clock_now(&end, error, sizeof(error)) == GPU_SUITE_OK;
+          ok = (r + 1 == options.repeat
+                    ? gpu_suite_measurement_end(&end, ets, error,
+                                                sizeof(error))
+                    : gpu_suite_clock_now(&end, error, sizeof(error))) ==
+               GPU_SUITE_OK;
         context_destroy(&temporary);
         if (ok)
           elapsed += gpu_suite_clock_elapsed(&start, &end);
       }
     }
-    ok = ok &&
-         gpu_suite_utc_timestamp(ets, error, sizeof(error)) == GPU_SUITE_OK;
     if (ok) {
       result.measurement_start_timestamp = sts;
       result.measurement_end_timestamp = ets;
@@ -290,7 +326,13 @@ int main(int argc, char **argv) {
       result.message = "SpMV/timing failed";
       any_failure = 1;
     }
-    gpu_suite_benchmark_writer_write(&writer, &result, error, sizeof(error));
+    if (gpu_suite_benchmark_writer_write(&writer, &result, error,
+                                         sizeof(error)) != GPU_SUITE_OK) {
+      fprintf(stderr, "gpu_suite_benchmark_writer_write: %s\n", error);
+      any_failure = 1;
+      gpu_suite_result_destroy(&result);
+      break;
+    }
     gpu_suite_result_destroy(&result);
     if (!ok) {
       gpu_suite_benchmark_emit_unmeasured(&writer, &options, trial + 1, false,
@@ -305,7 +347,11 @@ int main(int argc, char **argv) {
   free(val);
   free(col);
   free(row);
-  gpu_suite_benchmark_writer_close(&writer, error, sizeof(error));
+  if (gpu_suite_benchmark_writer_close(&writer, error, sizeof(error)) !=
+      GPU_SUITE_OK) {
+    fprintf(stderr, "gpu_suite_benchmark_writer_close: %s\n", error);
+    any_failure = 1;
+  }
   return any_failure ? EXIT_FAILURE : EXIT_SUCCESS;
 failed:
   free(y);

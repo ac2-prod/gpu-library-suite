@@ -59,6 +59,10 @@ typedef struct {
   int wave;
   uint64_t seed;
   int cpu_threads;
+  int cpu_threads_effective;
+  char cpu_backend_role[GPU_SUITE_NAME_CAPACITY];
+  char series_role[GPU_SUITE_NAME_CAPACITY];
+  char cpu_parallelism[GPU_SUITE_NAME_CAPACITY];
   char implementation_order[GPU_SUITE_ORDER_CAPACITY];
   double abs_tolerance;
   double rel_tolerance;

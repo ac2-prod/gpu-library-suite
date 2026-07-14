@@ -19,9 +19,18 @@ function(gpu_suite_configure_executable target source)
     target_link_options(${target} PRIVATE
       ${GPU_SUITE_OPENACC_LINK_OPTIONS})
   endif()
+  if(TARGET_ROLE STREQUAL "benchmark" AND
+     NOT TARGET_IMPLEMENTATION STREQUAL "cpu")
+    string(TOUPPER "${TARGET_LIBRARY}" _cuda_library_macro)
+    string(MAKE_C_IDENTIFIER "${_cuda_library_macro}" _cuda_library_macro)
+    target_compile_definitions(${target} PRIVATE
+      GPU_SUITE_HAVE_CUDA_RUNTIME_METADATA=1
+      "GPU_SUITE_CUDA_LIBRARY_${_cuda_library_macro}=1")
+  endif()
   get_filename_component(_extension "${source}" EXT)
   if(_extension STREQUAL ".c")
     set(_compiler_language "c")
+    target_link_libraries(${target} PRIVATE gpu_suite::math)
   elseif(_extension STREQUAL ".cu")
     set(_compiler_language "cuda")
   else()

@@ -8,6 +8,7 @@ typedef struct {
   float x;
   float y;
 } cufftComplex;
+cufftResult cufftGetVersion(int *version);
 
 enum { CUFFT_SUCCESS = 0, CUFFT_C2C = 0x29, CUFFT_FORWARD = -1 };
 

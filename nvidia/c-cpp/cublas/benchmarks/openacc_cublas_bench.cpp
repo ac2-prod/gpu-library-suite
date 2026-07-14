@@ -49,179 +49,274 @@ static bool set_verification(gpu_suite_result &result,
   return pass;
 }
 
+static bool cuda_success(cudaError_t status, const char *api) {
+  if (status == cudaSuccess)
+    return true;
+  std::fprintf(stderr, "%s: %s\n", api, cudaGetErrorString(status));
+  return false;
+}
+
+static bool cublas_success(cublasStatus_t status, const char *api) {
+  if (status == CUBLAS_STATUS_SUCCESS)
+    return true;
+  std::fprintf(stderr, "%s: cuBLAS status %d\n", api,
+               static_cast<int>(status));
+  return false;
+}
+
 // OpenACC owns all A/B/C device allocation and movement in this benchmark.
 int main(int argc, char **argv) {
-  gpu_suite_options o;
+  gpu_suite_options options;
   char error[256] = {0};
-  gpu_suite_options_init(&o, GPU_SUITE_BENCHMARK_CUBLAS,
+  gpu_suite_options_init(&options, GPU_SUITE_BENCHMARK_CUBLAS,
                          GPU_SUITE_IMPLEMENTATION_OPENACC);
-  auto parsed = gpu_suite_options_parse(&o, argc, argv, error, sizeof(error));
+  const auto parsed =
+      gpu_suite_options_parse(&options, argc, argv, error, sizeof(error));
   if (parsed == GPU_SUITE_PARSE_HELP) {
     gpu_suite_options_usage(stdout, argv[0], GPU_SUITE_BENCHMARK_CUBLAS);
-    return 0;
+    return EXIT_SUCCESS;
   }
   if (parsed != GPU_SUITE_PARSE_OK) {
     std::fprintf(stderr, "%s\n", error);
-    return 1;
+    return EXIT_FAILURE;
   }
-  int m = (int)(o.size_set ? o.size : o.m),
-      n = (int)(o.size_set ? o.size : o.n),
-      k = (int)(o.size_set ? o.size : o.k);
-  std::vector<double> a((size_t)m * k, 1), b((size_t)k * n, 1),
-      c((size_t)m * n, 1);
-  double *ap = a.data(), *bp = b.data(), *cp = c.data();
-  size_t ac = a.size(), bc = b.size(), cc = c.size();
+
+  const int m = static_cast<int>(options.size_set ? options.size : options.m);
+  const int n = static_cast<int>(options.size_set ? options.size : options.n);
+  const int k = static_cast<int>(options.size_set ? options.size : options.k);
+  std::vector<double> a(static_cast<std::size_t>(m) * k, 1.0);
+  std::vector<double> b(static_cast<std::size_t>(k) * n, 1.0);
+  std::vector<double> c(static_cast<std::size_t>(m) * n, 1.0);
+  double *a_ptr = a.data();
+  double *b_ptr = b.data();
+  double *c_ptr = c.data();
+  const std::size_t a_count = a.size();
+  const std::size_t b_count = b.size();
+  const std::size_t c_count = c.size();
   gpu_suite::ResultWriter writer;
-  if (!writer.open(o))
-    return 1;
-  bool failed = false;
-  if (cudaSetDevice(o.device) != cudaSuccess) {
-    gpu_suite::emit_unmeasured(writer, o, 0, true, "benchmark",
-                               "cudaSetDevice failed");
-    failed = true;
-  } else if (o.scope == GPU_SUITE_SCOPE_COMPUTE) {
-    cublasHandle_t h = nullptr;
-    failed = cublasCreate(&h) != CUBLAS_STATUS_SUCCESS;
-    int next_trial = 0;
-#pragma acc data copyin(ap[0 : ac], bp[0 : bc]) copy(cp[0 : cc])
+  if (!writer.open(options))
+    return EXIT_FAILURE;
+  bool any_failure = false;
+  bool emitted_result_rows = false;
+  bool fatal_failure =
+      !cuda_success(cudaSetDevice(options.device), "cudaSetDevice");
+
+  if (!fatal_failure && options.scope == GPU_SUITE_SCOPE_COMPUTE) {
+    cublasHandle_t handle = nullptr;
+    fatal_failure =
+        !cublas_success(cublasCreate(&handle), "cublasCreate");
+#pragma acc data copyin(a_ptr[0 : a_count], b_ptr[0 : b_count])                \
+    copy(c_ptr[0 : c_count])
     {
-      for (int warm = 0; warm < o.warmup && !failed; ++warm) {
-#pragma acc host_data use_device(ap, bp, cp)
+      for (int warmup = 0; warmup < options.warmup && !fatal_failure;
+           ++warmup) {
+#pragma acc host_data use_device(a_ptr, b_ptr, c_ptr)
         {
-          failed =
-              cublasDgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &o.alpha, ap, m,
-                          bp, k, &o.beta, cp, m) != CUBLAS_STATUS_SUCCESS;
+          fatal_failure = !cublas_success(
+              cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k,
+                           &options.alpha, a_ptr, m, b_ptr, k, &options.beta,
+                           c_ptr, m),
+              "warmup cublasDgemm");
         }
       }
-      if (!failed)
-        failed = cudaDeviceSynchronize() != cudaSuccess;
-      for (int trial = 0; trial < o.trials && !failed; ++trial) {
-        std::fill(c.begin(), c.end(), 1.0);
-#pragma acc update device(cp[0 : cc])
-        gpu_suite_result r;
-        gpu_suite::initialize_result(r, o, trial);
-        char st[GPU_SUITE_TIMESTAMP_CAPACITY] = {0},
-             et[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
-        struct timespec ts, te;
-        gpu_suite_utc_timestamp(st, error, sizeof(error));
-        cudaDeviceSynchronize();
-        gpu_suite_clock_now(&ts, error, sizeof(error));
-        bool ok = true;
-#pragma acc host_data use_device(ap, bp, cp)
-        {
-          for (int rep = 0; rep < o.repeat; ++rep)
-            ok = ok &&
-                 cublasDgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &o.alpha, ap,
-                             m, bp, k, &o.beta, cp, m) == CUBLAS_STATUS_SUCCESS;
-        }
-        ok = ok && cudaDeviceSynchronize() == cudaSuccess &&
-             gpu_suite_clock_now(&te, error, sizeof(error)) == GPU_SUITE_OK;
-        gpu_suite_utc_timestamp(et, error, sizeof(error));
-#pragma acc update self(cp[0 : cc])
-        double elapsed = gpu_suite_clock_elapsed(&ts, &te);
-        r.measurement_start_timestamp = st;
-        r.measurement_end_timestamp = et;
-        r.elapsed_total_sec = gpu_suite_optional_double_value(elapsed);
-        r.elapsed_sec = gpu_suite_optional_double_value(elapsed / o.repeat);
-        bool pass = ok && set_verification(r, o, c, k, o.repeat);
-        r.attempted = true;
-        r.failure_origin = pass ? nullptr : (ok ? "verification" : "benchmark");
-        r.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
-        r.status = pass ? "success" : "failure";
-        r.message = pass ? "" : "OpenACC DGEMM failed";
-        writer.write(r);
-        gpu_suite_result_destroy(&r);
-        next_trial = trial + 1;
-        failed |= !pass;
-        if (failed) {
-          gpu_suite::emit_unmeasured(writer, o, next_trial, false,
-                                     "prior-failure",
-                                     "prior OpenACC cuBLAS failure");
+      if (!fatal_failure)
+        fatal_failure = !cuda_success(cudaDeviceSynchronize(),
+                                      "warmup synchronize");
+
+      for (int trial = 0; trial < options.trials && !fatal_failure; ++trial) {
+        gpu_suite_result result;
+        if (!gpu_suite::initialize_result(result, options, trial)) {
+          fatal_failure = true;
+          any_failure = true;
           break;
         }
+        std::fill(c.begin(), c.end(), 1.0);
+#pragma acc update device(c_ptr[0 : c_count])
+        char start_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
+        char end_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
+        struct timespec start;
+        struct timespec end;
+        bool ok =
+            cuda_success(cudaDeviceSynchronize(),
+                         "OpenACC update device C") &&
+            gpu_suite_measurement_start(start_timestamp, &start, error,
+                                         sizeof(error)) == GPU_SUITE_OK;
+#pragma acc host_data use_device(a_ptr, b_ptr, c_ptr)
+        {
+          for (int repeat = 0; repeat < options.repeat && ok; ++repeat) {
+            ok = cublas_success(
+                cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k,
+                             &options.alpha, a_ptr, m, b_ptr, k,
+                             &options.beta, c_ptr, m),
+                "cublasDgemm");
+          }
+        }
+        ok = ok &&
+             cuda_success(cudaDeviceSynchronize(), "post-timing synchronize") &&
+             gpu_suite_measurement_end(&end, end_timestamp, error,
+                                        sizeof(error)) == GPU_SUITE_OK;
+#pragma acc update self(c_ptr[0 : c_count])
+        ok = ok && cuda_success(cudaDeviceSynchronize(),
+                                "OpenACC update self C");
+
+        bool pass = false;
+        if (ok) {
+          const double elapsed = gpu_suite_clock_elapsed(&start, &end);
+          result.measurement_start_timestamp = start_timestamp;
+          result.measurement_end_timestamp = end_timestamp;
+          result.elapsed_total_sec = gpu_suite_optional_double_value(elapsed);
+          result.elapsed_sec = gpu_suite_optional_double_value(
+              elapsed / static_cast<double>(options.repeat));
+          pass = set_verification(result, options, c, k, options.repeat);
+          result.failure_origin = pass ? nullptr : "verification";
+          any_failure = any_failure || !pass;
+        } else {
+          result.verification_status = "skipped";
+          result.failure_origin = "benchmark";
+          fatal_failure = true;
+          any_failure = true;
+        }
+        result.attempted = true;
+        result.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
+        result.status = pass ? "success" : "failure";
+        result.message = pass ? "" : "OpenACC cuBLAS compute trial failed";
+        if (!writer.write(result)) {
+          fatal_failure = true;
+          any_failure = true;
+        }
+        emitted_result_rows = true;
+        gpu_suite_result_destroy(&result);
+        if (fatal_failure) {
+          gpu_suite::emit_unmeasured(writer, options, trial + 1, false,
+                                     "prior-failure",
+                                     "prior OpenACC cuBLAS failure");
+        }
       }
     }
-    if (failed && next_trial == 0) {
-      gpu_suite::emit_unmeasured(writer, o, 0, true, "benchmark",
-                                 "OpenACC cuBLAS setup/warmup failed");
+    if (handle != nullptr &&
+        !cublas_success(cublasDestroy(handle), "cublasDestroy")) {
+      fatal_failure = true;
     }
-    cublasDestroy(h);
-  } else {
-    for (int warmup = 0; warmup < o.warmup && !failed; ++warmup) {
+  } else if (!fatal_failure) {
+    for (int warmup = 0; warmup < options.warmup && !fatal_failure; ++warmup) {
       std::fill(c.begin(), c.end(), 1.0);
       cublasHandle_t handle = nullptr;
-      failed = cublasCreate(&handle) != CUBLAS_STATUS_SUCCESS;
-#pragma acc data copyin(ap[0 : ac], bp[0 : bc]) copy(cp[0 : cc])
+      fatal_failure =
+          !cublas_success(cublasCreate(&handle), "warmup cublasCreate");
+#pragma acc data copyin(a_ptr[0 : a_count], b_ptr[0 : b_count])                \
+    copy(c_ptr[0 : c_count])
       {
-#pragma acc host_data use_device(ap, bp, cp)
+#pragma acc host_data use_device(a_ptr, b_ptr, c_ptr)
         {
-          if (!failed) {
-            failed = cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k,
-                                 &o.alpha, ap, m, bp, k, &o.beta, cp,
-                                 m) != CUBLAS_STATUS_SUCCESS;
-          }
+          if (!fatal_failure)
+            fatal_failure = !cublas_success(
+                cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k,
+                             &options.alpha, a_ptr, m, b_ptr, k,
+                             &options.beta, c_ptr, m),
+                "warmup cublasDgemm");
         }
-        if (!failed)
-          failed = cudaDeviceSynchronize() != cudaSuccess;
+        if (!fatal_failure)
+          fatal_failure = !cuda_success(cudaDeviceSynchronize(),
+                                        "warmup synchronize");
       }
-      if (handle)
-        cublasDestroy(handle);
+      if (handle != nullptr)
+        fatal_failure =
+            !cublas_success(cublasDestroy(handle), "warmup cublasDestroy") ||
+            fatal_failure;
     }
-    if (failed) {
-      gpu_suite::emit_unmeasured(writer, o, 0, true, "benchmark",
-                                 "OpenACC cuBLAS warmup failed");
-    }
-    for (int trial = 0; trial < o.trials && !failed; ++trial) {
-      gpu_suite_result r;
-      gpu_suite::initialize_result(r, o, trial);
-      char st[GPU_SUITE_TIMESTAMP_CAPACITY] = {0},
-           et[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
-      gpu_suite_utc_timestamp(st, error, sizeof(error));
-      double elapsed = 0;
+
+    for (int trial = 0; trial < options.trials && !fatal_failure; ++trial) {
+      gpu_suite_result result;
+      if (!gpu_suite::initialize_result(result, options, trial)) {
+        fatal_failure = true;
+        any_failure = true;
+        break;
+      }
+      char start_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
+      char end_timestamp[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
+      double elapsed_total = 0.0;
       bool ok = true;
-      for (int rep = 0; rep < o.repeat && ok; ++rep) {
+      for (int repeat = 0; repeat < options.repeat && ok; ++repeat) {
         std::fill(c.begin(), c.end(), 1.0);
-        struct timespec ts, te;
-        gpu_suite_clock_now(&ts, error, sizeof(error));
-        cublasHandle_t h = nullptr;
-        ok = cublasCreate(&h) == CUBLAS_STATUS_SUCCESS;
-#pragma acc data copyin(ap[0 : ac], bp[0 : bc]) copy(cp[0 : cc])
+        struct timespec start;
+        struct timespec end;
+        ok = (repeat == 0
+                  ? gpu_suite_measurement_start(start_timestamp, &start, error,
+                                                sizeof(error))
+                  : gpu_suite_clock_now(&start, error, sizeof(error))) ==
+             GPU_SUITE_OK;
+        cublasHandle_t handle = nullptr;
+        if (ok)
+          ok = cublas_success(cublasCreate(&handle), "cublasCreate");
+#pragma acc data copyin(a_ptr[0 : a_count], b_ptr[0 : b_count])                \
+    copy(c_ptr[0 : c_count])
         {
-#pragma acc host_data use_device(ap, bp, cp)
+#pragma acc host_data use_device(a_ptr, b_ptr, c_ptr)
           {
             if (ok)
-              ok = cublasDgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &o.alpha,
-                               ap, m, bp, k, &o.beta, cp,
-                               m) == CUBLAS_STATUS_SUCCESS;
+              ok = cublas_success(
+                  cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k,
+                               &options.alpha, a_ptr, m, b_ptr, k,
+                               &options.beta, c_ptr, m),
+                  "cublasDgemm");
           }
-          ok = ok && cudaDeviceSynchronize() == cudaSuccess;
+          if (ok)
+            ok = cuda_success(cudaDeviceSynchronize(),
+                              "end-to-end synchronize");
         }
-        gpu_suite_clock_now(&te, error, sizeof(error));
-        elapsed += gpu_suite_clock_elapsed(&ts, &te);
-        if (h)
-          cublasDestroy(h);
+        if (ok)
+          ok = (repeat + 1 == options.repeat
+                    ? gpu_suite_measurement_end(&end, end_timestamp, error,
+                                                sizeof(error))
+                    : gpu_suite_clock_now(&end, error, sizeof(error))) ==
+               GPU_SUITE_OK;
+        if (ok)
+          elapsed_total += gpu_suite_clock_elapsed(&start, &end);
+        if (handle != nullptr)
+          ok = cublas_success(cublasDestroy(handle), "cublasDestroy") && ok;
       }
-      gpu_suite_utc_timestamp(et, error, sizeof(error));
-      r.measurement_start_timestamp = st;
-      r.measurement_end_timestamp = et;
-      r.elapsed_total_sec = gpu_suite_optional_double_value(elapsed);
-      r.elapsed_sec = gpu_suite_optional_double_value(elapsed / o.repeat);
-      bool pass = ok && set_verification(r, o, c, k, 1);
-      r.attempted = true;
-      r.failure_origin = pass ? nullptr : (ok ? "verification" : "benchmark");
-      r.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
-      r.status = pass ? "success" : "failure";
-      r.message = pass ? "" : "OpenACC end-to-end DGEMM failed";
-      writer.write(r);
-      gpu_suite_result_destroy(&r);
-      failed |= !pass;
-      if (failed) {
-        gpu_suite::emit_unmeasured(writer, o, trial + 1, false, "prior-failure",
+
+      bool pass = false;
+      if (ok) {
+        result.measurement_start_timestamp = start_timestamp;
+        result.measurement_end_timestamp = end_timestamp;
+        result.elapsed_total_sec =
+            gpu_suite_optional_double_value(elapsed_total);
+        result.elapsed_sec = gpu_suite_optional_double_value(
+            elapsed_total / static_cast<double>(options.repeat));
+        pass = set_verification(result, options, c, k, 1);
+        result.failure_origin = pass ? nullptr : "verification";
+        any_failure = any_failure || !pass;
+      } else {
+        result.verification_status = "skipped";
+        result.failure_origin = "benchmark";
+        fatal_failure = true;
+        any_failure = true;
+      }
+      result.attempted = true;
+      result.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
+      result.status = pass ? "success" : "failure";
+      result.message = pass ? "" : "OpenACC cuBLAS end-to-end trial failed";
+      if (!writer.write(result)) {
+        fatal_failure = true;
+        any_failure = true;
+      }
+      emitted_result_rows = true;
+      gpu_suite_result_destroy(&result);
+      if (fatal_failure)
+        gpu_suite::emit_unmeasured(writer, options, trial + 1, false,
+                                   "prior-failure",
                                    "prior OpenACC cuBLAS failure");
-      }
     }
   }
+
+  if (fatal_failure) {
+    any_failure = true;
+    if (!emitted_result_rows && options.trials > 0)
+      gpu_suite::emit_unmeasured(writer, options, 0, true, "benchmark",
+                                 "OpenACC cuBLAS setup/warmup failed");
+  }
   if (!writer.close())
-    failed = true;
-  return failed ? 1 : 0;
+    any_failure = true;
+  return any_failure ? EXIT_FAILURE : EXIT_SUCCESS;
 }

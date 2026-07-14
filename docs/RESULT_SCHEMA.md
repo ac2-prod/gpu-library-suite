@@ -167,15 +167,16 @@ each expected index exactly once. Raw files are never overwritten.
 | `device_id` | integer/null | yes | CUDA device index for GPU, otherwise null. |
 | `gpu_name` | string/null | yes | Reported GPU name or null. |
 | `gpu_uuid` | string/null | yes | Reported GPU UUID or null. |
-| `cuda_driver_version` | string/null | yes | NVIDIA driver version or null when not applicable/unavailable. |
+| `cuda_driver_version` | string/null | yes | CUDA Driver API version returned by `cudaDriverGetVersion`, or null when not applicable/unavailable. |
 | `compiler` | string | yes | Compiler identity. |
 | `compiler_version` | string | yes | Compiler version. |
-| `compiler_flags` | string | yes | Effective relevant flags. |
+| `global_configure_flags` | string | yes | Language-level global CMake configure flags only; this does not claim target compile definitions/options, provider flags, or link options. |
 | `library_name` | string | yes | CPU or GPU library/backend name. |
 | `library_version` | string/null | yes | Version or null if unavailable. |
 | `cuda_runtime_version` | string/null | yes | Runtime version for GPU or null. |
-| `git_commit` | string | yes | Source commit identifier. |
-| `git_dirty` | boolean | yes | Source worktree state. |
+| `git_metadata_available` | boolean | yes | True only when both commit and worktree state were obtained from Git. |
+| `git_commit` | string/null | yes | Source commit identifier, or null when Git metadata is unavailable. |
+| `git_dirty` | boolean/null | yes | Source worktree state, or null when Git metadata is unavailable. |
 | `git_diff_sha256` | string/null | yes | Dirty diff hash when that provenance mode is used. |
 | `source_snapshot_sha256` | string/null | yes | Dirty source snapshot hash when required. |
 | `config_sha256` | string | yes | Effective-config exact-byte hash. |
@@ -189,6 +190,26 @@ CSV represents null as an empty cell. Boolean values are `true`/`false`.
 Arrays and objects use deterministic-profile JSON text in a correctly escaped
 cell. The schema defines no legacy unqualified thread-count field, scalar
 verification-evidence field, or undifferentiated verification-tolerance field.
+
+For CUDA and OpenACC rows, the benchmark obtains `gpu_name` and `gpu_uuid` from
+`cudaGetDeviceProperties`, `cuda_driver_version` from
+`cudaDriverGetVersion`, and `cuda_runtime_version` from
+`cudaRuntimeGetVersion`. `library_version` comes from the selected library's
+version API (or `THRUST_VERSION` for Thrust). Failure to obtain required runtime
+metadata is a benchmark failure rather than permission to reuse job-master or
+another node's values. Pegasus also independently captures the node-local
+NVIDIA driver/package identity and loads node-local `libcudart` to query Driver
+API and Runtime versions. Successful raw rows must agree with node metadata for
+name, UUID, Driver API version, and Runtime version.
+
+`git_metadata_available`, `git_commit`, and `git_dirty` have one coupled
+state. When metadata is available, availability is true, commit is a nonempty
+string, and dirty is a boolean. For a source archive or another `.git`-less
+source, availability is false and commit and dirty are both null. Unknown Git
+state is never represented as `git_dirty=false`; `"unknown"` and
+`"unavailable"` are not commit identifiers. Production validation rejects
+unavailable Git metadata. Archive/local validation may use the explicit
+false/null state while still producing valid schema-version-1 JSON.
 
 All three raw timestamps use `YYYY-MM-DDTHH:MM:SS.sssZ`. For end-to-end trials,
 the span from `measurement_start_timestamp` to
@@ -336,6 +357,8 @@ benchmarks
       implementation
       cpu_backend
       cpu_backend_role
+      cpu_parallelism
+      cpu_threads_effective
       series_role
     default_speedup_cpu_backend
     verification
@@ -381,8 +404,9 @@ version. Do not rename the canonical files to encode a revision or date.
 ## Executables manifest and source provenance
 
 Each build tree writes one deterministic `build-metadata.json`. It records the
-profile, build type, Git commit/dirty state, C/C++/CUDA compiler identities,
-versions and effective flags, CUDA architectures and Toolkit root/version,
+profile, build type, Git metadata availability/commit/dirty state,
+C/C++/CUDA compiler identities, versions and language-level global configure
+flags, CUDA architectures and Toolkit root/version,
 NVHPC CUDA home/GPU target, general OpenACC compile/link flags, and the extra
 OpenACC Thrust `-cuda` compile/link interoperation flags. The CMake-generated
 per-target manifest descriptor supplies the target name and backend variant;
@@ -407,8 +431,10 @@ least:
 | `build_metadata_sha256` | SHA-256 of deterministic generated build metadata. |
 | `compiler` | Compiler identity. |
 | `compiler_version` | Compiler version. |
-| `git_commit` | Source commit embedded by the build. |
-| `git_dirty` | Source dirty state embedded by the build. |
+| `global_configure_flags` | Language-level global configure flags associated with the selected compiler. |
+| `git_metadata_available` | Whether commit and worktree state were obtained from Git. |
+| `git_commit` | Source commit embedded by the build, or null when unavailable. |
+| `git_dirty` | Source dirty state embedded by the build, or null when unavailable. |
 
 `artifact_id` is the SHA-256 of the deterministic-profile JSON object containing
 `library`, `implementation`, `executable_role`, `target_name`, `build_profile`,
@@ -441,8 +467,10 @@ The CMake-generated target descriptor is the source of the manifest's target
 name and backend variant. After launch, the runner compares raw compiler/Git
 fields with the selected manifest entry.
 
-Production runs require a clean worktree and reject `git_dirty = true` before
-measurement. Smoke or pilot runs may use dirty source only when metadata stores
+Production runs require available Git metadata and a clean worktree; they
+reject `git_metadata_available = false`, null Git fields, and
+`git_dirty = true` before measurement. Smoke or pilot runs may use dirty source
+only when metadata stores
 one of:
 
 - `git_diff_sha256`, computed from an exact captured Git binary diff when that
@@ -452,7 +480,8 @@ one of:
 
 When dirty, at least one complete dirty-source hash is required. Metadata states
 which method is authoritative. A clean run stores both dirty-source fields as
-null.
+null. Archive/local validation may store unavailable Git metadata, but it must
+not infer clean state and cannot be used for a production campaign.
 
 `tools/hash_source_snapshot.py REPOSITORY` computes the canonical source
 snapshot hash without modifying Git state. It uses read-only `git ls-files` to
@@ -499,7 +528,7 @@ They require a separate campaign or an explicitly non-primary comparison.
 master. It contains at least:
 
 - `run_id`, campaign creation timestamp, `system_label`, and run mode;
-- Git commit and dirty state;
+- Git metadata availability, commit, and dirty state;
 - authoritative dirty-source hash kind/value when applicable;
 - effective-config SHA-256;
 - executables-manifest SHA-256;
@@ -518,6 +547,7 @@ match the immutable campaign metadata:
 - runtime-environment SHA-256;
 - Git commit;
 - dirty state; and
+- Git metadata availability; and
 - when dirty, authoritative dirty-source hash kind and value.
 
 Any mismatch requires a new run ID. In particular, waves built from different
@@ -551,7 +581,10 @@ serialization utility. It contains:
 - requested CPU threads and relevant thread environment; and
 - executable/binary identifiers and `runtime_environment_sha256` used on that
   node;
-- `cuda_driver_version` when applicable; and
+- node-local `gpu_identity` with name, UUID, NVIDIA package-driver version,
+  query status, and diagnostic;
+- node-local `cuda_runtime_identity` with loaded `libcudart` path, CUDA Driver
+  API version, CUDA Runtime version, query status, and diagnostic; and
 - for cuRAND, the actual CPU engine or cuRAND generator, seed, offset, and
   order.
 

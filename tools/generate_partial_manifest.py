@@ -66,7 +66,11 @@ def build_manifest(input_path: Path) -> Dict[str, Any]:
             "compiler_version": _require_string(
                 compiler_metadata, "compiler_version"
             ),
-            "git_commit": _require_string(metadata, "git_commit"),
+            "global_configure_flags": compiler_metadata.get(
+                "global_configure_flags"
+            ),
+            "git_metadata_available": metadata.get("git_metadata_available"),
+            "git_commit": metadata.get("git_commit"),
             "git_dirty": metadata.get("git_dirty"),
             "supported_cpu_backends": source.get("cpu_backends", []),
         }

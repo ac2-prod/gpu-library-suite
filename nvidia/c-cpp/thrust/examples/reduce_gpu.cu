@@ -15,10 +15,6 @@ int main() {
   double result =
       thrust::transform_reduce(values.begin(), values.end(), square_value{},
                                0.0, thrust::plus<double>());
-  if (cudaDeviceSynchronize() != cudaSuccess) {
-    std::fprintf(stderr, "cudaDeviceSynchronize failed\n");
-    return EXIT_FAILURE;
-  }
   std::printf("Thrust sum(values[i]^2) = %.17g\n", result);
   return result == (double)count ? EXIT_SUCCESS : EXIT_FAILURE;
 }

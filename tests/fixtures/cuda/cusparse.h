@@ -20,6 +20,7 @@ enum {
 };
 
 cusparseStatus_t cusparseCreate(cusparseHandle_t *handle);
+cusparseStatus_t cusparseGetVersion(cusparseHandle_t handle, int *version);
 cusparseStatus_t cusparseDestroy(cusparseHandle_t handle);
 cusparseStatus_t cusparseCreateCsr(cusparseSpMatDescr_t *matrix, int64_t rows,
                                    int64_t columns, int64_t nnz,

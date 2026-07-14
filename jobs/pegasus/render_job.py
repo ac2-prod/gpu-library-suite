@@ -48,6 +48,12 @@ def render_job(
     source_snapshot_sha256: Optional[str] = None,
 ) -> str:
     config = load_pegasus_config(pegasus_config_path)
+    for output_name in ("pbs_stdout", "pbs_stderr"):
+        parent = Path(config[output_name]).parent
+        if not parent.is_dir() or parent.is_symlink():
+            raise RenderError(
+                output_name + " parent directory must exist before submission"
+            )
     repository = repository_root.resolve()
     if not repository.is_dir() or repository.is_symlink():
         raise RenderError("repository root must be an existing real directory")
@@ -110,6 +116,10 @@ def render_job(
         "@PBS_STDERR@": config["pbs_stderr"],
         "@PBS_STDOUT@": config["pbs_stdout"],
         "@QUEUE@": config["queue"],
+        "@RUNTIME_COMPILER_POLICY_ARGUMENT@": (
+            "--require-runtime-compilers"
+            if config["require_runtime_compilers"] else ""
+        ),
         "@REPOSITORY_ROOT@": _quote(repository),
         "@RESULT_ROOT@": _quote(config["shared_result_root"]),
         "@RUN_ID@": _quote(run_id),

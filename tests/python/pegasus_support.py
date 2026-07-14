@@ -46,6 +46,7 @@ def pegasus_config(directory: Path):
         "pbs_stdout": str(directory / "pbs" / "job.out"),
         "pbs_stderr": str(directory / "pbs" / "job.err"),
         "openmpi_options": ["--mca", "btl", "self,vader,tcp"],
+        "require_runtime_compilers": False,
         "environment_overrides": {"GPU_SUITE_TEST_OVERRIDE": "enabled"},
         "cpu_runtime_environment": dict(CPU_ENVIRONMENT),
     }
@@ -59,9 +60,10 @@ def write_campaign_inputs(directory: Path, dirty=False, config=None):
         "build_type": "Release",
         "c": {
             "compiler": "TestCompiler",
-            "compiler_flags": "-O3",
+            "global_configure_flags": "-O3",
             "compiler_version": "1.0",
         },
+        "git_metadata_available": True,
         "git_commit": "abc",
         "git_dirty": dirty,
     }
@@ -82,6 +84,8 @@ def write_campaign_inputs(directory: Path, dirty=False, config=None):
         "compiler": "TestCompiler",
         "compiler_language": "c",
         "compiler_version": "1.0",
+        "global_configure_flags": "-O3",
+        "git_metadata_available": True,
         "git_commit": "abc",
         "git_dirty": dirty,
         "supported_cpu_backends": ["cpu-fftw-threaded", "cpu-fftw-serial"],

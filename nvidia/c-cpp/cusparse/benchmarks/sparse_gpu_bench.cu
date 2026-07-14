@@ -55,6 +55,18 @@ struct Context {
   void *work = nullptr;
   size_t ws = 0;
 };
+static bool cuda_ok(cudaError_t status, const char *api) {
+  if (status == cudaSuccess)
+    return true;
+  std::fprintf(stderr, "%s: %s\n", api, cudaGetErrorString(status));
+  return false;
+}
+static bool sparse_ok(cusparseStatus_t status, const char *api) {
+  if (status == CUSPARSE_STATUS_SUCCESS)
+    return true;
+  std::fprintf(stderr, "%s: cuSPARSE status %d\n", api, (int)status);
+  return false;
+}
 static void destroy(Context &q) {
   if (q.work)
     cudaFree(q.work);
@@ -82,40 +94,53 @@ static bool create(Context &q, int n, int nnz, const std::vector<int> &r,
                    const std::vector<int> &c, const std::vector<double> &v,
                    const std::vector<double> &x, const std::vector<double> &y,
                    double alpha, double beta) {
-  return cudaMalloc((void **)&q.dr, r.size() * sizeof(int)) == cudaSuccess &&
-         cudaMalloc((void **)&q.dc, c.size() * sizeof(int)) == cudaSuccess &&
-         cudaMalloc((void **)&q.dv, v.size() * sizeof(double)) == cudaSuccess &&
-         cudaMalloc((void **)&q.dx, x.size() * sizeof(double)) == cudaSuccess &&
-         cudaMalloc((void **)&q.dy, y.size() * sizeof(double)) == cudaSuccess &&
-         cudaMemcpy(q.dr, r.data(), r.size() * sizeof(int),
-                    cudaMemcpyHostToDevice) == cudaSuccess &&
-         cudaMemcpy(q.dc, c.data(), c.size() * sizeof(int),
-                    cudaMemcpyHostToDevice) == cudaSuccess &&
-         cudaMemcpy(q.dv, v.data(), v.size() * sizeof(double),
-                    cudaMemcpyHostToDevice) == cudaSuccess &&
-         cudaMemcpy(q.dx, x.data(), x.size() * sizeof(double),
-                    cudaMemcpyHostToDevice) == cudaSuccess &&
-         cudaMemcpy(q.dy, y.data(), y.size() * sizeof(double),
-                    cudaMemcpyHostToDevice) == cudaSuccess &&
-         cusparseCreate(&q.h) == CUSPARSE_STATUS_SUCCESS &&
-         cusparseCreateCsr(&q.a, n, n, nnz, q.dr, q.dc, q.dv,
-                           CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                           CUSPARSE_INDEX_BASE_ZERO,
-                           CUDA_R_64F) == CUSPARSE_STATUS_SUCCESS &&
-         cusparseCreateDnVec(&q.x, n, q.dx, CUDA_R_64F) ==
-             CUSPARSE_STATUS_SUCCESS &&
-         cusparseCreateDnVec(&q.y, n, q.dy, CUDA_R_64F) ==
-             CUSPARSE_STATUS_SUCCESS &&
-         cusparseSpMV_bufferSize(q.h, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
-                                 q.a, q.x, &beta, q.y, CUDA_R_64F,
-                                 CUSPARSE_SPMV_ALG_DEFAULT,
-                                 &q.ws) == CUSPARSE_STATUS_SUCCESS &&
-         cudaMalloc(&q.work, q.ws) == cudaSuccess;
+  if (!cuda_ok(cudaMalloc((void **)&q.dr, r.size() * sizeof(int)),
+               "cudaMalloc CSR row") ||
+      !cuda_ok(cudaMalloc((void **)&q.dc, c.size() * sizeof(int)),
+               "cudaMalloc CSR column") ||
+      !cuda_ok(cudaMalloc((void **)&q.dv, v.size() * sizeof(double)),
+               "cudaMalloc CSR value") ||
+      !cuda_ok(cudaMalloc((void **)&q.dx, x.size() * sizeof(double)),
+               "cudaMalloc x") ||
+      !cuda_ok(cudaMalloc((void **)&q.dy, y.size() * sizeof(double)),
+               "cudaMalloc y") ||
+      !cuda_ok(cudaMemcpy(q.dr, r.data(), r.size() * sizeof(int),
+                          cudaMemcpyHostToDevice),
+               "cudaMemcpy CSR row") ||
+      !cuda_ok(cudaMemcpy(q.dc, c.data(), c.size() * sizeof(int),
+                          cudaMemcpyHostToDevice),
+               "cudaMemcpy CSR column") ||
+      !cuda_ok(cudaMemcpy(q.dv, v.data(), v.size() * sizeof(double),
+                          cudaMemcpyHostToDevice),
+               "cudaMemcpy CSR value") ||
+      !cuda_ok(cudaMemcpy(q.dx, x.data(), x.size() * sizeof(double),
+                          cudaMemcpyHostToDevice),
+               "cudaMemcpy x") ||
+      !cuda_ok(cudaMemcpy(q.dy, y.data(), y.size() * sizeof(double),
+                          cudaMemcpyHostToDevice),
+               "cudaMemcpy y") ||
+      !sparse_ok(cusparseCreate(&q.h), "cusparseCreate") ||
+      !sparse_ok(cusparseCreateCsr(&q.a, n, n, nnz, q.dr, q.dc, q.dv,
+                                   CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                                   CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F),
+                 "cusparseCreateCsr") ||
+      !sparse_ok(cusparseCreateDnVec(&q.x, n, q.dx, CUDA_R_64F),
+                 "cusparseCreateDnVec x") ||
+      !sparse_ok(cusparseCreateDnVec(&q.y, n, q.dy, CUDA_R_64F),
+                 "cusparseCreateDnVec y") ||
+      !sparse_ok(cusparseSpMV_bufferSize(
+                     q.h, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, q.a, q.x,
+                     &beta, q.y, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &q.ws),
+                 "cusparseSpMV_bufferSize"))
+    return false;
+  return q.ws == 0 || cuda_ok(cudaMalloc(&q.work, q.ws),
+                              "cudaMalloc cuSPARSE workspace");
 }
 static bool apply(Context &q, double a, double b) {
-  return cusparseSpMV(q.h, CUSPARSE_OPERATION_NON_TRANSPOSE, &a, q.a, q.x, &b,
-                      q.y, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT,
-                      q.work) == CUSPARSE_STATUS_SUCCESS;
+  return sparse_ok(cusparseSpMV(q.h, CUSPARSE_OPERATION_NON_TRANSPOSE, &a, q.a,
+                                q.x, &b, q.y, CUDA_R_64F,
+                                CUSPARSE_SPMV_ALG_DEFAULT, q.work),
+                   "cusparseSpMV");
 }
 int main(int argc, char **argv) {
   gpu_suite_options o;
@@ -139,54 +164,70 @@ int main(int argc, char **argv) {
   if (!w.open(o))
     return 1;
   Context q;
-  bool failed = !create(q, n, nnz, row, col, val, x, y, o.alpha, o.beta);
-  for (int warm = 0; warm < o.warmup && !failed; ++warm)
-    failed = !apply(q, o.alpha, o.beta);
-  cudaDeviceSynchronize();
-  if (failed) {
+  bool fatal_failure =
+      !cuda_ok(cudaSetDevice(o.device), "cudaSetDevice") ||
+      !create(q, n, nnz, row, col, val, x, y, o.alpha, o.beta);
+  bool any_failure = fatal_failure;
+  for (int warm = 0; warm < o.warmup && !fatal_failure; ++warm)
+    fatal_failure = !apply(q, o.alpha, o.beta);
+  if (!fatal_failure)
+    fatal_failure = !cuda_ok(cudaDeviceSynchronize(), "warmup synchronize");
+  if (fatal_failure) {
     gpu_suite::emit_unmeasured(w, o, 0, true, "benchmark",
                                "cuSPARSE setup/warmup failed");
+    any_failure = true;
   }
-  for (int t = 0; t < o.trials && !failed; ++t) {
+  for (int t = 0; t < o.trials && !fatal_failure; ++t) {
     gpu_suite_result r;
-    gpu_suite::initialize_result(r, o, t);
+    if (!gpu_suite::initialize_result(r, o, t)) {
+      any_failure = true;
+      fatal_failure = true;
+      break;
+    }
     std::fill(y.begin(), y.end(), 1);
     char st[GPU_SUITE_TIMESTAMP_CAPACITY] = {0},
          et[GPU_SUITE_TIMESTAMP_CAPACITY] = {0};
     struct timespec ts, te;
     double elapsed = 0;
-    bool ok = gpu_suite_utc_timestamp(st, e, sizeof(e)) == GPU_SUITE_OK;
-    if (o.scope == GPU_SUITE_SCOPE_COMPUTE && ok) {
-      ok = cudaMemcpy(q.dy, y.data(), y.size() * sizeof(double),
-                      cudaMemcpyHostToDevice) == cudaSuccess &&
-           cudaDeviceSynchronize() == cudaSuccess &&
-           gpu_suite_clock_now(&ts, e, sizeof(e)) == GPU_SUITE_OK;
+    bool ok = true;
+    if (o.scope == GPU_SUITE_SCOPE_COMPUTE) {
+      ok = cuda_ok(cudaMemcpy(q.dy, y.data(), y.size() * sizeof(double),
+                              cudaMemcpyHostToDevice),
+                   "restore y") &&
+           cuda_ok(cudaDeviceSynchronize(), "pre-timing synchronize") &&
+           gpu_suite_measurement_start(st, &ts, e, sizeof(e)) == GPU_SUITE_OK;
       for (int rep = 0; rep < o.repeat && ok; ++rep)
         ok = apply(q, o.alpha, o.beta);
-      ok = ok && cudaDeviceSynchronize() == cudaSuccess &&
-           gpu_suite_clock_now(&te, e, sizeof(e)) == GPU_SUITE_OK;
+      ok = ok && cuda_ok(cudaDeviceSynchronize(), "post-timing synchronize") &&
+           gpu_suite_measurement_end(&te, et, e, sizeof(e)) == GPU_SUITE_OK;
       if (ok)
         elapsed = gpu_suite_clock_elapsed(&ts, &te);
       if (ok)
-        ok = cudaMemcpy(y.data(), q.dy, y.size() * sizeof(double),
-                        cudaMemcpyDeviceToHost) == cudaSuccess;
-    } else if (ok) {
+        ok = cuda_ok(cudaMemcpy(y.data(), q.dy, y.size() * sizeof(double),
+                               cudaMemcpyDeviceToHost),
+                     "copy result y");
+    } else {
       for (int rep = 0; rep < o.repeat && ok; ++rep) {
         std::fill(y.begin(), y.end(), 1);
         Context temp;
-        ok = gpu_suite_clock_now(&ts, e, sizeof(e)) == GPU_SUITE_OK &&
+        ok = (rep == 0 ? gpu_suite_measurement_start(st, &ts, e, sizeof(e))
+                       : gpu_suite_clock_now(&ts, e, sizeof(e))) ==
+                 GPU_SUITE_OK &&
              create(temp, n, nnz, row, col, val, x, y, o.alpha, o.beta) &&
              apply(temp, o.alpha, o.beta) &&
-             cudaDeviceSynchronize() == cudaSuccess &&
-             cudaMemcpy(y.data(), temp.dy, y.size() * sizeof(double),
-                        cudaMemcpyDeviceToHost) == cudaSuccess &&
-             gpu_suite_clock_now(&te, e, sizeof(e)) == GPU_SUITE_OK;
+             cuda_ok(cudaDeviceSynchronize(), "end-to-end synchronize") &&
+             cuda_ok(cudaMemcpy(y.data(), temp.dy, y.size() * sizeof(double),
+                                cudaMemcpyDeviceToHost),
+                     "copy end-to-end y");
+        if (ok)
+          ok = (rep + 1 == o.repeat
+                    ? gpu_suite_measurement_end(&te, et, e, sizeof(e))
+                    : gpu_suite_clock_now(&te, e, sizeof(e))) == GPU_SUITE_OK;
         if (ok)
           elapsed += gpu_suite_clock_elapsed(&ts, &te);
         destroy(temp);
       }
     }
-    ok = ok && gpu_suite_utc_timestamp(et, e, sizeof(e)) == GPU_SUITE_OK;
     int updates = o.scope == GPU_SUITE_SCOPE_COMPUTE ? o.repeat : 1;
     if (ok) {
       r.measurement_start_timestamp = st;
@@ -200,7 +241,7 @@ int main(int argc, char **argv) {
       r.exit_code = gpu_suite_optional_int_value(pass ? 0 : 1);
       r.status = pass ? "success" : "failure";
       r.message = pass ? "" : "SpMV verification failed";
-      failed |= !pass;
+      any_failure = any_failure || !pass;
     } else {
       r.attempted = true;
       r.failure_origin = "benchmark";
@@ -208,11 +249,15 @@ int main(int argc, char **argv) {
       r.exit_code = gpu_suite_optional_int_value(1);
       r.status = "failure";
       r.message = "cuSPARSE pipeline failed";
-      failed = true;
+      any_failure = true;
+      fatal_failure = true;
     }
-    w.write(r);
+    if (!w.write(r)) {
+      any_failure = true;
+      fatal_failure = true;
+    }
     gpu_suite_result_destroy(&r);
-    if (failed) {
+    if (fatal_failure) {
       gpu_suite::emit_unmeasured(w, o, t + 1, false, "prior-failure",
                                  "prior cuSPARSE failure");
       break;
@@ -220,6 +265,6 @@ int main(int argc, char **argv) {
   }
   destroy(q);
   if (!w.close())
-    failed = true;
-  return failed ? 1 : 0;
+    any_failure = true;
+  return any_failure ? 1 : 0;
 }

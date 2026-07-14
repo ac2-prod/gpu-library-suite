@@ -53,13 +53,15 @@ python3 "${REPOSITORY_ROOT}/jobs/pegasus/collect_runtime_environment.py" \
   --cuda-toolkit-root "${CUDA_TOOLKIT_ROOT}" \
   --cuda-toolkit-version "${CUDA_TOOLKIT_VERSION}" \
   --nvhpc-cuda-home "${NVHPC_CUDA_HOME}" \
-  --require-ldd --require-gpu-tools \
+  --require-ldd --require-gpu-tools @RUNTIME_COMPILER_POLICY_ARGUMENT@ \
   --output "${master_scratch}/runtime-environment.json" \
   >"${master_scratch}/runtime-environment.sha256"
 runtime_environment_sha256="$(tr -d '\n' <"${master_scratch}/runtime-environment.sha256")"
 
 MPI_OPTIONS=( @OPENMPI_OPTIONS@ )
-mpirun "${MPI_OPTIONS[@]}" -np "${NODE_COUNT}" -npernode 1 --bind-to none \
+# shellcheck disable=SC2086
+mpirun ${NQSV_MPIOPTS} "${MPI_OPTIONS[@]}" \
+  -np "${NODE_COUNT}" -npernode 1 --bind-to none \
   /bin/bash -c 'printf "%s\t%s\n" "${OMPI_COMM_WORLD_RANK}" "$(hostname)"' \
   >"${master_scratch}/rank-host-mapping.tsv"
 
@@ -81,7 +83,9 @@ cp "${master_scratch}/pbs-nodefile.txt" "${WAVE_ROOT}/job-master/pbs-nodefile.tx
 cp "${master_scratch}/rank-host-mapping.tsv" "${WAVE_ROOT}/job-master/rank-host-mapping.tsv"
 
 set +e
-mpirun "${MPI_OPTIONS[@]}" -np "${NODE_COUNT}" -npernode 1 --bind-to none \
+# shellcheck disable=SC2086
+mpirun ${NQSV_MPIOPTS} "${MPI_OPTIONS[@]}" \
+  -np "${NODE_COUNT}" -npernode 1 --bind-to none \
   /bin/bash "${REPOSITORY_ROOT}/jobs/pegasus/run_node.sh" \
   --repository-root "${REPOSITORY_ROOT}" --run-root "${RUN_ROOT}" \
   --config "${RUN_ROOT}/effective-config.json" \

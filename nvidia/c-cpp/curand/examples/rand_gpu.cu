@@ -20,7 +20,6 @@ int main() {
       curandSetGeneratorOffset(generator, 0ULL) != CURAND_STATUS_SUCCESS ||
       curandGenerateUniformDouble(generator, device, count) !=
           CURAND_STATUS_SUCCESS ||
-      cudaDeviceSynchronize() != cudaSuccess ||
       cudaMemcpy(values.data(), device, count * sizeof(double),
                  cudaMemcpyDeviceToHost) != cudaSuccess) {
     std::fprintf(stderr, "cuRAND pipeline failed\n");

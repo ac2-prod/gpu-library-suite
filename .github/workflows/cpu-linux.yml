@@ -1,0 +1,66 @@
+name: CPU Linux portability
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  cpu-only:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc
+            cc: gcc
+            cxx: g++
+          - name: clang
+            cc: clang
+            cxx: clang++
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+      PYTHONPYCACHEPREFIX: ${{ runner.temp }}/gpu-suite-pycache-${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure strict CPU-only tree
+        run: >-
+          cmake -S . -B "${RUNNER_TEMP}/gpu-suite-${{ matrix.name }}"
+          -DCMAKE_BUILD_TYPE=Release
+          -DGPU_SUITE_BUILD_CPU=ON
+          -DGPU_SUITE_BUILD_CUDA=OFF
+          -DGPU_SUITE_BUILD_OPENACC=OFF
+          -DGPU_SUITE_BUILD_TESTS=ON
+
+      - name: Build
+        run: >-
+          cmake --build "${RUNNER_TEMP}/gpu-suite-${{ matrix.name }}"
+          --parallel 2
+
+      - name: CTest including fixtures and non-Git source copy
+        run: >-
+          ctest --test-dir "${RUNNER_TEMP}/gpu-suite-${{ matrix.name }}"
+          --output-on-failure --parallel 2
+
+      - name: Python 3.9 syntax and byte-code checks
+        run: |
+          python3 tools/check_python39.py .
+          python3 -m compileall -q -f tools jobs tests
+
+      - name: Shell syntax and optional ShellCheck
+        run: |
+          bash -n jobs/pegasus/build_cpu_cuda.sh
+          bash -n jobs/pegasus/build_openacc.sh
+          bash -n jobs/pegasus/run_node.sh
+          bash -n jobs/pegasus/run_benchmarks.pbs.in
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck jobs/pegasus/build_cpu_cuda.sh \
+              jobs/pegasus/build_openacc.sh jobs/pegasus/run_node.sh
+          else
+            echo "ShellCheck not run: shellcheck is not available"
+          fi

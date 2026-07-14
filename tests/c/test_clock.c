@@ -33,5 +33,10 @@ int main(void) {
   for (index = 0U; index < sizeof(digits) / sizeof(digits[0]); ++index) {
     CHECK(is_digit(timestamp[digits[index]]));
   }
+  CHECK(gpu_suite_measurement_start(timestamp, &start, error,
+                                    sizeof(error)) == GPU_SUITE_OK);
+  CHECK(gpu_suite_measurement_end(&end, timestamp, error, sizeof(error)) ==
+        GPU_SUITE_OK);
+  CHECK(gpu_suite_clock_elapsed(&start, &end) >= 0.0);
   return 0;
 }

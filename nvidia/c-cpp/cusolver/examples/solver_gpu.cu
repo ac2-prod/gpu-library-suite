@@ -43,13 +43,16 @@ int main() {
           CUSOLVER_STATUS_SUCCESS ||
       cusolverDnDgetrs(handle, CUBLAS_OP_N, n, nrhs, da, n, piv, db, n, info) !=
           CUSOLVER_STATUS_SUCCESS ||
-      cudaDeviceSynchronize() != cudaSuccess ||
       cudaMemcpy(b.data(), db, b.size() * sizeof(double),
                  cudaMemcpyDeviceToHost) != cudaSuccess)
     goto cleanup;
   {
     int host_info = 0;
-    cudaMemcpy(&host_info, info, sizeof(int), cudaMemcpyDeviceToHost);
+    if (cudaMemcpy(&host_info, info, sizeof(int), cudaMemcpyDeviceToHost) !=
+        cudaSuccess) {
+      std::fprintf(stderr, "D2H copy of cuSOLVER info failed\n");
+      goto cleanup;
+    }
     double max_error = 0;
     for (double x : b)
       max_error = std::max(max_error, std::fabs(x - 1));

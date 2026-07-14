@@ -22,10 +22,6 @@ function(gpu_suite_generate_build_metadata)
     OUTPUT_VARIABLE _git_commit
     ERROR_QUIET
     OUTPUT_STRIP_TRAILING_WHITESPACE)
-  if(NOT _git_result EQUAL 0 OR "${_git_commit}" STREQUAL "")
-    set(_git_commit "unknown")
-  endif()
-
   execute_process(
     COMMAND git status --porcelain --untracked-files=normal
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -33,12 +29,29 @@ function(gpu_suite_generate_build_metadata)
     OUTPUT_VARIABLE _git_status
     ERROR_QUIET
     OUTPUT_STRIP_TRAILING_WHITESPACE)
-  if(NOT _status_result EQUAL 0)
-    set(_git_dirty "unknown")
+  if(_git_result EQUAL 0 AND NOT "${_git_commit}" STREQUAL "" AND
+     _status_result EQUAL 0)
+    set(_git_metadata_available true)
+    set(_git_metadata_available_c 1)
+    if("${_git_status}" STREQUAL "")
+      set(_git_dirty false)
+      set(_git_dirty_c 0)
+    else()
+      set(_git_dirty true)
+      set(_git_dirty_c 1)
+    endif()
   elseif("${_git_status}" STREQUAL "")
-    set(_git_dirty "false")
+    set(_git_metadata_available false)
+    set(_git_metadata_available_c 0)
+    set(_git_commit "")
+    set(_git_dirty null)
+    set(_git_dirty_c 0)
   else()
-    set(_git_dirty "true")
+    set(_git_metadata_available false)
+    set(_git_metadata_available_c 0)
+    set(_git_commit "")
+    set(_git_dirty null)
+    set(_git_dirty_c 0)
   endif()
 
   if(CMAKE_BUILD_TYPE)
@@ -94,7 +107,9 @@ function(gpu_suite_generate_build_metadata)
   endif()
 
   _gpu_suite_escape_c_string("${_git_commit}" GPU_SUITE_META_GIT_COMMIT)
-  _gpu_suite_escape_c_string("${_git_dirty}" GPU_SUITE_META_GIT_DIRTY)
+  set(GPU_SUITE_META_GIT_METADATA_AVAILABLE
+      "${_git_metadata_available_c}")
+  set(GPU_SUITE_META_GIT_DIRTY_C "${_git_dirty_c}")
   _gpu_suite_escape_c_string("${_build_type}" GPU_SUITE_META_BUILD_TYPE)
   _gpu_suite_escape_c_string("${_build_profile}"
                              GPU_SUITE_META_BUILD_PROFILE)
@@ -126,6 +141,15 @@ function(gpu_suite_generate_build_metadata)
 
   _gpu_suite_escape_json_string("${_git_commit}"
                                 GPU_SUITE_META_GIT_COMMIT_JSON)
+  set(GPU_SUITE_META_GIT_METADATA_AVAILABLE_JSON
+      "${_git_metadata_available}")
+  if(_git_metadata_available)
+    set(GPU_SUITE_META_GIT_COMMIT_JSON_VALUE
+        "\"${GPU_SUITE_META_GIT_COMMIT_JSON}\"")
+  else()
+    set(GPU_SUITE_META_GIT_COMMIT_JSON_VALUE "null")
+  endif()
+  set(GPU_SUITE_META_GIT_DIRTY_JSON "${_git_dirty}")
   _gpu_suite_escape_json_string("${_build_type}"
                                 GPU_SUITE_META_BUILD_TYPE_JSON)
   _gpu_suite_escape_json_string("${_build_profile}"

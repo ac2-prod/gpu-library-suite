@@ -46,6 +46,8 @@ local検証ではCUDA GPU、NVHPC、Pegasus jobを実行していない。その
 - 最初は`configs/pilot.json`を使用し、値をproduction確定値と扱わない。
 - `render_job.py`の入力config、manifest、両build metadata、run ID、wave、system
   labelが今回のcampaign用であることを確認する。
+- `pbs_stdout`と`pbs_stderr`の親directoryを人間が事前に作成済みであることを
+  確認する。rendererは存在を検査するだけで暗黙作成しない。
 - 生成PBSを全文確認し、`bash -n`を実行する。
 - PBSがbenchmark job内でcompileせず、`benchmark_runtime_modules`だけをloadし、
   人間が選択したaccount/queue/pathを使用することを確認する。
@@ -59,6 +61,14 @@ local検証ではCUDA GPU、NVHPC、Pegasus jobを実行していない。その
 - job masterだけがcampaign/wave metadataを排他的に作成する。
 - `runtime-environment.json`にmodule、path、driver、CUDA/NVHPC/CPU library、全
   binaryの`ldd`、解決library path、8 CPU変数があり、hashがmetadata間で一致する。
+- prebuilt binaryのruntime検査ではdriver、CUDA runtime、shared libraryを必須とし、
+  `nvcc`、`nvc`、`nvc++` commandはoptional metadataとして欠落理由を記録する。
+  site規則でcompiler commandを必須化する場合だけ
+  `require_runtime_compilers=true`にし、その理由を運用記録へ残す。
+- 各node自身が取得したGPU name、UUID、NVIDIA package driverと、node-local
+  `libcudart`から取得したCUDA Driver API/Runtime versionが
+  `node-metadata.json`へ保存され、成功CUDA/OpenACC raw rowの4項目と一致し、別nodeの
+  identityを流用していない。
 - CPU、CUDA、OpenACCが各node block内で指定順序によりinterleaveされる。
 - raw rowのverification、UTC millisecond timestamp、requested/effective threads、
   compiler/library/GPU identityを確認する。
