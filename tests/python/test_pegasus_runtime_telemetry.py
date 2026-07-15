@@ -71,7 +71,17 @@ class RuntimeEnvironmentTests(unittest.TestCase):
             inputs = write_campaign_inputs(directory)
             module_list = directory / "module-list.txt"
             module_list.write_bytes(b"runtime/1\r\nopenmpi/test\r\n")
-            state = {"ldd": 0}
+            real_library_directory = directory / "runtime-real"
+            real_library_directory.mkdir()
+            real_library = real_library_directory / "libfixture.so"
+            real_library.write_bytes(b"fixture library\n")
+            alias_library_directory = directory / "runtime-alias"
+            alias_library_directory.symlink_to(
+                real_library_directory, target_is_directory=True
+            )
+            alias_library = alias_library_directory / real_library.name
+            canonical_library = str(real_library.resolve())
+            state = {"ldd": 0, "library_path": str(alias_library)}
 
             def which(name):
                 return "/fake/" + name
@@ -81,7 +91,11 @@ class RuntimeEnvironmentTests(unittest.TestCase):
                 if name == "ldd":
                     state["ldd"] += 1
                     address = "0x0000{0}".format(state["ldd"])
-                    return 0, "libfixture.so => /lib/libfixture.so ({0})\r\n".format(address)
+                    return 0, (
+                        "libfixture.so => {0} ({1})\r\n".format(
+                            state["library_path"], address
+                        )
+                    )
                 if name == "pkg-config":
                     return 0, "1.2.3\n"
                 if name == "nvidia-smi":
@@ -101,6 +115,7 @@ class RuntimeEnvironmentTests(unittest.TestCase):
                 require_ldd=True, require_gpu_tools=True,
                 cuda_runtime_probe=successful_cuda_runtime_probe,
             )
+            state["library_path"] = canonical_library
             second, second_evidence = collect_runtime_environment_documents(
                 inputs["manifest"], [inputs["metadata"]], module_list,
                 str(directory / "cuda"), "13.0.88",
@@ -124,6 +139,14 @@ class RuntimeEnvironmentTests(unittest.TestCase):
                 "(0x00002)",
                 second_evidence["binaries"][0]["ldd"]["output_text"],
             )
+            self.assertIn(
+                str(alias_library),
+                first_evidence["binaries"][0]["ldd"]["output_text"],
+            )
+            self.assertIn(
+                canonical_library,
+                second_evidence["binaries"][0]["ldd"]["output_text"],
+            )
             self.assertTrue(
                 first_evidence["binaries"][0]["ldd"]["output_text"]
                 .endswith("\r\n")
@@ -140,9 +163,9 @@ class RuntimeEnvironmentTests(unittest.TestCase):
                  "serial_cpu_baseline_effective_threads": 1},
             )
             self.assertEqual(first["resolved_shared_library_paths"],
-                             ["/lib/libfixture.so"])
+                             [canonical_library])
             self.assertEqual(first["binaries"][0]["ldd"]["output"],
-                             ["libfixture.so => /lib/libfixture.so"])
+                             ["libfixture.so => " + canonical_library])
             self.assertEqual(first["cuda"]["configured_toolkit_version"],
                              "13.0.88")
             self.assertEqual(first["cuda"]["runtime_version"], "13.0.96")
