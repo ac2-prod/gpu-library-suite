@@ -429,6 +429,14 @@ Before campaign preflight, the job master deterministically writes
 - all required CPU runtime variables; and
 - `NVHPC_CUDA_HOME` or the actual NVHPC-selected CUDA Toolkit.
 
+This document is the stable software identity: module display layout, duplicate
+search-path entries, `ldd` ASLR addresses/line order, job-master GPU UUID/name,
+hostname, scheduler identity, timestamps, PIDs, and scratch paths are excluded.
+Their unnormalized probe output is retained per wave in the separately hashed
+`job-master/runtime-environment-evidence.json` sidecar. The sidecar links to the
+canonical runtime and manifest hashes but may differ across otherwise compatible
+waves.
+
 Additional waves require an identical runtime-environment hash in addition to
 configuration, manifest/binary, Git, dirty-source, and build provenance. A
 mismatch requires a new run ID and cannot be forced into the existing campaign.
@@ -972,6 +980,9 @@ finishes user-facing documentation.
 - The job master creates deterministic `runtime-environment.json` before
   preflight with every required module, path, driver/runtime/compiler/library,
   binary `ldd`, resolved-library, CPU-runtime, and NVHPC CUDA field.
+- The job master retains unnormalized runtime probe output in a per-wave raw
+  evidence sidecar; wave metadata hashes it and the collector validates its
+  canonical-runtime/manifest links without using its hash as a campaign gate.
 - The exact runtime-environment hash is stored in campaign, wave, node, and raw
   provenance and is an immutable additional-wave match condition.
 - Before the measurement launch, the PBS job master obtains a complete

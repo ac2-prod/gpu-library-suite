@@ -1,9 +1,11 @@
-import copy
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+from gpu_suite.hashing import deterministic_json_sha256
 from gpu_suite.schema import validate_raw_result
 from gpu_suite.strict_json import dump_bytes, dumps, load
 
@@ -17,6 +19,9 @@ sys.path.insert(0, str(PEGASUS_DIRECTORY))
 from collect_runtime_environment import (  # noqa: E402
     RuntimeEnvironmentError,
     collect_runtime_environment,
+    collect_runtime_environment_documents,
+    normalize_ldd_output,
+    normalize_module_list,
 )
 from telemetry import (  # noqa: E402
     TelemetryError,
@@ -36,13 +41,36 @@ def successful_cuda_runtime_probe():
     }
 
 
+def collect_fixture_documents(
+    directory, inputs, execute, environment=None,
+    module_text="runtime/1\nopenmpi/test\n",
+):
+    module_list = directory / "module-list-fixture.txt"
+    module_list.write_text(module_text, encoding="utf-8")
+    selected_environment = dict(CPU_ENVIRONMENT)
+    selected_environment.update({
+        "PATH": "/fake/bin:/usr/bin",
+        "LD_LIBRARY_PATH": "/fake/lib:/usr/lib",
+        "NVHPC_CUDA_HOME": str(directory / "cuda"),
+    })
+    if environment is not None:
+        selected_environment.update(environment)
+    return collect_runtime_environment_documents(
+        inputs["manifest"], [inputs["metadata"]], module_list,
+        str(directory / "cuda"), "13.0.88", str(directory / "cuda"),
+        selected_environment, execute, lambda name: "/fake/" + name,
+        require_ldd=True, require_gpu_tools=True,
+        cuda_runtime_probe=successful_cuda_runtime_probe,
+    )
+
+
 class RuntimeEnvironmentTests(unittest.TestCase):
     def test_complete_document_and_stable_normalized_ldd(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             inputs = write_campaign_inputs(directory)
             module_list = directory / "module-list.txt"
-            module_list.write_text("runtime/1\nopenmpi/test\n", encoding="utf-8")
+            module_list.write_bytes(b"runtime/1\r\nopenmpi/test\r\n")
             state = {"ldd": 0}
 
             def which(name):
@@ -53,7 +81,7 @@ class RuntimeEnvironmentTests(unittest.TestCase):
                 if name == "ldd":
                     state["ldd"] += 1
                     address = "0x0000{0}".format(state["ldd"])
-                    return 0, "libfixture.so => /lib/libfixture.so ({0})\n".format(address)
+                    return 0, "libfixture.so => /lib/libfixture.so ({0})\r\n".format(address)
                 if name == "pkg-config":
                     return 0, "1.2.3\n"
                 if name == "nvidia-smi":
@@ -66,14 +94,14 @@ class RuntimeEnvironmentTests(unittest.TestCase):
                 "LD_LIBRARY_PATH": "/fake/lib",
                 "NVHPC_CUDA_HOME": str(directory / "cuda"),
             })
-            first = collect_runtime_environment(
+            first, first_evidence = collect_runtime_environment_documents(
                 inputs["manifest"], [inputs["metadata"]], module_list,
                 str(directory / "cuda"), "13.0.88",
                 str(directory / "cuda"), environment, execute, which,
                 require_ldd=True, require_gpu_tools=True,
                 cuda_runtime_probe=successful_cuda_runtime_probe,
             )
-            second = collect_runtime_environment(
+            second, second_evidence = collect_runtime_environment_documents(
                 inputs["manifest"], [inputs["metadata"]], module_list,
                 str(directory / "cuda"), "13.0.88",
                 str(directory / "cuda"), environment, execute, which,
@@ -81,6 +109,29 @@ class RuntimeEnvironmentTests(unittest.TestCase):
                 cuda_runtime_probe=successful_cuda_runtime_probe,
             )
             self.assertEqual(dump_bytes(first), dump_bytes(second))
+            self.assertEqual(
+                deterministic_json_sha256(first),
+                deterministic_json_sha256(second),
+            )
+            self.assertNotEqual(
+                dump_bytes(first_evidence), dump_bytes(second_evidence)
+            )
+            self.assertIn(
+                "(0x00001)",
+                first_evidence["binaries"][0]["ldd"]["output_text"],
+            )
+            self.assertIn(
+                "(0x00002)",
+                second_evidence["binaries"][0]["ldd"]["output_text"],
+            )
+            self.assertTrue(
+                first_evidence["binaries"][0]["ldd"]["output_text"]
+                .endswith("\r\n")
+            )
+            self.assertEqual(
+                first_evidence["runtime_environment_sha256"],
+                deterministic_json_sha256(first),
+            )
             self.assertEqual(first["runtime_environment_schema_version"], 1)
             self.assertEqual(first["cpu_runtime_environment"], CPU_ENVIRONMENT)
             self.assertEqual(
@@ -98,11 +149,215 @@ class RuntimeEnvironmentTests(unittest.TestCase):
             self.assertEqual(first["cuda"]["runtime_version_source"],
                              "cudaRuntimeGetVersion")
             self.assertEqual(first["nvhpc"]["selected_cuda_toolkit"],
-                             str(directory / "cuda"))
+                             str((directory / "cuda").resolve()))
+            self.assertEqual(first["module_list"],
+                             ["runtime/1", "openmpi/test"])
+            self.assertEqual(
+                first_evidence["module_list_output"],
+                "runtime/1\r\nopenmpi/test\r\n",
+            )
+            self.assertNotIn("gpus", first["nvidia"])
             self.assertTrue(all(
                 item["status"] == "success"
                 for item in first["cpu_library_versions"].values()
             ))
+
+    def test_resolved_library_path_change_changes_identity_hash(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            inputs = write_campaign_inputs(directory)
+            state = {"path": "/opt/runtime-v1/lib/libfixture.so"}
+
+            def execute(arguments):
+                name = Path(arguments[0]).name
+                if name == "ldd":
+                    return 0, "libfixture.so => {0} (0x1)\n".format(
+                        state["path"]
+                    )
+                if name == "pkg-config":
+                    return 0, "1.2.3\n"
+                if name == "nvidia-smi":
+                    return 0, "fixture-value\n"
+                return 0, name + " fixture version\n"
+
+            first, _ = collect_fixture_documents(
+                directory, inputs, execute
+            )
+            state["path"] = "/opt/runtime-v2/lib/libfixture.so"
+            second, _ = collect_fixture_documents(
+                directory, inputs, execute
+            )
+            self.assertNotEqual(
+                deterministic_json_sha256(first),
+                deterministic_json_sha256(second),
+            )
+
+    def test_cpu_library_version_change_changes_identity_hash(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            inputs = write_campaign_inputs(directory)
+            state = {"version": "1.2.3"}
+
+            def execute(arguments):
+                name = Path(arguments[0]).name
+                if name == "ldd":
+                    return 0, "libfixture.so => /lib/libfixture.so (0x1)\n"
+                if name == "pkg-config":
+                    return 0, state["version"] + "\n"
+                if name == "nvidia-smi":
+                    return 0, "fixture-value\n"
+                return 0, name + " fixture version\n"
+
+            first, _ = collect_fixture_documents(
+                directory, inputs, execute
+            )
+            state["version"] = "1.2.4"
+            second, _ = collect_fixture_documents(
+                directory, inputs, execute
+            )
+            self.assertNotEqual(
+                deterministic_json_sha256(first),
+                deterministic_json_sha256(second),
+            )
+
+    def test_unresolved_ldd_dependency_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            inputs = write_campaign_inputs(directory)
+
+            def execute(arguments):
+                name = Path(arguments[0]).name
+                if name == "ldd":
+                    return 0, "libmissing.so => not found\n"
+                return 0, "fixture\n"
+
+            with self.assertRaisesRegex(
+                RuntimeEnvironmentError, "unresolved library"
+            ):
+                collect_fixture_documents(directory, inputs, execute)
+
+    def test_gpu_uuid_is_evidence_only_and_does_not_change_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            inputs = write_campaign_inputs(directory)
+            state = {"uuid": "GPU-wave-0", "address": "0x1000"}
+
+            def execute(arguments):
+                name = Path(arguments[0]).name
+                if name == "ldd":
+                    return 0, (
+                        "libfixture.so => /lib/libfixture.so ({0})\n"
+                        .format(state["address"])
+                    )
+                if name == "pkg-config":
+                    return 0, "1.2.3\n"
+                if name == "nvidia-smi":
+                    if any("uuid,name" in item for item in arguments):
+                        return 0, state["uuid"] + ", Fixture GPU\n"
+                    return 0, "580.95.05\n"
+                return 0, name + " fixture version\n"
+
+            first, first_evidence = collect_fixture_documents(
+                directory, inputs, execute
+            )
+            state.update({"uuid": "GPU-wave-1", "address": "0x2000"})
+            second, second_evidence = collect_fixture_documents(
+                directory, inputs, execute
+            )
+            self.assertEqual(
+                deterministic_json_sha256(first),
+                deterministic_json_sha256(second),
+            )
+            self.assertNotEqual(
+                dump_bytes(first_evidence), dump_bytes(second_evidence)
+            )
+            self.assertNotIn("gpus", first["nvidia"])
+            self.assertIn(
+                "GPU-wave-0",
+                first_evidence["command_probes"]
+                ["nvidia_gpu_identity"]["output_text"],
+            )
+
+    def test_search_path_normalization_and_meaningful_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            inputs = write_campaign_inputs(directory)
+
+            def execute(arguments):
+                name = Path(arguments[0]).name
+                if name == "ldd":
+                    return 0, "libfixture.so => /lib/libfixture.so (0x1)\n"
+                if name == "pkg-config":
+                    return 0, "1.2.3\n"
+                if name == "nvidia-smi":
+                    return 0, "fixture-value\n"
+                return 0, name + " fixture version\n"
+
+            first, _ = collect_fixture_documents(
+                directory, inputs, execute,
+                {"PATH": "/fake/bin:/usr/bin"},
+            )
+            duplicate, _ = collect_fixture_documents(
+                directory, inputs, execute,
+                {"PATH": "/fake/bin:/usr/bin:/fake/bin"},
+            )
+            changed_path, _ = collect_fixture_documents(
+                directory, inputs, execute,
+                {"PATH": "/different/bin:/usr/bin"},
+            )
+            changed_ld, _ = collect_fixture_documents(
+                directory, inputs, execute,
+                {"LD_LIBRARY_PATH": "/different/lib:/usr/lib"},
+            )
+            self.assertEqual(
+                deterministic_json_sha256(first),
+                deterministic_json_sha256(duplicate),
+            )
+            self.assertNotEqual(
+                deterministic_json_sha256(first),
+                deterministic_json_sha256(changed_path),
+            )
+            self.assertNotEqual(
+                deterministic_json_sha256(first),
+                deterministic_json_sha256(changed_ld),
+            )
+
+    def test_module_display_layout_normalizes_to_identity_order(self):
+        columnar = (
+            "Currently Loaded Modulefiles:\n"
+            " 1) hpcx <aL>                  3) onemkl/2025.3.1\n"
+            " 2) openmpi/runtime            4) cuda/13.0.2\n"
+            "\nKey:\n<module-tag>  <aL>=auto-loaded\n"
+        )
+        one_per_line = (
+            "hpcx\nopenmpi/runtime\nonemkl/2025.3.1\ncuda/13.0.2\n"
+        )
+        expected = [
+            "hpcx", "openmpi/runtime", "onemkl/2025.3.1", "cuda/13.0.2"
+        ]
+        self.assertEqual(normalize_module_list(columnar), expected)
+        self.assertEqual(normalize_module_list(one_per_line), expected)
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux") and shutil.which("ldd"),
+        "Linux ldd is unavailable on this host",
+    )
+    def test_linux_repeated_ldd_has_stable_canonical_output(self):
+        raw_outputs = []
+        for _ in range(2):
+            completed = subprocess.run(
+                [shutil.which("ldd"), sys.executable],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            raw_outputs.append(completed.stdout)
+        if raw_outputs[0] == raw_outputs[1]:
+            self.skipTest("ldd load addresses did not vary on this Linux host")
+        self.assertIn("(0x", raw_outputs[0])
+        self.assertEqual(
+            normalize_ldd_output(raw_outputs[0].splitlines()),
+            normalize_ldd_output(raw_outputs[1].splitlines()),
+        )
 
     def test_missing_cpu_runtime_variable_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:

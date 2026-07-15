@@ -181,11 +181,23 @@ Intel MPIは初期対象外。`UCX_MEMTYPE_CACHE=n`は標準強制せず、問�
 ## Runtime software environment取得
 
 job masterは`benchmark_runtime_modules`をloadした後、preflight前に
-`runtime-environment.json`の材料を取得する。少なくともmodule list、`PATH`、
-`LD_LIBRARY_PATH`、NVIDIA driver、CUDA runtime/Toolkitのversionとpath、NVHPC
-compiler/runtime、`NVHPC_CUDA_HOME`またはNVHPCが実際に選択したCUDA Toolkit、
-FFTW/oneMKL/OpenBLAS/LAPACKE等のversion、全binaryの`ldd`出力、解決された
-shared-library path、およびCPU thread環境の8変数を保存する。
+canonical identityである`runtime-environment.json`と、wave固有のraw probeを
+保持する`runtime-environment-evidence.json`を同時に取得する。前者には正規化した
+module identity/load順、重複を除いたcanonical `PATH`/`LD_LIBRARY_PATH`、NVIDIA
+driver、CUDA runtime/Toolkitのversionとpath、NVHPC compiler/runtime、
+`NVHPC_CUDA_HOME`またはNVHPCが実際に選択したCUDA Toolkit、
+FFTW/oneMKL/OpenBLAS/LAPACKE等のversion、全binaryのcanonical dependency、解決
+shared-library path、およびCPU thread環境の8変数を保存する。後者には元のmodule
+list、command output/diagnostic、`ldd`の元の順序とload address、job-master GPU
+query、およびraw CUDA Runtime probeを改変せず保存する。canonical fieldとraw
+evidenceの所有範囲は`RESULT_SCHEMA.md`に従う。
+
+canonical `ldd` identityはSONAMEと解決path/interpreterを保持し、末尾のASLR
+addressだけを除去してpathをcanonical化し、lineを決定的にsortする。`not found`は
+preflight failureとする。module表示のcolumn、space、heading、tagはidentityに含めず、
+module identityとload順を保持する。GPU name/UUID、hostname、scheduler job ID、
+timestamp、PID、scratch pathはcampaign runtime identityに含めず、wave/node metadata
+およびraw rowで保持する。
 
 Pegasus設定の`cuda_toolkit_version`はmodule release名ではなく、CMakeの
 `CUDAToolkit_VERSION`がbuild metadataへ記録する完全なcomponent versionである。
@@ -209,10 +221,12 @@ benchmarkも独立してCUDA APIを呼ぶ。成功raw rowのname、UUID、Driver
 Runtime versionをnode metadataと一致させる。取得不能な値はnullと診断にし、
 推測値で補わない。
 
-同文書はproject-defined deterministic JSON serialization profileで保存・hashし、
+canonical文書はproject-defined deterministic JSON serialization profileで保存・hashし、
 `runtime_environment_sha256`を追加waveの一致条件とする。異なるruntime環境を
 同じprimary cross-wave aggregateへ混在させない。同一run IDへ追加できず、新しい
-run IDを要求する。
+run IDを要求する。raw evidence sidecarも同じJSON profileで保存し、そのexact hashを
+wave metadataへ記録してcollectorが検査する。sidecarはwaveごとに異なり得るため、
+そのhash自体は追加waveのcampaign identity一致条件にしない。
 
 ## PBS job masterによるcampaign preflight
 
@@ -227,17 +241,21 @@ masterだけである。MPI-linked coordinatorや`mpi4py`を必要としない�
    job masterが完全なrank-host mappingを取得する。
 3. job masterが`jobs/pegasus/prepare_wave.py`を実行する。
 4. `prepare_wave.py`がrun ID、wave、expected node count、rank-host mapping、
-   hostname重複、既存output、config/binary/source/runtime provenanceを検査する。
+   hostname重複、既存output、config/binary/source/runtime provenance、およびraw
+   runtime evidenceからcanonical identity/manifestへの参照を検査する。
 5. 新規campaignではjob masterだけが`effective-config.json`、
    `run-metadata.json`、`runtime-environment.json`を排他的に作成する。追加wave
    では既存hashとimmutable provenanceを検査する。
-6. job masterだけが`wave-metadata.json`を排他的に作成する。
+6. job masterだけが`wave-metadata.json`を排他的に作成し、raw runtime evidenceを
+   `waves/<wave>/job-master/runtime-environment-evidence.json`へcopyする。
 7. preflight成功後だけ、本測定用`mpirun`で`run_node.sh`を起動する。
 
 single-node実行でもjob masterが同じpreflight処理を行う。preflight failure時は
 本測定用`mpirun`を開始しない。同一run IDへwaveを追加できるのは、effective
 config、executables manifest、runtime environment、Git commit、dirty state、
-およびdirty時のsource hashがすべて一致する場合だけである。
+およびdirty時のsource hashがすべて一致する場合だけである。run metadataの
+`submission_host`はcampaign作成hostであり、追加waveのjob master hostnameは
+wave metadataへ保存するが、campaign一致条件にはしない。
 
 production runはclean worktreeを必須とし、dirtyならjob masterが本測定前に
 拒否する。smoke/pilotでdirtyを許す場合は、完全なGit diff hashまたはsource

@@ -52,6 +52,22 @@ def pegasus_config(directory: Path):
     }
 
 
+def write_runtime_evidence(
+    path: Path, runtime_path: Path, manifest_path: Path, **extra
+):
+    document = {
+        "binaries": [],
+        "executables_manifest_sha256": sha256_file(manifest_path),
+        "module_list_output": "runtime/1\n",
+        "module_list_sha256": "0" * 64,
+        "runtime_environment_evidence_schema_version": 1,
+        "runtime_environment_sha256": sha256_file(runtime_path),
+    }
+    document.update(extra)
+    path.write_bytes(dump_bytes(document))
+    return path
+
+
 def write_campaign_inputs(directory: Path, dirty=False, config=None):
     executable = directory / "fft_cpu_bench"
     executable.write_bytes(b"fixture executable\n")
@@ -112,10 +128,16 @@ def write_campaign_inputs(directory: Path, dirty=False, config=None):
     }
     runtime_path = directory / "runtime-environment-input.json"
     runtime_path.write_bytes(dump_bytes(runtime_document))
+    evidence_path = write_runtime_evidence(
+        directory / "runtime-environment-evidence-input.json",
+        runtime_path,
+        manifest_path,
+    )
     return {
         "config": config_path,
         "executable": executable,
         "manifest": manifest_path,
         "metadata": metadata_path,
         "runtime": runtime_path,
+        "runtime_evidence": evidence_path,
     }

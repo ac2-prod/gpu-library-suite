@@ -5,9 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from gpu_suite.hashing import sha256_file
 from gpu_suite.strict_json import dump_bytes, load
 
-from pegasus_support import pegasus_config, write_campaign_inputs
+from pegasus_support import (
+    pegasus_config,
+    write_campaign_inputs,
+    write_runtime_evidence,
+)
 from support import ROOT, ZERO_HASH, pilot_config
 
 
@@ -84,6 +89,15 @@ class PegasusConfigurationAndRenderTests(unittest.TestCase):
             self.assertEqual(
                 rendered.count('--scheduler-job-id "${scheduler_job_id}"'),
                 2,
+            )
+            self.assertIn(
+                '--evidence-output "${master_scratch}/runtime-environment-evidence.json"',
+                rendered,
+            )
+            self.assertIn("--runtime-environment-evidence", rendered)
+            self.assertIn(
+                '"${WAVE_ROOT}/job-master/runtime-environment-evidence.json"',
+                rendered,
             )
 
             token_probe = subprocess.run(
@@ -180,7 +194,8 @@ class PrepareWaveTests(unittest.TestCase):
                 prepare_wave(
                     result_root, "wrong-runtime-manifest", 0, 1, mapping,
                     inputs["config"], inputs["manifest"], [inputs["metadata"]],
-                    wrong_manifest_path, "pegasus-test", "NQSV", "1.test",
+                    wrong_manifest_path, inputs["runtime_evidence"],
+                    "pegasus-test", "NQSV", "1.test",
                     "master0",
                 )
 
@@ -188,12 +203,43 @@ class PrepareWaveTests(unittest.TestCase):
             wrong_metadata["build_metadata"][0]["sha256"] = ZERO_HASH
             wrong_metadata_path = directory / "wrong-metadata-runtime.json"
             wrong_metadata_path.write_bytes(dump_bytes(wrong_metadata))
+            wrong_metadata_evidence = write_runtime_evidence(
+                directory / "wrong-metadata-runtime-evidence.json",
+                wrong_metadata_path,
+                inputs["manifest"],
+            )
             with self.assertRaisesRegex(WavePreparationError, "metadata hashes"):
                 prepare_wave(
                     result_root, "wrong-runtime-metadata", 0, 1, mapping,
                     inputs["config"], inputs["manifest"], [inputs["metadata"]],
-                    wrong_metadata_path, "pegasus-test", "NQSV", "2.test",
+                    wrong_metadata_path, wrong_metadata_evidence,
+                    "pegasus-test", "NQSV", "2.test",
                     "master0",
+                )
+
+            wrong_evidence = load(inputs["runtime_evidence"])
+            wrong_evidence["runtime_environment_sha256"] = ZERO_HASH
+            wrong_evidence_path = directory / "wrong-runtime-evidence.json"
+            wrong_evidence_path.write_bytes(dump_bytes(wrong_evidence))
+            with self.assertRaisesRegex(WavePreparationError, "different identity"):
+                prepare_wave(
+                    result_root, "wrong-evidence-runtime", 0, 1, mapping,
+                    inputs["config"], inputs["manifest"], [inputs["metadata"]],
+                    inputs["runtime"], wrong_evidence_path,
+                    "pegasus-test", "NQSV", "3.test", "master0",
+                )
+
+            wrong_evidence["runtime_environment_sha256"] = sha256_file(
+                inputs["runtime"]
+            )
+            wrong_evidence["executables_manifest_sha256"] = ZERO_HASH
+            wrong_evidence_path.write_bytes(dump_bytes(wrong_evidence))
+            with self.assertRaisesRegex(WavePreparationError, "different manifest"):
+                prepare_wave(
+                    result_root, "wrong-evidence-manifest", 0, 1, mapping,
+                    inputs["config"], inputs["manifest"], [inputs["metadata"]],
+                    inputs["runtime"], wrong_evidence_path,
+                    "pegasus-test", "NQSV", "4.test", "master0",
                 )
 
     def test_new_campaign_additional_wave_and_runtime_mismatch(self):
@@ -207,12 +253,18 @@ class PrepareWaveTests(unittest.TestCase):
             first = prepare_wave(
                 result_root, "campaign-1", 0, 2, mapping, inputs["config"],
                 inputs["manifest"], [inputs["metadata"]], inputs["runtime"],
-                "pegasus-test", "NQSV", "0:866211.nqsv", "master0",
+                inputs["runtime_evidence"], "pegasus-test", "NQSV",
+                "0:866211.nqsv", "master0",
                 timestamp="2026-07-14T00:00:00.000Z",
             )
             self.assertEqual(first["observed_node_count"], 2)
             self.assertEqual(first["permutation_assignment_counts"]["0"], 1)
             self.assertEqual(first["scheduler_job_id"], "0:866211.nqsv")
+            self.assertEqual(first["submission_host"], "master0")
+            self.assertEqual(
+                first["runtime_environment_evidence_sha256"],
+                sha256_file(inputs["runtime_evidence"]),
+            )
             stored_wave = load(
                 result_root / "campaign-1" / "waves" / "0" /
                 "wave-metadata.json"
@@ -224,21 +276,109 @@ class PrepareWaveTests(unittest.TestCase):
             second = prepare_wave(
                 result_root, "campaign-1", 1, 2, mapping, inputs["config"],
                 inputs["manifest"], [inputs["metadata"]], inputs["runtime"],
-                "pegasus-test", "NQSV", "124.test", "master0",
+                inputs["runtime_evidence"], "pegasus-test", "NQSV",
+                "124.test", "master1",
                 timestamp="2026-07-14T01:00:00.000Z",
             )
             self.assertEqual(second["wave"], 1)
+            self.assertEqual(second["submission_host"], "master1")
+            self.assertEqual(second["scheduler_job_id"], "124.test")
+            run_metadata = load(
+                result_root / "campaign-1" / "run-metadata.json"
+            )
+            self.assertEqual(run_metadata["submission_host"], "master0")
 
             changed_runtime = directory / "changed-runtime.json"
             runtime_document = load(inputs["runtime"])
             runtime_document["test_runtime"] = "two"
             changed_runtime.write_bytes(dump_bytes(runtime_document))
+            changed_evidence = write_runtime_evidence(
+                directory / "changed-runtime-evidence.json",
+                changed_runtime,
+                inputs["manifest"],
+            )
             with self.assertRaisesRegex(WavePreparationError, "new run ID"):
                 prepare_wave(
                     result_root, "campaign-1", 2, 2, mapping, inputs["config"],
                     inputs["manifest"], [inputs["metadata"]], changed_runtime,
-                    "pegasus-test", "NQSV", "125.test", "master0",
+                    changed_evidence, "pegasus-test", "NQSV", "125.test",
+                    "master2",
                 )
+
+            run_metadata_path = (
+                result_root / "campaign-1" / "run-metadata.json"
+            )
+            run_metadata["submission_host"] = ""
+            run_metadata_path.write_bytes(dump_bytes(run_metadata))
+            with self.assertRaisesRegex(
+                WavePreparationError, "invalid creation submission host"
+            ):
+                prepare_wave(
+                    result_root, "campaign-1", 3, 2, mapping,
+                    inputs["config"], inputs["manifest"],
+                    [inputs["metadata"]], inputs["runtime"],
+                    inputs["runtime_evidence"], "pegasus-test", "NQSV",
+                    "126.test", "master3",
+                )
+
+    def test_six_node_two_wave_assignments_allow_wave_specific_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            result_root = directory / "results"
+            result_root.mkdir()
+            inputs = write_campaign_inputs(directory)
+            mappings = []
+            for wave in (0, 1):
+                mapping = directory / "mapping-{0}.tsv".format(wave)
+                mapping.write_text(
+                    "".join(
+                        "{0}\tnode{1}\n".format(rank, wave * 6 + rank)
+                        for rank in range(6)
+                    ),
+                    encoding="utf-8",
+                )
+                mappings.append(mapping)
+            second_evidence = write_runtime_evidence(
+                directory / "runtime-environment-evidence-wave-1.json",
+                inputs["runtime"],
+                inputs["manifest"],
+                nvidia_gpu_identity="GPU-wave-1",
+            )
+            first = prepare_wave(
+                result_root, "six-node", 0, 6, mappings[0], inputs["config"],
+                inputs["manifest"], [inputs["metadata"]], inputs["runtime"],
+                inputs["runtime_evidence"], "pegasus-test", "NQSV",
+                "0:866328.nqsv", "node0",
+                timestamp="2026-07-15T14:00:00.000Z",
+            )
+            second = prepare_wave(
+                result_root, "six-node", 1, 6, mappings[1], inputs["config"],
+                inputs["manifest"], [inputs["metadata"]], inputs["runtime"],
+                second_evidence, "pegasus-test", "NQSV",
+                "0:866329.nqsv", "node6",
+                timestamp="2026-07-15T15:00:00.000Z",
+            )
+            self.assertEqual(
+                first["permutation_assignment_counts"],
+                {str(index): 1 for index in range(6)},
+            )
+            self.assertEqual(
+                second["permutation_assignment_counts"],
+                {str(index): 1 for index in range(6)},
+            )
+            self.assertEqual(
+                second["size_order_assignment_counts"], {"0": 3, "1": 3}
+            )
+            self.assertEqual(second["submission_host"], "node6")
+            self.assertEqual(second["scheduler_job_id"], "0:866329.nqsv")
+            self.assertNotEqual(
+                first["runtime_environment_evidence_sha256"],
+                second["runtime_environment_evidence_sha256"],
+            )
+            self.assertEqual(
+                first["runtime_environment_sha256"],
+                second["runtime_environment_sha256"],
+            )
 
     def test_mapping_completeness_duplicates_single_node_and_wave_collision(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -258,13 +398,15 @@ class PrepareWaveTests(unittest.TestCase):
             prepare_wave(
                 result_root, "single", 0, 1, incomplete, inputs["config"],
                 inputs["manifest"], [inputs["metadata"]], inputs["runtime"],
-                "single-test", "NQSV", "1.test", "master0",
+                inputs["runtime_evidence"], "single-test", "NQSV", "1.test",
+                "master0",
             )
             with self.assertRaisesRegex(WavePreparationError, "already exists"):
                 prepare_wave(
                     result_root, "single", 0, 1, incomplete, inputs["config"],
                     inputs["manifest"], [inputs["metadata"]], inputs["runtime"],
-                    "single-test", "NQSV", "2.test", "master0",
+                    inputs["runtime_evidence"], "single-test", "NQSV",
+                    "2.test", "master0",
                 )
 
     def test_production_rejects_dirty_build_even_with_source_hash(self):
@@ -281,8 +423,9 @@ class PrepareWaveTests(unittest.TestCase):
                 prepare_wave(
                     result_root, "dirty-production", 0, 1, mapping,
                     inputs["config"], inputs["manifest"], [inputs["metadata"]],
-                    inputs["runtime"], "pegasus-test", "NQSV", "3.test",
-                    "master0", source_snapshot_sha256=ZERO_HASH,
+                    inputs["runtime"], inputs["runtime_evidence"],
+                    "pegasus-test", "NQSV", "3.test", "master0",
+                    source_snapshot_sha256=ZERO_HASH,
                 )
 
 

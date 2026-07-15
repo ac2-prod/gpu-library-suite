@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from gpu_suite.hashing import sha256_file
 from gpu_suite.results_io import load_raw_results
 from gpu_suite.strict_json import dump_bytes, dumps, load
 
@@ -27,15 +28,17 @@ from node_tools import (  # noqa: E402
 )
 
 
-def write_wave_metadata(path, mapping):
-    path.write_bytes(dump_bytes({
+def write_wave_metadata(path, mapping, **extra):
+    document = {
         "rank_host_mapping": mapping,
         "run_id": "run-1",
         "scheduler": SCHEDULER,
         "scheduler_job_id": RAW_SCHEDULER_JOB_ID,
         "wave": 0,
         "wave_metadata_schema_version": 1,
-    }))
+    }
+    document.update(extra)
+    path.write_bytes(dump_bytes(document))
 
 
 def write_node(nodes, hostname, rank, classification):
@@ -109,6 +112,60 @@ class CollectionTests(unittest.TestCase):
             self.assertEqual(
                 metadata["scheduler_job_id"], RAW_SCHEDULER_JOB_ID
             )
+
+    def test_node_specific_provenance_survives_across_waves(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            inputs = write_campaign_inputs(directory)
+            runtime_sha256 = "a" * 64
+            probe = {
+                "cuda_driver_api_version": "13.0.0",
+                "cuda_runtime_version": "13.0.96",
+                "diagnostic": None,
+                "loaded_library": "/node/lib/libcudart.so.13",
+                "query_status": "success",
+            }
+
+            def metadata(wave, hostname, uuid, scheduler_job_id):
+                environment = dict(CPU_ENVIRONMENT)
+                environment.update({
+                    "GPU_SUITE_GPU_NAME": "NVIDIA H100 80GB HBM3",
+                    "GPU_SUITE_GPU_UUID": uuid,
+                    "GPU_SUITE_NVIDIA_DRIVER_VERSION": "580.95.05",
+                    "GPU_SUITE_NODE_GPU_QUERY_DIAGNOSTIC": "",
+                    "GPU_SUITE_NODE_GPU_QUERY_STATUS": "success",
+                })
+                return build_node_metadata(
+                    inputs["config"], inputs["manifest"], "run-1", wave,
+                    0, hostname, runtime_sha256, environment,
+                    cuda_runtime_probe=lambda: probe,
+                    scheduler=SCHEDULER,
+                    scheduler_job_id=scheduler_job_id,
+                )
+
+            first = metadata(
+                0, "bnode111",
+                "GPU-11111111-1111-1111-1111-111111111111",
+                "0:866328.nqsv",
+            )
+            second = metadata(
+                1, "bnode117",
+                "GPU-22222222-2222-2222-2222-222222222222",
+                "0:866329.nqsv",
+            )
+            self.assertEqual(
+                first["runtime_environment_sha256"],
+                second["runtime_environment_sha256"],
+            )
+            self.assertEqual(first["hostname"], "bnode111")
+            self.assertEqual(second["hostname"], "bnode117")
+            self.assertNotEqual(
+                first["gpu_identity"]["uuid"],
+                second["gpu_identity"]["uuid"],
+            )
+            self.assertEqual(first["scheduler_job_id"], "0:866328.nqsv")
+            self.assertEqual(second["scheduler_job_id"], "0:866329.nqsv")
+            self.assertEqual((first["wave"], second["wave"]), (0, 1))
 
     def test_gpu_raw_identity_must_match_its_node_metadata(self):
         record = raw_success(implementation="cuda")
@@ -186,6 +243,75 @@ class CollectionTests(unittest.TestCase):
             document, success = collect_results(wave_metadata, nodes)
             self.assertTrue(success)
             self.assertEqual(document["collection_status"], "success")
+
+    def test_collector_validates_linked_runtime_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            nodes = directory / "nodes"
+            nodes.mkdir()
+            job_master = directory / "job-master"
+            job_master.mkdir()
+            runtime_sha256 = "a" * 64
+            manifest_sha256 = "b" * 64
+            evidence_path = (
+                job_master / "runtime-environment-evidence.json"
+            )
+            evidence = {
+                "executables_manifest_sha256": manifest_sha256,
+                "runtime_environment_evidence_schema_version": 1,
+                "runtime_environment_sha256": runtime_sha256,
+            }
+            evidence_path.write_bytes(dump_bytes(evidence))
+            wave_metadata = directory / "wave-metadata.json"
+            write_wave_metadata(
+                wave_metadata, [{"hostname": "node0", "rank": 0}],
+                executables_manifest_sha256=manifest_sha256,
+                runtime_environment_evidence_sha256=sha256_file(evidence_path),
+                runtime_environment_sha256=runtime_sha256,
+            )
+            write_node(nodes, "node0", 0, {
+                "benchmark_status": "success",
+                "verification_status": "success",
+            })
+            document, success = collect_results(wave_metadata, nodes)
+            self.assertTrue(success, document["failures"])
+
+            evidence["probe_output"] = "changed"
+            evidence_path.write_bytes(dump_bytes(evidence))
+            document, success = collect_results(wave_metadata, nodes)
+            self.assertFalse(success)
+            self.assertIn(
+                "runtime environment evidence SHA-256 mismatch",
+                document["failures"],
+            )
+
+            evidence["runtime_environment_sha256"] = "c" * 64
+            evidence_path.write_bytes(dump_bytes(evidence))
+            wave = load(wave_metadata)
+            wave["runtime_environment_evidence_sha256"] = sha256_file(
+                evidence_path
+            )
+            wave_metadata.write_bytes(dump_bytes(wave))
+            document, success = collect_results(wave_metadata, nodes)
+            self.assertFalse(success)
+            self.assertIn(
+                "runtime environment evidence identity mismatch",
+                document["failures"],
+            )
+
+            evidence["runtime_environment_sha256"] = runtime_sha256
+            evidence["executables_manifest_sha256"] = "d" * 64
+            evidence_path.write_bytes(dump_bytes(evidence))
+            wave["runtime_environment_evidence_sha256"] = sha256_file(
+                evidence_path
+            )
+            wave_metadata.write_bytes(dump_bytes(wave))
+            document, success = collect_results(wave_metadata, nodes)
+            self.assertFalse(success)
+            self.assertIn(
+                "runtime environment evidence manifest mismatch",
+                document["failures"],
+            )
 
     def test_one_node_benchmark_failure_does_not_hide_other_artifacts(self):
         with tempfile.TemporaryDirectory() as temporary:

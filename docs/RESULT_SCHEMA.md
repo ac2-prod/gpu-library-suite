@@ -57,8 +57,11 @@ failure/nonfinite status, and a diagnostic message.
 
 The shared Python utility serializes and hashes `effective-config.json`,
 `run-metadata.json`, `runtime-environment.json`, `wave-metadata.json`, and
-`node-metadata.json`. C/C++ benchmarks must not independently serialize and hash
-the effective configuration. Executable manifests use the same deterministic
+`node-metadata.json`. The per-wave
+`runtime-environment-evidence.json` sidecar uses the same deterministic profile,
+while preserving captured command output inside JSON strings without newline
+normalization. C/C++ benchmarks must not independently serialize and hash the
+effective configuration. Executable manifests use the same deterministic
 profile.
 
 For JSON Lines, each record is a deterministic-profile JSON object followed by
@@ -295,6 +298,12 @@ results/<run-id>/
   waves/
     <wave>/
       wave-metadata.json
+      artifact-manifest.json
+      job-master/
+        module-list.txt
+        pbs-nodefile.txt
+        rank-host-mapping.tsv
+        runtime-environment-evidence.json
       nodes/
         <hostname>/
           node-metadata.json
@@ -317,13 +326,16 @@ Before node output begins:
    `mpirun` and captures each `OMPI_COMM_WORLD_RANK`/hostname pair;
 2. the job master runs `jobs/pegasus/prepare_wave.py` with that mapping;
 3. `prepare_wave.py` validates run ID, wave, expected node count, complete
-   rank-host mapping, hostname uniqueness, existing output, and
-   config/binary/source/runtime provenance;
+   rank-host mapping, hostname uniqueness, existing output,
+   config/binary/source/runtime provenance, and the link from the per-wave raw
+   runtime evidence to the canonical runtime identity;
 4. for a new campaign, the job master exclusively creates
    `effective-config.json`, `run-metadata.json`, and
    `runtime-environment.json`; for an existing campaign it validates their
    hashes and immutable provenance;
-5. the job master exclusively creates the new `wave-metadata.json`; and
+5. the job master exclusively creates the new `wave-metadata.json` and copies
+   the linked raw runtime-evidence sidecar into that wave's `job-master/`
+   directory; and
 6. only after successful preflight does the job master start the measurement
    `mpirun` that launches `run_node.sh`.
 
@@ -520,25 +532,56 @@ that changes during hashing is an error.
 
 ## Runtime software environment
 
-`runtime-environment.json` records the software environment used to execute the
-prebuilt CPU, CUDA, and OpenACC binaries together. It contains at least:
+`runtime-environment.json` is the canonical software identity used to execute
+the prebuilt CPU, CUDA, and OpenACC binaries together. It contains at least:
 
-- complete `module list` output or a normalized module list;
-- `PATH` and `LD_LIBRARY_PATH`;
+- loaded module identities in load order, independent of `module list` display
+  headings, columns, spacing, and tags;
+- canonical absolute, order-preserving, duplicate-free `PATH` and
+  `LD_LIBRARY_PATH` values;
 - NVIDIA package-driver version, CUDA Driver API/Runtime versions, and CUDA
-  Toolkit component version and Toolkit path;
-- NVHPC compiler/runtime version;
-- `NVHPC_CUDA_HOME` when set, or the actual CUDA Toolkit selected by NVHPC;
+  Toolkit component version and canonical Toolkit path;
+- NVHPC compiler/runtime version and canonical `NVHPC_CUDA_HOME` or the actual
+  CUDA Toolkit selected by NVHPC;
 - detected FFTW, oneMKL, OpenBLAS, LAPACKE, and other selected CPU-library
   versions;
-- `ldd` output for every executable in the manifest;
-- resolved shared-library paths for every executable; and
+- a canonical dependency mapping for every executable in the manifest;
+- canonical resolved shared-library paths for every executable;
+- build-metadata, executable-manifest, and binary hashes; and
 - `OMP_NUM_THREADS`, `OMP_PROC_BIND`, `OMP_PLACES`, `OMP_DYNAMIC`,
   `MKL_NUM_THREADS`, `MKL_DYNAMIC`, `MKL_THREADING_LAYER`, and
   `OPENBLAS_NUM_THREADS`.
 
-The job master creates this document with the project-defined deterministic JSON
-profile after loading the benchmark runtime modules. Compute
+Canonical `ldd` dependency lines retain the SONAME and resolved target or
+interpreter path, remove only trailing ASLR load addresses such as `(0x...)`,
+canonicalize absolute paths, and sort the resulting lines deterministically.
+An unresolved `=> not found` dependency is a preflight error. A changed SONAME,
+resolved target, interpreter, or other dependency text changes the canonical
+identity. Module indices determine load order when the site displays modules in
+columns; duplicate, non-contiguous, ambiguous, or unsafe module identities are
+errors. Search-path normalization removes only later duplicate canonical paths;
+relative and empty path components are errors.
+
+The canonical identity intentionally excludes node allocation and observation
+facts: hostname, scheduler job ID, wave/node number, timestamp, process ID,
+scratch path, GPU name and UUID, raw command formatting, `ldd` addresses and raw
+line order, and probe diagnostics. Host/scheduler/time facts belong to wave and
+node metadata. Each node's GPU name and UUID belong to node metadata and raw
+rows. Excluding those fields from the campaign identity does not discard or
+weaken their node-matched validation.
+
+For every wave, `runtime-environment-evidence.json` preserves the unnormalized
+module-list text, command output and diagnostics, raw `ldd` line order and load
+addresses, job-master GPU query, and raw CUDA Runtime probe. It references the
+canonical `runtime_environment_sha256` and executables-manifest hash. Its exact
+SHA-256 is stored as `runtime_environment_evidence_sha256` in that wave's
+metadata and is validated by the final collector. This sidecar is immutable raw
+evidence, may legitimately differ between waves, and is not a campaign-identity
+gate.
+
+The job master creates both documents after loading the benchmark runtime
+modules. It writes the canonical document with the project-defined deterministic
+JSON profile. Compute
 `runtime_environment_sha256` over its exact saved bytes. The hash is stored in
 run, wave, and node provenance and in raw rows.
 
@@ -565,10 +608,12 @@ master. It contains at least:
 - executables-manifest SHA-256;
 - runtime-environment SHA-256;
 - launcher/tool version information; and
-- submission host or local initiating hostname.
+- campaign-creation submission host or local initiating hostname.
 
 Because a campaign can gain waves, do not store one wave's scheduler job ID,
-node count, or ordering as campaign-global facts.
+node count, current submission host, or ordering as campaign-global facts. The
+run-level `submission_host` records only the host that created the campaign and
+is not an additional-wave equality gate.
 
 An additional wave may use an existing run ID only when all of the following
 match the immutable campaign metadata:
@@ -591,14 +636,22 @@ preflight. It contains at least:
 
 - `run_id`, non-negative `wave`, timestamp, `scheduler`, and
   `scheduler_job_id`;
+- the submission host that prepared this wave;
 - expected and observed node counts;
 - the complete preflight MPI-rank-to-hostname mapping;
 - `runtime_environment_sha256`;
+- `runtime_environment_evidence_sha256` for the raw sidecar retained under
+  `job-master/`;
 - implementation permutation assignments and
   `permutation_assignment_counts` for indices 0 through 5;
 - size-order assignments and `size_order_assignment_counts` for indices 0 and
   1; and
 - validation outcome for campaign provenance and output collisions.
+
+The canonical runtime and wave metadata remain schema version 1: this change
+corrects the pre-acceptance definition of stable runtime identity and adds a
+separately versioned evidence document; it does not introduce a second
+incompatible canonical format. Existing raw artifacts are never rewritten.
 
 ## Node metadata and status
 

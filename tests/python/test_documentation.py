@@ -11,6 +11,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_MARKDOWN_ROOTS = (
     "amd", "common", "configs", "docs", "jobs", "nvidia", "tests", "tools",
 )
+SOURCE_TREE_ROOTS = SOURCE_MARKDOWN_ROOTS + ("cmake",)
 
 
 def _git_markdown_documents(root: Path) -> Optional[List[Path]]:
@@ -39,7 +40,7 @@ def _git_markdown_documents(root: Path) -> Optional[List[Path]]:
     ]
 
 
-def _is_generated_markdown(root: Path, path: Path) -> bool:
+def _is_generated_path(root: Path, path: Path) -> bool:
     relative = path.relative_to(root)
     parts = relative.parts
     if not parts:
@@ -68,7 +69,19 @@ def _fallback_markdown_documents(root: Path) -> List[Path]:
             candidates.extend(source_root.rglob("*.md"))
     return [
         path for path in candidates
-        if path.is_file() and not _is_generated_markdown(root, path)
+        if path.is_file() and not _is_generated_path(root, path)
+    ]
+
+
+def _source_tree_paths(root: Path) -> List[Path]:
+    candidates = [path for path in root.iterdir() if path.is_file()]
+    for relative in SOURCE_TREE_ROOTS:
+        source_root = root / relative
+        if source_root.is_dir():
+            candidates.extend(source_root.rglob("*"))
+    return [
+        path for path in candidates
+        if not _is_generated_path(root, path)
     ]
 
 
@@ -227,7 +240,7 @@ class DocumentationTests(unittest.TestCase):
         )
         bad_paths = [
             str(path.relative_to(REPOSITORY_ROOT))
-            for path in REPOSITORY_ROOT.rglob("*")
+            for path in _source_tree_paths(REPOSITORY_ROOT)
             if versioned.search(path.name)
         ]
         self.assertEqual(bad_paths, [])

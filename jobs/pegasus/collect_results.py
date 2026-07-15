@@ -99,6 +99,53 @@ def _artifact_records(nodes_directory: Path) -> Tuple[List[Dict[str, Any]], List
     return artifacts, failures
 
 
+def _validate_runtime_environment_evidence(
+    wave_metadata: Mapping[str, Any], nodes_directory: Path,
+) -> Optional[str]:
+    """Validate the per-wave raw probe sidecar when current metadata links it."""
+
+    expected_sha256 = wave_metadata.get("runtime_environment_evidence_sha256")
+    if expected_sha256 is None:
+        # Wave metadata schema version 1 predates this linked sidecar. Newly
+        # prepared waves always carry it, while legacy evidence remains readable.
+        return None
+    path = nodes_directory.parent / "job-master" / (
+        "runtime-environment-evidence.json"
+    )
+    if (
+        not path.parent.is_dir()
+        or path.parent.is_symlink()
+        or not path.is_file()
+        or path.is_symlink()
+    ):
+        return "missing runtime environment evidence"
+    try:
+        if sha256_file(path) != expected_sha256:
+            return "runtime environment evidence SHA-256 mismatch"
+        content = path.read_bytes()
+        evidence = load(path)
+    except (OSError, ValueError) as error:
+        return "invalid runtime environment evidence: {0}".format(error)
+    if (
+        not isinstance(evidence, dict)
+        or evidence.get("runtime_environment_evidence_schema_version") != 1
+    ):
+        return "invalid runtime environment evidence schema"
+    if dump_bytes(evidence) != content:
+        return "runtime environment evidence is not deterministic JSON"
+    if (
+        evidence.get("runtime_environment_sha256")
+        != wave_metadata.get("runtime_environment_sha256")
+    ):
+        return "runtime environment evidence identity mismatch"
+    if (
+        evidence.get("executables_manifest_sha256")
+        != wave_metadata.get("executables_manifest_sha256")
+    ):
+        return "runtime environment evidence manifest mismatch"
+    return None
+
+
 def collect_results(
     wave_metadata_path: Path, nodes_directory: Path,
 ) -> Tuple[Dict[str, Any], bool]:
@@ -121,6 +168,11 @@ def collect_results(
         raise CollectionError("invalid wave scheduler identity") from error
     expected_hosts = {item["hostname"] for item in mapping}
     failures = []  # type: List[str]
+    evidence_failure = _validate_runtime_environment_evidence(
+        wave_metadata, nodes_directory
+    )
+    if evidence_failure is not None:
+        failures.append(evidence_failure)
     node_summaries = []
     if not nodes_directory.is_dir() or nodes_directory.is_symlink():
         raise CollectionError("nodes directory is unavailable")

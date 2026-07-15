@@ -521,7 +521,9 @@ class ReviewSourcePolicyTests(unittest.TestCase):
         self.assertIn('"cuda_runtime_identity"', node_tools)
         self.assertIn('("cuda_driver_version", expected_driver', node_tools)
         self.assertIn('("cuda_runtime_version", expected_runtime', node_tools)
-        self.assertIn('"runtime_probe": cuda_runtime_identity', runtime)
+        self.assertIn('"runtime_probe": stable_cuda_runtime_identity', runtime)
+        self.assertIn('"nvidia_gpu_identity": raw_gpu_identity', runtime)
+        self.assertIn('"runtime_environment_evidence_schema_version": 1', runtime)
         self.assertNotIn("GPU_SUITE_CUDA_RUNTIME_VERSION", runtime)
 
     def test_gpu_provenance_has_distinct_rank_local_producers(self):

@@ -1,8 +1,9 @@
 import ast
+import tempfile
 import unittest
 from pathlib import Path
 
-from check_python39 import CompatibilityVisitor
+from check_python39 import CompatibilityVisitor, python_files
 
 
 def compatibility_errors(source):
@@ -36,6 +37,17 @@ class Python39CompatibilityAuditTests(unittest.TestCase):
             "value = 'prefix'.removeprefix('pre')\n"
         )
         self.assertEqual(errors, [])
+
+    def test_inventory_excludes_ignored_validation_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "tools" / "source.py"
+            ignored = root / "manual-validation" / "raw" / "ignored.py"
+            source.parent.mkdir()
+            ignored.parent.mkdir(parents=True)
+            source.write_text("value = 1\n", encoding="utf-8")
+            ignored.write_text("from typing import Self\n", encoding="utf-8")
+            self.assertEqual(list(python_files(root)), [source])
 
 
 if __name__ == "__main__":

@@ -84,11 +84,13 @@ The rendered job loads only benchmark runtime modules and the selected OpenMPI,
 exports all eight configured CPU runtime variables, and then performs this
 sequence:
 
-1. collect and hash `runtime-environment.json`;
+1. collect and hash canonical `runtime-environment.json` plus the linked
+   per-wave `runtime-environment-evidence.json` raw-probe sidecar;
 2. run a short rank/hostname preflight;
 3. let `prepare_wave.py` exclusively validate/create campaign and wave metadata;
 4. launch one `run_node.sh` process per node; and
-5. always run `collect_results.py` after the measurement launch.
+5. always run `collect_results.py` after the measurement launch; it also checks
+   the sidecar hash and its canonical-runtime/manifest links.
 
 Each node writes measurement artifacts to its own `/scr` directory. Its EXIT
 trap stops telemetry and copies artifacts only into that hostname's shared node

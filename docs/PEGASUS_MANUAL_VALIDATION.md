@@ -59,8 +59,12 @@ local検証ではCUDA GPU、NVHPC、Pegasus jobを実行していない。その
 
 - preflight rank-host mappingがexpected node数と一致し、hostname重複がない。
 - job masterだけがcampaign/wave metadataを排他的に作成する。
-- `runtime-environment.json`にmodule、path、driver、CUDA/NVHPC/CPU library、全
-  binaryの`ldd`、解決library path、8 CPU変数があり、hashがmetadata間で一致する。
+- `runtime-environment.json`にcanonical module/load順、path、driver、
+  CUDA/NVHPC/CPU library、全binaryのaddress-free canonical dependency、解決
+  library path、8 CPU変数があり、hashがmetadata間で一致する。
+- waveごとの`job-master/runtime-environment-evidence.json`に元のmodule list、
+  command diagnostic、GPU queryおよびaddress/line順を含むraw `ldd`が残り、その
+  hashとcanonical runtime/manifestへの参照が`wave-metadata.json`と一致する。
 - prebuilt binaryのruntime検査ではdriver、CUDA runtime、shared libraryを必須とし、
   `nvcc`、`nvc`、`nvc++` commandはoptional metadataとして欠落理由を記録する。
   site規則でcompiler commandを必須化する場合だけ
@@ -69,6 +73,9 @@ local検証ではCUDA GPU、NVHPC、Pegasus jobを実行していない。その
   `libcudart`から取得したCUDA Driver API/Runtime versionが
   `node-metadata.json`へ保存され、成功CUDA/OpenACC raw rowの4項目と一致し、別nodeの
   identityを流用していない。
+- 異なるallocationの2 waveではhostname、scheduler job ID、GPU UUIDが各wave/node
+  provenanceに残る一方、software identityが同じならcanonical runtime hashが一致し、
+  raw evidence sidecarの差だけで追加waveを拒否しない。
 - CPU、CUDA、OpenACCが各node block内で指定順序によりinterleaveされる。
 - raw rowのverification、UTC millisecond timestamp、requested/effective threads、
   compiler/library/GPU identityを確認する。

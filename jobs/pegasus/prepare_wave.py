@@ -165,8 +165,19 @@ def _validate_existing_campaign(
     manifest_sha256: str, runtime_sha256: str,
 ) -> None:
     metadata = load(run_root / "run-metadata.json")
+    if not isinstance(metadata, dict):
+        raise WavePreparationError("existing campaign metadata is not an object")
+    try:
+        validate_execution_context(
+            expected["run_id"], expected["system_label"],
+            metadata.get("submission_host"), 0, 0, 0,
+        )
+    except ValueError as error:
+        raise WavePreparationError(
+            "existing campaign has invalid creation submission host"
+        ) from error
     for name, value in expected.items():
-        if name == "campaign_creation_timestamp":
+        if name in {"campaign_creation_timestamp", "submission_host"}:
             continue
         if metadata.get(name) != value:
             suffix = (
@@ -191,6 +202,7 @@ def prepare_wave(
     result_root: Path, run_id: str, wave: int, expected_nodes: int,
     mapping_path: Path, config_path: Path, manifest_path: Path,
     build_metadata_paths: Sequence[Path], runtime_environment_path: Path,
+    runtime_environment_evidence_path: Path,
     system_label: str, scheduler: str, scheduler_job_id: str,
     submission_host: str, git_diff_sha256: Optional[str] = None,
     source_snapshot_sha256: Optional[str] = None,
@@ -232,6 +244,33 @@ def prepare_wave(
         )
     config_sha256 = sha256_file(config_path)
     runtime_sha256 = sha256_file(runtime_environment_path)
+    runtime_evidence = load(runtime_environment_evidence_path)
+    if (
+        not isinstance(runtime_evidence, dict)
+        or runtime_evidence.get(
+            "runtime_environment_evidence_schema_version"
+        ) != 1
+    ):
+        raise WavePreparationError(
+            "invalid runtime environment evidence document"
+        )
+    _require_deterministic(
+        runtime_environment_evidence_path,
+        runtime_evidence,
+        "runtime environment evidence",
+    )
+    if runtime_evidence.get("runtime_environment_sha256") != runtime_sha256:
+        raise WavePreparationError(
+            "runtime environment evidence refers to a different identity"
+        )
+    if (
+        runtime_evidence.get("executables_manifest_sha256")
+        != manifest_sha256
+    ):
+        raise WavePreparationError(
+            "runtime environment evidence refers to a different manifest"
+        )
+    runtime_evidence_sha256 = sha256_file(runtime_environment_evidence_path)
     if git_diff_sha256 is not None:
         validate_sha256(git_diff_sha256, "Git diff SHA-256")
     if source_snapshot_sha256 is not None:
@@ -311,10 +350,12 @@ def prepare_wave(
         "rank_host_mapping": mapping,
         "run_id": run_id,
         "runtime_environment_sha256": runtime_sha256,
+        "runtime_environment_evidence_sha256": runtime_evidence_sha256,
         "scheduler": scheduler,
         "scheduler_job_id": scheduler_job_id,
         "size_order_assignment_counts": counts["size_order_assignment_counts"],
         "size_order_assignments": size_assignments,
+        "submission_host": submission_host,
         "timestamp": now,
         "wave": wave,
         "wave_metadata_schema_version": 1,
@@ -334,6 +375,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--build-metadata", required=True, action="append", type=Path)
     parser.add_argument("--runtime-environment", required=True, type=Path)
+    parser.add_argument(
+        "--runtime-environment-evidence", required=True, type=Path
+    )
     parser.add_argument("--system-label", required=True)
     parser.add_argument("--scheduler", required=True)
     parser.add_argument("--scheduler-job-id", required=True)
@@ -346,7 +390,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             arguments.result_root, arguments.run_id, arguments.wave,
             arguments.expected_nodes, arguments.mapping, arguments.config,
             arguments.manifest, arguments.build_metadata,
-            arguments.runtime_environment, arguments.system_label,
+            arguments.runtime_environment,
+            arguments.runtime_environment_evidence,
+            arguments.system_label,
             arguments.scheduler, arguments.scheduler_job_id,
             arguments.submission_host, arguments.git_diff_sha256,
             arguments.source_snapshot_sha256,

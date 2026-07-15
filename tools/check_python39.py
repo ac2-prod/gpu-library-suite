@@ -5,6 +5,7 @@ import ast
 import hashlib
 import py_compile
 import sys
+from os import walk as directory_walk
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence
 
@@ -120,9 +121,39 @@ class CompatibilityVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+SOURCE_DIRECTORY_NAMES = (
+    "common", "configs", "jobs", "nvidia", "tests", "tools",
+)
+
+
 def python_files(root: Path) -> Iterable[Path]:
-    for path in sorted(root.rglob("*.py")):
-        if ".git" not in path.parts and "__pycache__" not in path.parts:
+    candidates = list(root.glob("*.py"))
+    for name in SOURCE_DIRECTORY_NAMES:
+        directory = root / name
+        if directory.is_dir():
+            for current, directory_names, filenames in directory_walk(
+                str(directory)
+            ):
+                directory_names[:] = sorted(
+                    child for child in directory_names
+                    if child not in {
+                        ".git", "CMakeFiles", "__pycache__", "_deps",
+                        "test-fixtures",
+                    }
+                )
+                candidates.extend(
+                    Path(current) / filename
+                    for filename in filenames if filename.endswith(".py")
+                )
+    for path in sorted(candidates):
+        relative_parts = path.relative_to(root).parts
+        if (
+            ".git" not in relative_parts
+            and "__pycache__" not in relative_parts
+            and "CMakeFiles" not in relative_parts
+            and "test-fixtures" not in relative_parts
+            and path.is_file()
+        ):
             yield path
 
 

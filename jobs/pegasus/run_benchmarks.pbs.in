@@ -61,6 +61,7 @@ python3 "${REPOSITORY_ROOT}/jobs/pegasus/collect_runtime_environment.py" \
   --nvhpc-cuda-home "${NVHPC_CUDA_HOME}" \
   --require-ldd --require-gpu-tools @RUNTIME_COMPILER_POLICY_ARGUMENT@ \
   --output "${master_scratch}/runtime-environment.json" \
+  --evidence-output "${master_scratch}/runtime-environment-evidence.json" \
   >"${master_scratch}/runtime-environment.sha256"
 runtime_environment_sha256="$(tr -d '\n' <"${master_scratch}/runtime-environment.sha256")"
 
@@ -78,6 +79,8 @@ python3 "${REPOSITORY_ROOT}/jobs/pegasus/prepare_wave.py" \
   --config "${SOURCE_CONFIG}" --manifest "${SOURCE_MANIFEST}" \
   @BUILD_METADATA_ARGUMENTS@ \
   --runtime-environment "${master_scratch}/runtime-environment.json" \
+  --runtime-environment-evidence \
+    "${master_scratch}/runtime-environment-evidence.json" \
   --system-label "${SYSTEM_LABEL}" --scheduler "${scheduler}" \
   --scheduler-job-id "${scheduler_job_id}" --submission-host "$(hostname)" @DIRTY_SOURCE_ARGUMENTS@
 
@@ -87,6 +90,8 @@ mkdir "${WAVE_ROOT}/job-master"
 cp "${master_scratch}/module-list.txt" "${WAVE_ROOT}/job-master/module-list.txt"
 cp "${master_scratch}/pbs-nodefile.txt" "${WAVE_ROOT}/job-master/pbs-nodefile.txt"
 cp "${master_scratch}/rank-host-mapping.tsv" "${WAVE_ROOT}/job-master/rank-host-mapping.tsv"
+cp "${master_scratch}/runtime-environment-evidence.json" \
+  "${WAVE_ROOT}/job-master/runtime-environment-evidence.json"
 
 set +e
 # shellcheck disable=SC2086
