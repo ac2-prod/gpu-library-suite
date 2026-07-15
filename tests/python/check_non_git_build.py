@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import List
+from typing import Callable, List, Set
 
 
 class NonGitBuildError(RuntimeError):
@@ -27,6 +27,37 @@ def run(arguments: List[str], cwd: Path) -> None:
         )
 
 
+def source_copy_ignore(source_root: Path) -> Callable[[str, List[str]], Set[str]]:
+    resolved_root = source_root.resolve()
+
+    def ignore(directory: str, names: List[str]) -> Set[str]:
+        current = Path(directory).resolve()
+        relative = current.relative_to(resolved_root)
+        ignored = {
+            name for name in names
+            if name == ".git" or name == "__pycache__" or name.endswith(".pyc")
+        }
+        ignored.update(name for name in names if name == "test-fixtures")
+        if not relative.parts:
+            ignored.update(
+                name for name in names
+                if name in {"build", "manual-validation", "results"}
+            )
+        if relative.parts == ("jobs", "pegasus") and "generated" in names:
+            ignored.add("generated")
+        for name in names:
+            child = current / name
+            if (
+                name in {"CMakeFiles", "_deps"}
+                or (child / "CMakeCache.txt").is_file()
+                or (child / "CMakeFiles").is_dir()
+            ):
+                ignored.add(name)
+        return ignored
+
+    return ignore
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cmake", required=True)
@@ -41,7 +72,7 @@ def main() -> int:
         build = work / "build"
         shutil.copytree(
             arguments.source, source_copy,
-            ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
+            ignore=source_copy_ignore(arguments.source),
         )
         if (source_copy / ".git").exists():
             raise NonGitBuildError("source copy unexpectedly contains .git")

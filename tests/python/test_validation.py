@@ -148,6 +148,16 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(report["record_count"], 38)
         self.assertEqual(report["status_counts"], {"skipped": 38})
 
+    def test_integral_raw_spelling_matches_float_config_parameters(self):
+        config, manifest, records = prerequisite_campaign()
+        for record in records:
+            if record["benchmark"] in {"cublas", "cusparse"}:
+                record["parameters"]["alpha"] = 1
+                record["parameters"]["beta"] = 1
+        report = validate_campaign(records, config, ZERO_HASH, manifest)
+        self.assertEqual(report["record_count"], 38)
+        self.assertEqual(report["status_counts"], {"skipped": 38})
+
     def test_validation_cli_reports_complete_failed_campaign_as_failure(self):
         _config, manifest, records = prerequisite_campaign()
         config_path = ROOT / "configs" / "pilot.json"

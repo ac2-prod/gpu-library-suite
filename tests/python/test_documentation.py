@@ -1,9 +1,84 @@
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
+from typing import List, Optional
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+SOURCE_MARKDOWN_ROOTS = (
+    "amd", "common", "configs", "docs", "jobs", "nvidia", "tests", "tools",
+)
+
+
+def _git_markdown_documents(root: Path) -> Optional[List[Path]]:
+    if not (root / ".git").exists():
+        return None
+    try:
+        completed = subprocess.run(
+            [
+                "git", "-C", str(root), "ls-files", "-z", "--cached",
+                "--others", "--exclude-standard", "--", "*.md",
+            ],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        relative_paths = completed.stdout.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return None
+    return [
+        root / relative
+        for relative in relative_paths.split("\0") if relative
+        if (root / relative).is_file()
+    ]
+
+
+def _is_generated_markdown(root: Path, path: Path) -> bool:
+    relative = path.relative_to(root)
+    parts = relative.parts
+    if not parts:
+        return False
+    if parts[0] in {"build", "manual-validation", "results"}:
+        return True
+    if any(part in {".git", "CMakeFiles", "_deps", "test-fixtures"}
+           for part in parts):
+        return True
+    if parts[:3] == ("jobs", "pegasus", "generated"):
+        return True
+    for parent in path.parents:
+        if parent == root:
+            break
+        if ((parent / "CMakeCache.txt").is_file()
+                or (parent / "CMakeFiles").is_dir()):
+            return True
+    return False
+
+
+def _fallback_markdown_documents(root: Path) -> List[Path]:
+    candidates = list(root.glob("*.md"))
+    for relative in SOURCE_MARKDOWN_ROOTS:
+        source_root = root / relative
+        if source_root.is_dir():
+            candidates.extend(source_root.rglob("*.md"))
+    return [
+        path for path in candidates
+        if path.is_file() and not _is_generated_markdown(root, path)
+    ]
+
+
+def _source_markdown_documents(root: Path) -> List[Path]:
+    git_documents = _git_markdown_documents(root)
+    return (
+        git_documents
+        if git_documents is not None
+        else _fallback_markdown_documents(root)
+    )
 
 LIBRARY_STEMS = {
     "cufft": (
@@ -84,9 +159,7 @@ class DocumentationTests(unittest.TestCase):
     def test_all_relative_markdown_links_resolve(self):
         link_re = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
         errors = []
-        for document in sorted(REPOSITORY_ROOT.rglob("*.md")):
-            if ".git" in document.parts:
-                continue
+        for document in sorted(_source_markdown_documents(REPOSITORY_ROOT)):
             text = document.read_text(encoding="utf-8")
             for raw_target in link_re.findall(text):
                 target = raw_target.strip().split("#", 1)[0]
@@ -104,6 +177,29 @@ class DocumentationTests(unittest.TestCase):
                         )
                     )
         self.assertEqual(errors, [])
+
+    def test_non_git_markdown_inventory_excludes_generated_trees(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            included = (root / "README.md", root / "docs" / "guide.md")
+            excluded = (
+                root / "manual-validation" / "run" / "README.md",
+                root / "results" / "README.md",
+                root / "tests" / "test-fixtures" / "source" / "README.md",
+                root / "jobs" / "pegasus" / "generated" / "README.md",
+                root / "docs" / "cmake-build" / "README.md",
+            )
+            for path in included + excluded:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("[missing](does-not-exist.md)\n", encoding="utf-8")
+            (root / "docs" / "cmake-build" / "CMakeCache.txt").write_text(
+                "generated build tree\n", encoding="utf-8"
+            )
+            documents = {
+                path.relative_to(root)
+                for path in _source_markdown_documents(root)
+            }
+        self.assertEqual(documents, {Path("README.md"), Path("docs/guide.md")})
 
     def test_implemented_documents_have_no_stale_preimplementation_language(self):
         values = {

@@ -135,16 +135,16 @@ def normalized_parameters(benchmark: str, parameters: Mapping[str, Any]) -> Dict
             "m": parameters["size"],
             "n": parameters["size"],
             "k": parameters["size"],
-            "alpha": parameters["alpha"],
-            "beta": parameters["beta"],
+            "alpha": float(parameters["alpha"]),
+            "beta": float(parameters["beta"]),
         }
     if benchmark == "cusparse":
         side = math.isqrt(parameters["size"])
         return {
             "nx": side,
             "ny": side,
-            "alpha": parameters["alpha"],
-            "beta": parameters["beta"],
+            "alpha": float(parameters["alpha"]),
+            "beta": float(parameters["beta"]),
         }
     if benchmark == "cusolver":
         return {"n": parameters["size"], "nrhs": parameters["nrhs"]}
@@ -163,7 +163,13 @@ def core_raw_parameters(
         raise RunnerError(
             "raw parameters lack comparison keys: {0}".format(", ".join(missing))
         )
-    return {name: parameters[name] for name in CORE_PARAMETER_KEYS[benchmark]}
+    result = {
+        name: parameters[name] for name in CORE_PARAMETER_KEYS[benchmark]
+    }
+    for name in ("alpha", "beta"):
+        if name in result:
+            result[name] = float(result[name])
+    return result
 
 
 def problem_sizes(benchmark: str, parameters: Mapping[str, Any]) -> Tuple[int, Optional[int]]:

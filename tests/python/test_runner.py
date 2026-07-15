@@ -11,7 +11,7 @@ from unittest import mock
 
 import run_suite
 from gpu_suite.hashing import sha256_bytes, sha256_file
-from gpu_suite.manifest import artifact_id
+from gpu_suite.manifest import artifact_id, merge_entries
 from gpu_suite.ordering import implementation_order
 from gpu_suite.results_io import load_raw_results
 from gpu_suite.runner import (
@@ -23,7 +23,7 @@ from gpu_suite.runner import (
     validate_subprocess_record,
 )
 from gpu_suite.schema import validate_raw_result
-from gpu_suite.strict_json import dump_bytes, dumps, loads
+from gpu_suite.strict_json import dump_bytes, dumps, load, loads
 from gpu_suite.validation import validate_campaign
 
 from support import ROOT, ZERO_HASH, pilot_config
@@ -482,19 +482,59 @@ class RunnerTests(unittest.TestCase):
 
     @unittest.skipUnless(
         os.environ.get("GPU_SUITE_FFTW_FIXTURE_MANIFEST") and
-        os.environ.get("GPU_SUITE_FFTW_FIXTURE_METADATA"),
+        os.environ.get("GPU_SUITE_FFTW_FIXTURE_METADATA") and
+        os.environ.get("GPU_SUITE_CPU_PROVIDER_FIXTURE_MANIFEST") and
+        os.environ.get("GPU_SUITE_CPU_PROVIDER_FIXTURE_METADATA"),
         "synthetic suite manifest is not set",
     )
     def test_real_fixture_runs_through_single_writer_and_validates(self):
-        manifest_path = Path(os.environ["GPU_SUITE_FFTW_FIXTURE_MANIFEST"])
-        metadata_path = Path(os.environ["GPU_SUITE_FFTW_FIXTURE_METADATA"])
+        fftw_manifest_path = Path(
+            os.environ["GPU_SUITE_FFTW_FIXTURE_MANIFEST"]
+        )
+        fftw_metadata_path = Path(
+            os.environ["GPU_SUITE_FFTW_FIXTURE_METADATA"]
+        )
+        cpu_manifest_path = Path(
+            os.environ["GPU_SUITE_CPU_PROVIDER_FIXTURE_MANIFEST"]
+        )
+        cpu_metadata_path = Path(
+            os.environ["GPU_SUITE_CPU_PROVIDER_FIXTURE_METADATA"]
+        )
+        fftw_manifest = load(fftw_manifest_path)
+        cpu_manifest = load(cpu_manifest_path)
+        fftw_libraries = {"cufft", "curand", "thrust"}
+        cpu_provider_libraries = {"cublas", "cusparse", "cusolver"}
+        entries = merge_entries([
+            [
+                entry for entry in fftw_manifest["entries"]
+                if entry["library"] in fftw_libraries
+            ],
+            [
+                entry for entry in cpu_manifest["entries"]
+                if entry["library"] in cpu_provider_libraries
+            ],
+        ])
+        self.assertEqual(
+            {entry["library"] for entry in entries},
+            fftw_libraries | cpu_provider_libraries,
+        )
         config_path = ROOT / "configs" / "pilot.json"
         with tempfile.TemporaryDirectory() as temporary:
+            manifest_path = Path(temporary) / "executables.json"
+            manifest_path.write_bytes(dump_bytes({
+                "build_metadata_sha256s": sorted({
+                    fftw_manifest["build_metadata_sha256"],
+                    cpu_manifest["build_metadata_sha256"],
+                }),
+                "entries": entries,
+                "manifest_schema_version": 1,
+            }))
             output = Path(temporary) / "raw-results.jsonl"
             arguments = [
                 "--config", str(config_path),
                 "--manifest", str(manifest_path),
-                "--build-metadata", str(metadata_path),
+                "--build-metadata", str(fftw_metadata_path),
+                "--build-metadata", str(cpu_metadata_path),
                 "--output", str(output),
                 "--run-id", "fixture-run",
                 "--system-label", "local-fixture",
@@ -506,6 +546,7 @@ class RunnerTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(run_suite.main(arguments), 1)
             records = load_raw_results(output)
+            manifest, _ = load_manifest(manifest_path)
         self.assertEqual(len(records), 38)
         self.assertEqual(len({
             (record["benchmark"], record["implementation"],
@@ -514,7 +555,33 @@ class RunnerTests(unittest.TestCase):
         }), 38)
         self.assertTrue(any(record["status"] == "success" for record in records))
         self.assertTrue(any(record["status"] == "skipped" for record in records))
-        manifest, _ = load_manifest(manifest_path)
+        attempted = {
+            (
+                record["benchmark"], record["implementation"],
+                record["cpu_backend"], record["scope"],
+            )
+            for record in records if record["attempted"]
+        }
+        self.assertEqual(attempted, {
+            ("cufft", "cpu", "cpu-fftw-threaded", "compute"),
+            ("cufft", "cpu", "cpu-fftw-threaded", "end-to-end"),
+            ("cufft", "cpu", "cpu-fftw-serial", "compute"),
+            ("cufft", "cpu", "cpu-fftw-serial", "end-to-end"),
+            ("cublas", "cpu", "cpu-onemkl", "compute"),
+            ("cublas", "cpu", "cpu-onemkl", "end-to-end"),
+            ("cusparse", "cpu", "cpu-onemkl", "compute"),
+            ("cusparse", "cpu", "cpu-onemkl", "end-to-end"),
+            ("cusolver", "cpu", "cpu-onemkl", "compute"),
+            ("cusolver", "cpu", "cpu-onemkl", "end-to-end"),
+            ("curand", "cpu", "cpu-std-random-serial", "compute"),
+            ("curand", "cpu", "cpu-std-random-serial", "end-to-end"),
+            ("thrust", "cpu", "cpu-stl-serial", "compute"),
+            ("thrust", "cpu", "cpu-stl-serial", "end-to-end"),
+        })
+        self.assertTrue(all(
+            record["status"] == "success"
+            for record in records if record["attempted"]
+        ))
         report = validate_campaign(
             records, pilot_config(), sha256_file(config_path), manifest
         )
