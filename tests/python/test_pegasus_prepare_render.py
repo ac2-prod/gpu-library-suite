@@ -74,6 +74,29 @@ class PegasusConfigurationAndRenderTests(unittest.TestCase):
             self.assertEqual(rendered.count("mpirun ${NQSV_MPIOPTS}"), 2)
             self.assertNotIn('mpirun "${NQSV_MPIOPTS}"', rendered)
             self.assertNotIn("--require-runtime-compilers", rendered)
+            self.assertIn('scheduler_job_id="${PBS_JOBID}"', rendered)
+            self.assertIn("scheduler_job_id.py\" token", rendered)
+            self.assertIn(
+                "gpu-library-suite-${scheduler_job_token}-${RUN_ID}",
+                rendered,
+            )
+            self.assertNotIn("gpu-library-suite-${PBS_JOBID}", rendered)
+            self.assertEqual(
+                rendered.count('--scheduler-job-id "${scheduler_job_id}"'),
+                2,
+            )
+
+            token_probe = subprocess.run(
+                [
+                    sys.executable,
+                    str(PEGASUS_DIRECTORY / "scheduler_job_id.py"),
+                    "token", "--scheduler", "NQSV",
+                    "--job-id", "0:866211.nqsv",
+                ],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(token_probe.returncode, 0, token_probe.stderr)
+            self.assertEqual(token_probe.stdout.strip(), "866211")
 
             strict_config = dict(config_document)
             strict_config["require_runtime_compilers"] = True
@@ -184,11 +207,19 @@ class PrepareWaveTests(unittest.TestCase):
             first = prepare_wave(
                 result_root, "campaign-1", 0, 2, mapping, inputs["config"],
                 inputs["manifest"], [inputs["metadata"]], inputs["runtime"],
-                "pegasus-test", "NQSV", "123.test", "master0",
+                "pegasus-test", "NQSV", "0:866211.nqsv", "master0",
                 timestamp="2026-07-14T00:00:00.000Z",
             )
             self.assertEqual(first["observed_node_count"], 2)
             self.assertEqual(first["permutation_assignment_counts"]["0"], 1)
+            self.assertEqual(first["scheduler_job_id"], "0:866211.nqsv")
+            stored_wave = load(
+                result_root / "campaign-1" / "waves" / "0" /
+                "wave-metadata.json"
+            )
+            self.assertEqual(
+                stored_wave["scheduler_job_id"], "0:866211.nqsv"
+            )
             self.assertTrue((result_root / "campaign-1" / "run-metadata.json").is_file())
             second = prepare_wave(
                 result_root, "campaign-1", 1, 2, mapping, inputs["config"],

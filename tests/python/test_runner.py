@@ -209,9 +209,27 @@ class RunnerTests(unittest.TestCase):
         self.assert_subprocess_mismatch(mutate, "parameters")
 
     def test_rejects_scheduler_mismatch(self):
-        self.assert_subprocess_mismatch(
-            lambda record: record.__setitem__("scheduler", "PBS"), "scheduler"
+        item, context, metadata = execution_fixture()
+        context["scheduler"] = "NQSV"
+        context["scheduler_job_id"] = "0:866211.nqsv"
+        record = successful_record(item, context, metadata, 0)
+        record["scheduler"] = "PBS"
+        validate_raw_result(record)
+        with self.assertRaisesRegex(RunnerError, "scheduler"):
+            validate_subprocess_record(
+                record, item, context, ZERO_HASH, ZERO_HASH, None, None
+            )
+
+    def test_synthetic_failure_preserves_raw_nqsv_scheduler_job_id(self):
+        item, context, metadata = execution_fixture()
+        context["scheduler"] = "NQSV"
+        context["scheduler_job_id"] = "0:866211.nqsv"
+        record = synthetic_result(
+            item, context, ZERO_HASH, ZERO_HASH, metadata, 0, True,
+            "subprocess", "fixture failure", 2, None, None,
         )
+        self.assertEqual(record["scheduler"], "NQSV")
+        self.assertEqual(record["scheduler_job_id"], "0:866211.nqsv")
 
     def test_rejects_source_hash_mismatch(self):
         self.assert_subprocess_mismatch(

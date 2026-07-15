@@ -28,6 +28,7 @@ from gpu_suite.runner import (  # noqa: E402
     validate_manifest_artifacts,
     validate_sha256,
 )
+from gpu_suite.scheduler import validate_scheduler_identity  # noqa: E402
 from gpu_suite.strict_json import dump_bytes, load  # noqa: E402
 
 
@@ -203,8 +204,10 @@ def prepare_wave(
         or expected_nodes > 150
     ):
         raise WavePreparationError("expected node count must be positive")
-    if not scheduler or not scheduler_job_id:
-        raise WavePreparationError("scheduler identity is required")
+    try:
+        validate_scheduler_identity(scheduler, scheduler_job_id)
+    except ValueError as error:
+        raise WavePreparationError(str(error)) from error
     if not result_root.is_dir() or result_root.is_symlink():
         raise WavePreparationError("shared result root must be an existing real directory")
     mapping = parse_rank_host_mapping(mapping_path, expected_nodes)

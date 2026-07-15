@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from gpu_suite.results_io import load_raw_results
 from gpu_suite.strict_json import dump_bytes, dumps, load
 
 from pegasus_support import CPU_ENVIRONMENT, write_campaign_inputs
@@ -13,6 +14,8 @@ from support import ROOT, raw_success
 
 
 PEGASUS_DIRECTORY = ROOT / "jobs" / "pegasus"
+SCHEDULER = "NQSV"
+RAW_SCHEDULER_JOB_ID = "0:866211.nqsv"
 sys.path.insert(0, str(PEGASUS_DIRECTORY))
 
 from collect_results import collect_results  # noqa: E402
@@ -28,6 +31,8 @@ def write_wave_metadata(path, mapping):
     path.write_bytes(dump_bytes({
         "rank_host_mapping": mapping,
         "run_id": "run-1",
+        "scheduler": SCHEDULER,
+        "scheduler_job_id": RAW_SCHEDULER_JOB_ID,
         "wave": 0,
         "wave_metadata_schema_version": 1,
     }))
@@ -36,8 +41,21 @@ def write_wave_metadata(path, mapping):
 def write_node(nodes, hostname, rank, classification):
     node = nodes / hostname
     node.mkdir()
-    raw = raw_success(node_index=rank, hostname=hostname)
+    raw = raw_success(
+        node_index=rank, hostname=hostname, scheduler=SCHEDULER,
+        scheduler_job_id=RAW_SCHEDULER_JOB_ID,
+    )
     (node / "raw-results.jsonl").write_text(dumps(raw) + "\n", encoding="utf-8")
+    (node / "node-metadata.json").write_bytes(dump_bytes({
+        "block_id": "run-1|0|{0}".format(hostname),
+        "hostname": hostname,
+        "node_index": rank,
+        "node_metadata_schema_version": 1,
+        "run_id": "run-1",
+        "scheduler": SCHEDULER,
+        "scheduler_job_id": RAW_SCHEDULER_JOB_ID,
+        "wave": 0,
+    }))
     (node / "logs").mkdir()
     (node / "logs" / "runner.log").write_text("preserved\n", encoding="utf-8")
     status = build_node_status(
@@ -46,6 +64,8 @@ def write_node(nodes, hostname, rank, classification):
         0 if classification["benchmark_status"] == "success" else 1,
         "success", "success", "success", "success", classification,
         {"telemetry_status": "success"}, [], None,
+        scheduler=SCHEDULER,
+        scheduler_job_id=RAW_SCHEDULER_JOB_ID,
     )
     (node / "node-status.json").write_bytes(dump_bytes(status))
     return node / "raw-results.jsonl"
@@ -77,6 +97,8 @@ class CollectionTests(unittest.TestCase):
                 inputs["config"], inputs["manifest"], "run-1", 0, 0,
                 "node0", "0" * 64, environment,
                 cuda_runtime_probe=lambda: probe,
+                scheduler=SCHEDULER,
+                scheduler_job_id=RAW_SCHEDULER_JOB_ID,
             )
             self.assertEqual(metadata["cuda_runtime_identity"], probe)
             self.assertEqual(
@@ -84,6 +106,9 @@ class CollectionTests(unittest.TestCase):
                 "575.57.08",
             )
             self.assertIsNone(metadata["gpu_identity"]["diagnostic"])
+            self.assertEqual(
+                metadata["scheduler_job_id"], RAW_SCHEDULER_JOB_ID
+            )
 
     def test_gpu_raw_identity_must_match_its_node_metadata(self):
         record = raw_success(implementation="cuda")
@@ -120,6 +145,31 @@ class CollectionTests(unittest.TestCase):
             metadata["cuda_runtime_identity"]["cuda_runtime_version"] = None
             with self.assertRaisesRegex(NodeToolError, "complete node-matched"):
                 classify_raw(raw, metadata)
+
+    def test_raw_scheduler_identity_must_match_node_metadata(self):
+        metadata = {
+            "cuda_runtime_identity": {
+                "cuda_driver_api_version": None,
+                "cuda_runtime_version": None,
+            },
+            "gpu_identity": {"name": None, "uuid": None},
+            "scheduler": SCHEDULER,
+            "scheduler_job_id": RAW_SCHEDULER_JOB_ID,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            raw_path = Path(temporary) / "raw.jsonl"
+            record = raw_success(
+                scheduler=SCHEDULER,
+                scheduler_job_id=RAW_SCHEDULER_JOB_ID,
+            )
+            raw_path.write_text(dumps(record) + "\n", encoding="utf-8")
+            self.assertEqual(
+                classify_raw(raw_path, metadata)["benchmark_status"],
+                "success",
+            )
+            metadata["scheduler_job_id"] = "0:866212.nqsv"
+            with self.assertRaisesRegex(NodeToolError, "scheduler identity"):
+                classify_raw(raw_path, metadata)
 
     def test_all_healthy_nodes_succeed(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -235,6 +285,52 @@ class CollectionTests(unittest.TestCase):
             self.assertFalse(success)
             self.assertIn("artifact collection failure: node0", document["failures"])
 
+    def test_collector_rejects_node_and_raw_scheduler_identity_mismatch(self):
+        healthy = {
+            "benchmark_status": "success",
+            "verification_status": "success",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            nodes = directory / "nodes"
+            nodes.mkdir()
+            wave_metadata = directory / "wave-metadata.json"
+            write_wave_metadata(
+                wave_metadata, [{"hostname": "node0", "rank": 0}]
+            )
+            node = write_node(nodes, "node0", 0, healthy).parent
+            status_path = node / "node-status.json"
+            status = load(status_path)
+            status["scheduler_job_id"] = "0:866212.nqsv"
+            status_path.write_bytes(dump_bytes(status))
+            document, success = collect_results(wave_metadata, nodes)
+            self.assertFalse(success)
+            self.assertTrue(any(
+                "node status mismatch" in failure
+                for failure in document["failures"]
+            ))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            nodes = directory / "nodes"
+            nodes.mkdir()
+            wave_metadata = directory / "wave-metadata.json"
+            write_wave_metadata(
+                wave_metadata, [{"hostname": "node0", "rank": 0}]
+            )
+            raw_path = write_node(nodes, "node0", 0, healthy)
+            record = raw_success(
+                scheduler=SCHEDULER,
+                scheduler_job_id="0:866212.nqsv",
+            )
+            raw_path.write_text(dumps(record) + "\n", encoding="utf-8")
+            document, success = collect_results(wave_metadata, nodes)
+            self.assertFalse(success)
+            self.assertTrue(any(
+                "raw scheduler identity" in failure
+                for failure in document["failures"]
+            ))
+
 
 class NodeRunnerIsolationTests(unittest.TestCase):
     def test_signal_status_is_recoverable_but_records_failure(self):
@@ -242,10 +338,13 @@ class NodeRunnerIsolationTests(unittest.TestCase):
             "run-1", 0, 0, "node0", 143, 143,
             "success", "success", "success", "warning", None,
             {"telemetry_status": "unavailable"}, ["terminated"], "TERM",
+            scheduler=SCHEDULER,
+            scheduler_job_id=RAW_SCHEDULER_JOB_ID,
         )
         self.assertEqual(status["termination_signal"], "TERM")
         self.assertEqual(status["benchmark_status"], "failure")
         self.assertFalse(status["fatal_infrastructure_failure"])
+        self.assertEqual(status["scheduler_job_id"], RAW_SCHEDULER_JOB_ID)
 
     def test_benchmark_failure_collects_status_and_exits_zero(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -269,11 +368,12 @@ class NodeRunnerIsolationTests(unittest.TestCase):
                 "p.add_argument('--run-id'); p.add_argument('--system-label'); p.add_argument('--wave', type=int)\n"
                 "p.add_argument('--node-index', type=int); p.add_argument('--hostname')\n"
                 "p.add_argument('--runtime-environment-sha256')\n"
+                "p.add_argument('--scheduler'); p.add_argument('--scheduler-job-id')\n"
                 "a,_=p.parse_known_args()\n"
                 "c=load_config(a.config)\n"
                 "x={'config':c,'cpu_threads':c['cpu_threads'],'device':0,'hostname':a.hostname,"
                 "'implementation_order':implementation_order(a.node_index,a.wave),'node_index':a.node_index,"
-                "'run_id':a.run_id,'scheduler':None,'scheduler_job_id':None,'system_label':a.system_label,'wave':a.wave}\n"
+                "'run_id':a.run_id,'scheduler':a.scheduler,'scheduler_job_id':a.scheduler_job_id,'system_label':a.system_label,'wave':a.wave}\n"
                 "item=build_schedule(c,{'entries':[],'manifest_schema_version':1},x)[0]\n"
                 "r=synthetic_result(item,x,'0'*64,a.runtime_environment_sha256,{},0,True,'benchmark','fixture failure',1,None,None)\n"
                 "a.output.write_text(dumps(r)+'\\n',encoding='utf-8')\n"
@@ -294,8 +394,8 @@ class NodeRunnerIsolationTests(unittest.TestCase):
                 "--run-id", "run-node-test",
                 "--wave", "0",
                 "--system-label", "local-node",
-                "--scheduler", "test",
-                "--scheduler-job-id", "fixture.1",
+                "--scheduler", SCHEDULER,
+                "--scheduler-job-id", RAW_SCHEDULER_JOB_ID,
                 "--runtime-environment-sha256", "0" * 64,
                 "--scratch-root", str(scratch),
                 "--run-suite-script", str(fake_runner),
@@ -311,10 +411,24 @@ class NodeRunnerIsolationTests(unittest.TestCase):
             self.assertEqual(status["benchmark_status"], "failure")
             self.assertEqual(status["collection_status"], "success")
             self.assertFalse(status["fatal_infrastructure_failure"])
-            self.assertTrue((nodes / hostname / "raw-results.jsonl").is_file())
+            self.assertEqual(status["scheduler_job_id"], RAW_SCHEDULER_JOB_ID)
+            metadata = load(nodes / hostname / "node-metadata.json")
+            self.assertEqual(
+                metadata["scheduler_job_id"], RAW_SCHEDULER_JOB_ID
+            )
+            raw_path = nodes / hostname / "raw-results.jsonl"
+            self.assertTrue(raw_path.is_file())
+            self.assertEqual(
+                load_raw_results(raw_path)[0]["scheduler_job_id"],
+                RAW_SCHEDULER_JOB_ID,
+            )
+            self.assertTrue(any(
+                path.name.startswith("gpu-library-suite-866211-")
+                for path in scratch.iterdir()
+            ))
 
             second = list(command)
-            second[second.index("fixture.1")] = "fixture.2"
+            second[second.index(RAW_SCHEDULER_JOB_ID)] = "0:866212.nqsv"
             collided = subprocess.run(
                 second, env=environment, text=True, capture_output=True,
                 check=False, timeout=30,

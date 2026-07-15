@@ -18,6 +18,7 @@ def pilot_config():
 def raw_success(
     benchmark="cufft", implementation="cpu", cpu_backend=None, wave=0,
     node_index=0, hostname="node0", elapsed=1.0, trial=0, series_role="primary",
+    scheduler=None, scheduler_job_id=None,
 ):
     config = pilot_config()
     definition = config["benchmarks"][benchmark]
@@ -70,8 +71,8 @@ def raw_success(
         "node_index": node_index,
         "hostname": hostname,
         "block_id": "run-1|{0}|{1}".format(wave, hostname),
-        "scheduler": None,
-        "scheduler_job_id": None,
+        "scheduler": scheduler,
+        "scheduler_job_id": scheduler_job_id,
         "implementation_order": list(implementation_order(node_index, wave)),
         "benchmark": benchmark,
         "implementation": implementation,

@@ -12,6 +12,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY_ROOT / "tools"))
 
 from gpu_suite.hashing import sha256_file  # noqa: E402
+from gpu_suite.results_io import load_raw_results  # noqa: E402
+from gpu_suite.scheduler import validate_scheduler_identity  # noqa: E402
 from gpu_suite.strict_json import dump_bytes, load  # noqa: E402
 
 
@@ -21,6 +23,7 @@ class CollectionError(ValueError):
 
 def _validate_node_status(
     status: Mapping[str, Any], run_id: str, wave: int, rank: int, hostname: str,
+    scheduler: Optional[str], scheduler_job_id: Optional[str],
 ) -> None:
     expected = {
         "node_status_schema_version": 1,
@@ -29,6 +32,8 @@ def _validate_node_status(
         "node_index": rank,
         "hostname": hostname,
         "block_id": "{0}|{1}|{2}".format(run_id, wave, hostname),
+        "scheduler": scheduler,
+        "scheduler_job_id": scheduler_job_id,
     }
     for name, value in expected.items():
         if status.get(name) != value:
@@ -41,6 +46,41 @@ def _validate_node_status(
     ):
         if not isinstance(status.get(name), str):
             raise CollectionError("node status lacks " + name)
+
+
+def _validate_node_metadata(
+    metadata: Mapping[str, Any], run_id: str, wave: int, rank: int,
+    hostname: str, scheduler: Optional[str], scheduler_job_id: Optional[str],
+) -> None:
+    expected = {
+        "node_metadata_schema_version": 1,
+        "run_id": run_id,
+        "wave": wave,
+        "node_index": rank,
+        "hostname": hostname,
+        "block_id": "{0}|{1}|{2}".format(run_id, wave, hostname),
+        "scheduler": scheduler,
+        "scheduler_job_id": scheduler_job_id,
+    }
+    for name, value in expected.items():
+        if metadata.get(name) != value:
+            raise CollectionError(
+                "node metadata mismatch for {0}/{1}".format(hostname, name)
+            )
+
+
+def _validate_raw_scheduler_identity(
+    path: Path, scheduler: Optional[str], scheduler_job_id: Optional[str],
+) -> None:
+    records = load_raw_results(path)
+    if not records:
+        raise CollectionError("raw result file is empty")
+    for record in records:
+        if (
+            record["scheduler"] != scheduler
+            or record["scheduler_job_id"] != scheduler_job_id
+        ):
+            raise CollectionError("raw scheduler identity mismatch")
 
 
 def _artifact_records(nodes_directory: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
@@ -73,6 +113,12 @@ def collect_results(
         raise CollectionError("wave metadata lacks rank-host mapping")
     run_id = wave_metadata["run_id"]
     wave = wave_metadata["wave"]
+    scheduler = wave_metadata.get("scheduler")
+    scheduler_job_id = wave_metadata.get("scheduler_job_id")
+    try:
+        validate_scheduler_identity(scheduler, scheduler_job_id)
+    except ValueError as error:
+        raise CollectionError("invalid wave scheduler identity") from error
     expected_hosts = {item["hostname"] for item in mapping}
     failures = []  # type: List[str]
     node_summaries = []
@@ -89,6 +135,7 @@ def collect_results(
         hostname = item["hostname"]
         node_directory = nodes_directory / hostname
         status_path = node_directory / "node-status.json"
+        metadata_path = node_directory / "node-metadata.json"
         summary = {"hostname": hostname, "node_index": rank, "status": None}
         if not node_directory.is_dir() or node_directory.is_symlink():
             failures.append("missing node directory: " + hostname)
@@ -104,10 +151,33 @@ def collect_results(
             status = load(status_path)
             if not isinstance(status, dict):
                 raise CollectionError("node status is not an object")
-            _validate_node_status(status, run_id, wave, rank, hostname)
+            _validate_node_status(
+                status, run_id, wave, rank, hostname,
+                scheduler, scheduler_job_id,
+            )
         except (OSError, ValueError) as error:
             failures.append("invalid node status {0}: {1}".format(hostname, error))
             summary["status"] = "invalid-status"
+            node_summaries.append(summary)
+            continue
+        if not metadata_path.is_file() or metadata_path.is_symlink():
+            failures.append("missing node metadata: " + hostname)
+            summary["status"] = "missing-metadata"
+            node_summaries.append(summary)
+            continue
+        try:
+            metadata = load(metadata_path)
+            if not isinstance(metadata, dict):
+                raise CollectionError("node metadata is not an object")
+            _validate_node_metadata(
+                metadata, run_id, wave, rank, hostname,
+                scheduler, scheduler_job_id,
+            )
+        except (OSError, ValueError) as error:
+            failures.append(
+                "invalid node metadata {0}: {1}".format(hostname, error)
+            )
+            summary["status"] = "invalid-metadata"
             node_summaries.append(summary)
             continue
         summary.update({
@@ -136,6 +206,17 @@ def collect_results(
         ]
         if len(raw_files) != 1:
             failures.append("node must contain exactly one raw result file: " + hostname)
+        else:
+            try:
+                _validate_raw_scheduler_identity(
+                    raw_files[0], scheduler, scheduler_job_id
+                )
+            except (OSError, ValueError) as error:
+                failures.append(
+                    "invalid raw scheduler identity {0}: {1}".format(
+                        hostname, error
+                    )
+                )
         node_summaries.append(summary)
     artifacts, artifact_failures = _artifact_records(nodes_directory)
     failures.extend(artifact_failures)

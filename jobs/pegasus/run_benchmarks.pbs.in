@@ -41,7 +41,13 @@ if [[ "$(pwd -P)" != "$(cd "${REPOSITORY_ROOT}" && pwd -P)" ]]; then
   cd "${REPOSITORY_ROOT}"
 fi
 
-master_scratch="${LOCAL_SCRATCH_ROOT}/gpu-library-suite-${PBS_JOBID}-${RUN_ID}-${WAVE}-master"
+scheduler="NQSV"
+scheduler_job_id="${PBS_JOBID}"
+scheduler_job_token="$(
+  python3 "${REPOSITORY_ROOT}/jobs/pegasus/scheduler_job_id.py" token \
+    --scheduler "${scheduler}" --job-id "${scheduler_job_id}"
+)"
+master_scratch="${LOCAL_SCRATCH_ROOT}/gpu-library-suite-${scheduler_job_token}-${RUN_ID}-${WAVE}-master"
 mkdir "${master_scratch}"
 module list >"${master_scratch}/module-list.txt" 2>&1
 cp "${PBS_NODEFILE}" "${master_scratch}/pbs-nodefile.txt"
@@ -72,8 +78,8 @@ python3 "${REPOSITORY_ROOT}/jobs/pegasus/prepare_wave.py" \
   --config "${SOURCE_CONFIG}" --manifest "${SOURCE_MANIFEST}" \
   @BUILD_METADATA_ARGUMENTS@ \
   --runtime-environment "${master_scratch}/runtime-environment.json" \
-  --system-label "${SYSTEM_LABEL}" --scheduler NQSV \
-  --scheduler-job-id "${PBS_JOBID}" --submission-host "$(hostname)" @DIRTY_SOURCE_ARGUMENTS@
+  --system-label "${SYSTEM_LABEL}" --scheduler "${scheduler}" \
+  --scheduler-job-id "${scheduler_job_id}" --submission-host "$(hostname)" @DIRTY_SOURCE_ARGUMENTS@
 
 RUN_ROOT="${RESULT_ROOT}/${RUN_ID}"
 WAVE_ROOT="${RUN_ROOT}/waves/${WAVE}"
@@ -92,8 +98,8 @@ mpirun ${NQSV_MPIOPTS} "${MPI_OPTIONS[@]}" \
   --manifest "${RUN_ROOT}/executables-manifest.json" \
   @BUILD_METADATA_ARGUMENTS@ \
   --run-id "${RUN_ID}" --wave "${WAVE}" \
-  --system-label "${SYSTEM_LABEL}" --scheduler NQSV \
-  --scheduler-job-id "${PBS_JOBID}" \
+  --system-label "${SYSTEM_LABEL}" --scheduler "${scheduler}" \
+  --scheduler-job-id "${scheduler_job_id}" \
   --runtime-environment-sha256 "${runtime_environment_sha256}" \
   --scratch-root "${LOCAL_SCRATCH_ROOT}" @DIRTY_SOURCE_ARGUMENTS@
 measurement_exit_code=$?

@@ -25,6 +25,7 @@ from gpu_suite.runner import (  # noqa: E402
     validate_execution_context,
     validate_sha256,
 )
+from gpu_suite.scheduler import validate_scheduler_identity  # noqa: E402
 from gpu_suite.strict_json import dump_bytes, load  # noqa: E402
 from cuda_runtime_probe import (  # noqa: E402
     CUDA_RUNTIME_PROBE_KEYS,
@@ -58,9 +59,12 @@ def build_node_metadata(
     node_index: int, hostname: str, runtime_environment_sha256: str,
     environment: Mapping[str, str] = os.environ,
     cuda_runtime_probe: CudaRuntimeProbe = probe_node_cuda_runtime,
+    scheduler: Optional[str] = None,
+    scheduler_job_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     validate_execution_context(run_id, "node-metadata", hostname, wave, node_index, 0)
     validate_sha256(runtime_environment_sha256, "runtime environment SHA-256")
+    validate_scheduler_identity(scheduler, scheduler_job_id)
     config = load_config(config_path)
     manifest, manifest_sha256 = load_manifest(manifest_path)
     order_index = size_order_index(node_index)
@@ -142,6 +146,8 @@ def build_node_metadata(
         "requested_cpu_threads": config["cpu_threads"],
         "run_id": run_id,
         "runtime_environment_sha256": runtime_environment_sha256,
+        "scheduler": scheduler,
+        "scheduler_job_id": scheduler_job_id,
         "series": series,
         "size_order": size_order,
         "size_order_index": order_index,
@@ -154,6 +160,11 @@ def classify_raw(
 ) -> Dict[str, Any]:
     records = load_raw_results(path)
     if node_metadata is not None:
+        expected_scheduler = node_metadata.get("scheduler")
+        expected_scheduler_job_id = node_metadata.get("scheduler_job_id")
+        validate_scheduler_identity(
+            expected_scheduler, expected_scheduler_job_id
+        )
         identity = node_metadata.get("gpu_identity")
         if not isinstance(identity, Mapping):
             raise NodeToolError("node metadata lacks gpu_identity")
@@ -165,6 +176,13 @@ def classify_raw(
         expected_driver = runtime_identity.get("cuda_driver_api_version")
         expected_runtime = runtime_identity.get("cuda_runtime_version")
         for record in records:
+            if (
+                record["scheduler"] != expected_scheduler
+                or record["scheduler_job_id"] != expected_scheduler_job_id
+            ):
+                raise NodeToolError(
+                    "raw scheduler identity differs from node metadata"
+                )
             if record["implementation"] not in {"cuda", "openacc"}:
                 continue
             comparisons = (
@@ -223,8 +241,11 @@ def build_node_status(
     classification: Optional[Mapping[str, Any]],
     telemetry: Optional[Mapping[str, Any]], messages: Sequence[str],
     termination_signal: Optional[str],
+    scheduler: Optional[str] = None,
+    scheduler_job_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     validate_execution_context(run_id, "node-status", hostname, wave, node_index, 0)
+    validate_scheduler_identity(scheduler, scheduler_job_id)
     benchmark_status = (
         classification.get("benchmark_status", "failure")
         if classification is not None else "failure"
@@ -263,6 +284,8 @@ def build_node_status(
         "raw_result_collection_status": raw_collection_status,
         "run_id": run_id,
         "runner_exit_code": runner_exit_code,
+        "scheduler": scheduler,
+        "scheduler_job_id": scheduler_job_id,
         "status": overall,
         "telemetry_status": telemetry_status,
         "termination_signal": termination_signal,
@@ -282,6 +305,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     metadata.add_argument("--wave", required=True, type=int)
     metadata.add_argument("--node-index", required=True, type=int)
     metadata.add_argument("--hostname", required=True)
+    metadata.add_argument("--scheduler")
+    metadata.add_argument("--scheduler-job-id")
     metadata.add_argument("--runtime-environment-sha256", required=True)
     metadata.add_argument("--output", required=True, type=Path)
 
@@ -300,6 +325,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     status.add_argument("--wave", required=True, type=int)
     status.add_argument("--node-index", required=True, type=int)
     status.add_argument("--hostname", required=True)
+    status.add_argument("--scheduler")
+    status.add_argument("--scheduler-job-id")
     status.add_argument("--runner-exit-code", required=True, type=int)
     status.add_argument("--process-exit-code", required=True, type=int)
     status.add_argument("--collection-status", required=True,
@@ -322,6 +349,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 arguments.config, arguments.manifest, arguments.run_id,
                 arguments.wave, arguments.node_index, arguments.hostname,
                 arguments.runtime_environment_sha256,
+                scheduler=arguments.scheduler,
+                scheduler_job_id=arguments.scheduler_job_id,
             )
             _exclusive_write(arguments.output, document)
         elif arguments.command == "classify":
@@ -357,6 +386,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 arguments.log_collection_status, arguments.tool_status,
                 classification, telemetry, arguments.message,
                 arguments.termination_signal,
+                scheduler=arguments.scheduler,
+                scheduler_job_id=arguments.scheduler_job_id,
             )
             _exclusive_write(arguments.output, document)
     except (OSError, ValueError) as error:

@@ -75,6 +75,31 @@ def success_record(trial=0):
 
 
 class SchemaTests(unittest.TestCase):
+    def test_scheduler_identity_preserves_raw_nqsv_value_or_local_null(self):
+        local = success_record()
+        self.assertIsNone(validate_raw_result(local)["scheduler_job_id"])
+
+        scheduled = success_record()
+        scheduled["scheduler"] = "NQSV"
+        scheduled["scheduler_job_id"] = "0:866211.nqsv"
+        self.assertEqual(
+            validate_raw_result(scheduled)["scheduler_job_id"],
+            "0:866211.nqsv",
+        )
+
+        for invalid in ("", "unexpected/value", "866211.nqsv\n", "bad\x7f"):
+            record = success_record()
+            record["scheduler"] = "NQSV"
+            record["scheduler_job_id"] = invalid
+            with self.subTest(invalid=repr(invalid)):
+                with self.assertRaises(SchemaError):
+                    validate_raw_result(record)
+
+        incomplete = success_record()
+        incomplete["scheduler"] = "NQSV"
+        with self.assertRaises(SchemaError):
+            validate_raw_result(incomplete)
+
     def test_success_and_failure_and_skipped(self):
         record = success_record()
         self.assertEqual(validate_raw_result(record)["status"], "success")

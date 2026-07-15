@@ -20,6 +20,7 @@ from gpu_suite.runner import (
     validate_manifest_artifacts,
     validate_sha256,
 )
+from gpu_suite.scheduler import validate_scheduler_identity
 from gpu_suite.strict_json import dumps
 
 
@@ -57,6 +58,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             validate_sha256(
                 arguments.source_snapshot_sha256, "source snapshot SHA-256"
             )
+        validate_scheduler_identity(
+            arguments.scheduler, arguments.scheduler_job_id
+        )
         config = load_config(arguments.config)
         manifest, manifest_sha256 = load_manifest(arguments.manifest)
         metadata = load_build_metadata(arguments.build_metadata)

@@ -109,6 +109,36 @@ class CufftFixtureRuntimeTests(unittest.TestCase):
         os.environ.get("GPU_SUITE_FFTW_FIXTURE_BENCH"),
         "synthetic FFTW benchmark path is not set",
     )
+    def test_nqsv_scheduler_job_id_is_preserved(self):
+        command = [
+            os.environ["GPU_SUITE_FFTW_FIXTURE_BENCH"],
+            "--size", "8", "--batch", "1", "--warmup", "0",
+            "--repeat", "1", "--trials", "1", "--scope", "compute",
+            "--verify", "true", "--output", "-", "--format", "jsonl",
+            "--cpu-backend", "cpu-fftw-threaded", "--cpu-threads", "2",
+            "--cpu-threads-effective", "2", "--cpu-backend-role", "production",
+            "--series-role", "primary", "--cpu-parallelism", "threaded",
+        ]
+        environment = os.environ.copy()
+        environment["GPU_SUITE_SCHEDULER"] = "NQSV"
+        environment["GPU_SUITE_SCHEDULER_JOB_ID"] = "0:866211.nqsv"
+        completed = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            env=environment,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        record = loads(completed.stdout.strip())
+        validate_raw_result(record)
+        self.assertEqual(record["scheduler"], "NQSV")
+        self.assertEqual(record["scheduler_job_id"], "0:866211.nqsv")
+
+    @unittest.skipUnless(
+        os.environ.get("GPU_SUITE_FFTW_FIXTURE_BENCH"),
+        "synthetic FFTW benchmark path is not set",
+    )
     def test_nonfinite_fft_output_is_a_verification_failure(self):
         base_command = [
             os.environ["GPU_SUITE_FFTW_FIXTURE_BENCH"],

@@ -4,7 +4,11 @@ from pathlib import Path
 import csv
 import io
 
-from gpu_suite.results_io import ExclusiveRawWriter, parse_stdout_prefix
+from gpu_suite.results_io import (
+    ExclusiveRawWriter,
+    load_raw_results,
+    parse_stdout_prefix,
+)
 from gpu_suite.schema import RAW_FIELDS
 from gpu_suite.strict_json import dumps
 
@@ -12,6 +16,23 @@ from support import raw_success
 
 
 class ResultIoTests(unittest.TestCase):
+    def test_jsonl_and_csv_preserve_raw_nqsv_scheduler_job_id(self):
+        for output_format, suffix in (("jsonl", ".jsonl"), ("csv", ".csv")):
+            with self.subTest(output_format=output_format):
+                with tempfile.TemporaryDirectory() as temporary:
+                    path = Path(temporary) / ("raw-results" + suffix)
+                    record = raw_success(
+                        scheduler="NQSV",
+                        scheduler_job_id="0:866211.nqsv",
+                    )
+                    with ExclusiveRawWriter(path, output_format) as writer:
+                        writer.write(record)
+                    loaded = load_raw_results(path)
+                    self.assertEqual(len(loaded), 1)
+                    self.assertEqual(
+                        loaded[0]["scheduler_job_id"], "0:866211.nqsv"
+                    )
+
     def test_csv_has_one_header_and_existing_output_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "raw.csv"

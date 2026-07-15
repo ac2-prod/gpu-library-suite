@@ -51,8 +51,10 @@ if [[ -z "${OMPI_COMM_WORLD_RANK:-}" || ! "${OMPI_COMM_WORLD_RANK}" =~ ^[0-9]+$ 
   echo "OMPI_COMM_WORLD_RANK is required" >&2
   exit 2
 fi
-if [[ ! "${scheduler_job_id}" =~ ^[A-Za-z0-9._-]+$ ]]; then
-  echo "unsafe scheduler job ID" >&2
+if ! scheduler_job_token="$(
+  python3 "${repository_root}/jobs/pegasus/scheduler_job_id.py" token \
+    --scheduler "${scheduler}" --job-id "${scheduler_job_id}"
+)"; then
   exit 2
 fi
 
@@ -63,7 +65,7 @@ telemetry_tool="${repository_root}/jobs/pegasus/telemetry.py"
 if [[ -z "${run_suite_script}" ]]; then
   run_suite_script="${repository_root}/tools/run_suite.py"
 fi
-scratch="${scratch_root}/gpu-library-suite-${scheduler_job_id}-${run_id}-${wave}-${hostname_value}"
+scratch="${scratch_root}/gpu-library-suite-${scheduler_job_token}-${run_id}-${wave}-${hostname_value}"
 node_directory="${run_root}/waves/${wave}/nodes/${hostname_value}"
 
 mkdir "${scratch}" || exit 90
@@ -177,6 +179,7 @@ collect_node() {
   status_arguments=(
     status --run-id "${run_id}" --wave "${wave}"
     --node-index "${node_index}" --hostname "${hostname_value}"
+    --scheduler "${scheduler}" --scheduler-job-id "${scheduler_job_id}"
     --runner-exit-code "${runner_exit_code}"
     --process-exit-code "${process_exit_code}"
     --collection-status "${collection_status}"
@@ -236,6 +239,7 @@ fi
 if ! python3 "${node_tools}" metadata --config "${config}" --manifest "${manifest}" \
   --run-id "${run_id}" --wave "${wave}" --node-index "${node_index}" \
   --hostname "${hostname_value}" \
+  --scheduler "${scheduler}" --scheduler-job-id "${scheduler_job_id}" \
   --runtime-environment-sha256 "${runtime_environment_sha256}" \
   --output "${scratch}/node-metadata.json" \
   >"${scratch}/logs/node-metadata.stdout" \

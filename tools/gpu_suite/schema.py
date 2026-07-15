@@ -4,6 +4,8 @@ import math
 import re
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
+from .scheduler import validate_scheduler_identity
+
 
 class SchemaError(ValueError):
     pass
@@ -190,9 +192,12 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
     _require(record["repeat"] > 0, "repeat must be positive")
     _require(record["block_id"] == "{0}|{1}|{2}".format(
         run_id, record["wave"], record["hostname"]), "invalid block_id")
-    _require(_optional_string(record["scheduler"]) and
-             _optional_string(record["scheduler_job_id"]),
-             "invalid scheduler identity")
+    try:
+        validate_scheduler_identity(
+            record["scheduler"], record["scheduler_job_id"]
+        )
+    except ValueError as error:
+        raise SchemaError("invalid scheduler identity: {0}".format(error)) from error
     order = record["implementation_order"]
     _require(isinstance(order, list) and tuple(order) in ORDERS,
              "invalid implementation_order")
