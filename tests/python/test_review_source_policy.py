@@ -433,6 +433,73 @@ class ReviewSourcePolicyTests(unittest.TestCase):
                 )
         self.assertGreaterEqual(occurrences, 1)
 
+    def test_validation_tests_are_profile_and_compiler_scoped(self):
+        tests = read("tests/CMakeLists.txt")
+
+        cpu_start = tests.index(
+            "if(GPU_SUITE_BUILD_CPU)\n"
+            "set(_gpu_suite_clean_provider_environment"
+        )
+        cpu_end = tests.index(
+            "\nendif()\n\n"
+            "if(CMAKE_CXX_COMPILER_ID MATCHES",
+            cpu_start,
+        )
+        cpu_block = tests[cpu_start:cpu_end]
+        for name in (
+            "cmake_fftw_positive_configure",
+            "cmake_cpu_provider_positive_configure",
+            "cmake_cpu_provider_switch_build",
+            "rand_cpu_fixture_compute",
+            "reduce_cpu_fixture_end_to_end",
+        ):
+            with self.subTest(cpu_test=name):
+                self.assertIn("NAME {0}".format(name), cpu_block)
+
+        syntax_match = re.search(
+            r'if\(CMAKE_CXX_COMPILER_ID MATCHES "(?P<family>[^"]+)"\)\n'
+            r'(?P<body>[\s\S]+?)\nendif\(\)\n\n'
+            r'foreach\(_cuda_metadata_library',
+            tests[cpu_end:],
+        )
+        self.assertIsNotNone(syntax_match)
+        compiler_family = syntax_match.group("family")
+        syntax_body = syntax_match.group("body")
+        self.assertEqual(compiler_family, "^(GNU|Clang|AppleClang)$")
+        self.assertIn("-fsyntax-only", syntax_body)
+        self.assertIn("-Wno-unknown-pragmas", syntax_body)
+        self.assertIsNotNone(re.fullmatch(compiler_family, "GNU"))
+        self.assertIsNotNone(re.fullmatch(compiler_family, "Clang"))
+        self.assertIsNotNone(re.fullmatch(compiler_family, "AppleClang"))
+        self.assertIsNone(re.fullmatch(compiler_family, "NVHPC"))
+        self.assertNotIn("-noswitcherror", tests)
+
+        self.assertIn("FIXTURES_SETUP gpu_suite_fftw_built", tests)
+        self.assertIn("FIXTURES_REQUIRED gpu_suite_fftw_built", tests)
+        self.assertIn(
+            "FIXTURES_SETUP gpu_suite_cpu_provider_built", tests
+        )
+        self.assertIn(
+            "FIXTURES_REQUIRED\n"
+            "        \"gpu_suite_fftw_built;gpu_suite_cpu_provider_built\"",
+            tests,
+        )
+        self.assertIn("NAME python_cpu_fixture_unittest", tests)
+        self.assertIn("--profile independent", tests)
+        self.assertIn("--profile cpu-fixture", tests)
+
+        runner = read("tests/python/run_profiled_unittests.py")
+        for module in (
+            "test_cufft_fixture_runtime.",
+            "test_overflow_runtime.",
+            "test_phase3_fixture_runtime.",
+        ):
+            self.assertIn(module, runner)
+        self.assertIn(
+            "test_real_fixture_runs_through_single_writer_and_validates",
+            runner,
+        )
+
     def test_pegasus_mpi_and_optional_compiler_policy(self):
         template = read("jobs/pegasus/run_benchmarks.pbs.in")
         invocation = 'mpirun ${NQSV_MPIOPTS} "${MPI_OPTIONS[@]}"'

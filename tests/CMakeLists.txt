@@ -13,6 +13,7 @@ function(gpu_suite_add_c_test name source)
       -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
   endif()
   add_test(NAME ${name} COMMAND ${name})
+  set_tests_properties(${name} PROPERTIES LABELS profile-independent)
 endfunction()
 
 gpu_suite_add_c_test(test_checked test_checked.c)
@@ -32,6 +33,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
     -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
 endif()
 add_test(NAME test_cpp_compat COMMAND test_cpp_compat)
+set_tests_properties(test_cpp_compat PROPERTIES LABELS profile-independent)
 
 add_executable(test_verification_nonfinite c/test_verification_nonfinite.cpp)
 target_link_libraries(test_verification_nonfinite PRIVATE gpu_suite::common)
@@ -50,9 +52,41 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
     -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
 endif()
 add_test(NAME test_verification_nonfinite COMMAND test_verification_nonfinite)
+set_tests_properties(test_verification_nonfinite PROPERTIES
+  LABELS profile-independent)
 
 set(_gpu_suite_fixture_root "${CMAKE_BINARY_DIR}/test-fixtures")
 set(_gpu_suite_fixture_pycache "${_gpu_suite_fixture_root}/pycache")
+set(_gpu_suite_cpu_only_test_names
+    cmake_compile_link_probe
+    cmake_fftw_positive_configure
+    cmake_fftw_positive_build
+    fftw_fixture_partial_manifest
+    fftw_fixture_serial_compute
+    fftw_fixture_threaded_end_to_end
+    cmake_fftw_header_only_negative
+    cmake_fftw_header_only_has_no_target
+    cmake_cpu_provider_positive_configure
+    cmake_cpu_provider_positive_build
+    cpu_provider_fixture_partial_manifest
+    cblas_fixture_compute
+    mkl_sparse_fixture_compute
+    lapacke_fixture_end_to_end
+    cmake_cpu_provider_symbol_negative
+    cpu_provider_negative_no_blas_cpu
+    cpu_provider_negative_no_sparse_cpu
+    cpu_provider_negative_no_solver_cpu
+    cmake_cpu_provider_mixed_rejected
+    cmake_cpu_provider_mixed_no_blas_target
+    cmake_cpu_provider_mixed_no_solver_target
+    cmake_cpu_provider_switch_onemkl
+    cmake_cpu_provider_switch_openblas
+    cmake_cpu_provider_switch_build
+    rand_cpu_fixture_compute
+    reduce_cpu_fixture_end_to_end
+    cmake_dependency_root_discovery
+    python_cpu_fixture_unittest)
+if(GPU_SUITE_BUILD_CPU)
 set(_gpu_suite_clean_provider_environment
     "${CMAKE_COMMAND}" -E env
     --unset=FFTW_ROOT
@@ -148,12 +182,16 @@ add_test(
           "-DFFTW3f_INCLUDE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/fftw/include"
           "-DFFTW3f_LIBRARY=$<TARGET_FILE:fake_fftw3f>"
           "-DFFTW3f_THREADS_LIBRARY=$<TARGET_FILE:fake_fftw3f_threads>")
+set_tests_properties(cmake_fftw_positive_configure PROPERTIES
+  FIXTURES_SETUP gpu_suite_fftw_configured)
 add_test(
   NAME cmake_fftw_positive_build
   COMMAND "${CMAKE_COMMAND}" --build "${_fftw_positive_build}"
           --target fft_cpu fft_cpu_bench gpu_suite_partial_manifest --parallel 2)
 set_tests_properties(cmake_fftw_positive_build PROPERTIES
-  DEPENDS cmake_fftw_positive_configure)
+  DEPENDS cmake_fftw_positive_configure
+  FIXTURES_REQUIRED gpu_suite_fftw_configured
+  FIXTURES_SETUP gpu_suite_fftw_built)
 if(Python3_Interpreter_FOUND)
   add_test(
     NAME fftw_fixture_partial_manifest
@@ -164,6 +202,7 @@ if(Python3_Interpreter_FOUND)
             reduce_cpu reduce_cpu_bench)
   set_tests_properties(fftw_fixture_partial_manifest PROPERTIES
     DEPENDS cmake_fftw_positive_build
+    FIXTURES_REQUIRED gpu_suite_fftw_built
     ENVIRONMENT "PYTHONPATH=${CMAKE_SOURCE_DIR}/tools;PYTHONPYCACHEPREFIX=${_gpu_suite_fixture_pycache}")
 endif()
 add_test(
@@ -175,7 +214,8 @@ add_test(
           --cpu-threads-effective 1 --cpu-backend-role reference
           --series-role auxiliary --cpu-parallelism serial)
 set_tests_properties(fftw_fixture_serial_compute PROPERTIES
-  DEPENDS cmake_fftw_positive_build)
+  DEPENDS cmake_fftw_positive_build
+  FIXTURES_REQUIRED gpu_suite_fftw_built)
 add_test(
   NAME fftw_fixture_threaded_end_to_end
   COMMAND "${_fftw_positive_build}/nvidia/c-cpp/cufft/fft_cpu_bench"
@@ -185,7 +225,8 @@ add_test(
           --cpu-threads-effective 4 --cpu-backend-role production
           --series-role primary --cpu-parallelism threaded)
 set_tests_properties(fftw_fixture_threaded_end_to_end PROPERTIES
-  DEPENDS cmake_fftw_positive_build)
+  DEPENDS cmake_fftw_positive_build
+  FIXTURES_REQUIRED gpu_suite_fftw_built)
 
 set(_fftw_negative_build
     "${_gpu_suite_fixture_root}/fftw-negative")
@@ -205,12 +246,15 @@ add_test(
           "-DFFTW3f_INCLUDE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/fftw/include"
           "-DFFTW3f_LIBRARY=$<TARGET_FILE:probe_fixture_symbol>"
           "-DFFTW3f_THREADS_LIBRARY=$<TARGET_FILE:fake_fftw3f_threads>")
+set_tests_properties(cmake_fftw_header_only_negative PROPERTIES
+  FIXTURES_SETUP gpu_suite_fftw_negative_configured)
 add_test(
   NAME cmake_fftw_header_only_has_no_target
   COMMAND "${CMAKE_COMMAND}" --build "${_fftw_negative_build}"
           --target fft_cpu)
 set_tests_properties(cmake_fftw_header_only_has_no_target PROPERTIES
   DEPENDS cmake_fftw_header_only_negative
+  FIXTURES_REQUIRED gpu_suite_fftw_negative_configured
   WILL_FAIL TRUE)
 
 set(_cpu_provider_positive_build
@@ -237,6 +281,8 @@ add_test(
           "-DGPU_SUITE_ONEMKL_LAPACKE_LIBRARY=$<TARGET_FILE:fake_cpu_providers>"
           "-DGPU_SUITE_MKL_SPARSE_INCLUDE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cpu_libs/include"
           "-DGPU_SUITE_MKL_SPARSE_LIBRARY=$<TARGET_FILE:fake_cpu_providers>")
+set_tests_properties(cmake_cpu_provider_positive_configure PROPERTIES
+  FIXTURES_SETUP gpu_suite_cpu_provider_configured)
 add_test(
   NAME cmake_cpu_provider_positive_build
   COMMAND "${CMAKE_COMMAND}" --build "${_cpu_provider_positive_build}"
@@ -244,7 +290,9 @@ add_test(
                    solver_cpu solver_cpu_bench gpu_suite_partial_manifest
           --parallel 2)
 set_tests_properties(cmake_cpu_provider_positive_build PROPERTIES
-  DEPENDS cmake_cpu_provider_positive_configure)
+  DEPENDS cmake_cpu_provider_positive_configure
+  FIXTURES_REQUIRED gpu_suite_cpu_provider_configured
+  FIXTURES_SETUP gpu_suite_cpu_provider_built)
 if(Python3_Interpreter_FOUND)
   add_test(
     NAME cpu_provider_fixture_partial_manifest
@@ -256,6 +304,7 @@ if(Python3_Interpreter_FOUND)
             reduce_cpu reduce_cpu_bench)
   set_tests_properties(cpu_provider_fixture_partial_manifest PROPERTIES
     DEPENDS cmake_cpu_provider_positive_build
+    FIXTURES_REQUIRED gpu_suite_cpu_provider_built
     ENVIRONMENT
       "PYTHONPATH=${CMAKE_SOURCE_DIR}/tools;PYTHONPYCACHEPREFIX=${_gpu_suite_fixture_pycache}")
 endif()
@@ -268,7 +317,8 @@ add_test(
           --cpu-threads 48 --cpu-backend-role production
           --series-role primary --cpu-parallelism threaded)
 set_tests_properties(cblas_fixture_compute PROPERTIES
-  DEPENDS cmake_cpu_provider_positive_build)
+  DEPENDS cmake_cpu_provider_positive_build
+  FIXTURES_REQUIRED gpu_suite_cpu_provider_built)
 add_test(
   NAME mkl_sparse_fixture_compute
   COMMAND "${_cpu_provider_positive_build}/nvidia/c-cpp/cusparse/sparse_cpu_bench"
@@ -277,7 +327,8 @@ add_test(
           --cpu-threads 48 --cpu-backend-role production
           --series-role primary --cpu-parallelism threaded)
 set_tests_properties(mkl_sparse_fixture_compute PROPERTIES
-  DEPENDS cmake_cpu_provider_positive_build)
+  DEPENDS cmake_cpu_provider_positive_build
+  FIXTURES_REQUIRED gpu_suite_cpu_provider_built)
 add_test(
   NAME lapacke_fixture_end_to_end
   COMMAND "${_cpu_provider_positive_build}/nvidia/c-cpp/cusolver/solver_cpu_bench"
@@ -287,7 +338,8 @@ add_test(
           --cpu-backend-role production --series-role primary
           --cpu-parallelism threaded)
 set_tests_properties(lapacke_fixture_end_to_end PROPERTIES
-  DEPENDS cmake_cpu_provider_positive_build)
+  DEPENDS cmake_cpu_provider_positive_build
+  FIXTURES_REQUIRED gpu_suite_cpu_provider_built)
 
 set(_cpu_provider_negative_build
     "${_gpu_suite_fixture_root}/cpu-provider-negative")
@@ -313,6 +365,8 @@ add_test(
           "-DGPU_SUITE_ONEMKL_LAPACKE_LIBRARY=$<TARGET_FILE:probe_fixture_symbol>"
           "-DGPU_SUITE_MKL_SPARSE_INCLUDE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cpu_libs/include"
           "-DGPU_SUITE_MKL_SPARSE_LIBRARY=$<TARGET_FILE:probe_fixture_symbol>")
+set_tests_properties(cmake_cpu_provider_symbol_negative PROPERTIES
+  FIXTURES_SETUP gpu_suite_cpu_provider_negative_configured)
 foreach(_missing_cpu_target blas_cpu sparse_cpu solver_cpu)
   add_test(
     NAME "cpu_provider_negative_no_${_missing_cpu_target}"
@@ -321,6 +375,7 @@ foreach(_missing_cpu_target blas_cpu sparse_cpu solver_cpu)
   set_tests_properties("cpu_provider_negative_no_${_missing_cpu_target}"
     PROPERTIES
       DEPENDS cmake_cpu_provider_symbol_negative
+      FIXTURES_REQUIRED gpu_suite_cpu_provider_negative_configured
       WILL_FAIL TRUE)
 endforeach()
 
@@ -346,12 +401,15 @@ add_test(
           "-DGPU_SUITE_ONEMKL_CBLAS_LIBRARY=$<TARGET_FILE:fake_openblas>"
           "-DGPU_SUITE_ONEMKL_LAPACKE_INCLUDE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cpu_libs/include"
           "-DGPU_SUITE_ONEMKL_LAPACKE_LIBRARY=$<TARGET_FILE:fake_openblas>")
+set_tests_properties(cmake_cpu_provider_mixed_rejected PROPERTIES
+  FIXTURES_SETUP gpu_suite_cpu_provider_mixed_configured)
 add_test(
   NAME cmake_cpu_provider_mixed_no_blas_target
   COMMAND "${CMAKE_COMMAND}" --build "${_cpu_provider_mixed_build}"
           --target blas_cpu)
 set_tests_properties(cmake_cpu_provider_mixed_no_blas_target PROPERTIES
   DEPENDS cmake_cpu_provider_mixed_rejected
+  FIXTURES_REQUIRED gpu_suite_cpu_provider_mixed_configured
   WILL_FAIL TRUE)
 add_test(
   NAME cmake_cpu_provider_mixed_no_solver_target
@@ -359,6 +417,7 @@ add_test(
           --target solver_cpu)
 set_tests_properties(cmake_cpu_provider_mixed_no_solver_target PROPERTIES
   DEPENDS cmake_cpu_provider_mixed_rejected
+  FIXTURES_REQUIRED gpu_suite_cpu_provider_mixed_configured
   WILL_FAIL TRUE)
 
 set(_cpu_provider_switch_build
@@ -383,6 +442,8 @@ add_test(
           "-DGPU_SUITE_ONEMKL_CBLAS_LIBRARY=$<TARGET_FILE:fake_cpu_providers>"
           "-DGPU_SUITE_ONEMKL_LAPACKE_INCLUDE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cpu_libs/include"
           "-DGPU_SUITE_ONEMKL_LAPACKE_LIBRARY=$<TARGET_FILE:fake_cpu_providers>")
+set_tests_properties(cmake_cpu_provider_switch_onemkl PROPERTIES
+  FIXTURES_SETUP gpu_suite_cpu_provider_switch_onemkl)
 add_test(
   NAME cmake_cpu_provider_switch_openblas
   COMMAND ${_gpu_suite_clean_provider_environment}
@@ -404,13 +465,16 @@ add_test(
           "-DGPU_SUITE_OPENBLAS_LAPACKE_INCLUDE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cpu_libs/include"
           "-DGPU_SUITE_OPENBLAS_LAPACKE_LIBRARY=$<TARGET_FILE:fake_openblas>")
 set_tests_properties(cmake_cpu_provider_switch_openblas PROPERTIES
-  DEPENDS cmake_cpu_provider_switch_onemkl)
+  DEPENDS cmake_cpu_provider_switch_onemkl
+  FIXTURES_REQUIRED gpu_suite_cpu_provider_switch_onemkl
+  FIXTURES_SETUP gpu_suite_cpu_provider_switch_openblas)
 add_test(
   NAME cmake_cpu_provider_switch_build
   COMMAND "${CMAKE_COMMAND}" --build "${_cpu_provider_switch_build}"
           --target blas_cpu solver_cpu --parallel 2)
 set_tests_properties(cmake_cpu_provider_switch_build PROPERTIES
-  DEPENDS cmake_cpu_provider_switch_openblas)
+  DEPENDS cmake_cpu_provider_switch_openblas
+  FIXTURES_REQUIRED gpu_suite_cpu_provider_switch_openblas)
 
 if(TARGET rand_cpu_bench)
   add_test(
@@ -432,7 +496,28 @@ if(TARGET reduce_cpu_bench)
             --cpu-threads-effective 1 --cpu-backend-role production
             --series-role primary --cpu-parallelism serial)
 endif()
+set(_gpu_suite_registered_cpu_tests ${_gpu_suite_cpu_only_test_names})
+list(REMOVE_ITEM _gpu_suite_registered_cpu_tests
+  cmake_dependency_root_discovery
+  python_cpu_fixture_unittest)
+if(NOT Python3_Interpreter_FOUND)
+  list(REMOVE_ITEM _gpu_suite_registered_cpu_tests
+    fftw_fixture_partial_manifest
+    cpu_provider_fixture_partial_manifest)
+endif()
+if(NOT TARGET rand_cpu_bench)
+  list(REMOVE_ITEM _gpu_suite_registered_cpu_tests
+    rand_cpu_fixture_compute)
+endif()
+if(NOT TARGET reduce_cpu_bench)
+  list(REMOVE_ITEM _gpu_suite_registered_cpu_tests
+    reduce_cpu_fixture_end_to_end)
+endif()
+set_tests_properties(${_gpu_suite_registered_cpu_tests} PROPERTIES
+  LABELS profile-cpu)
+endif()
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
 foreach(_cufft_cpp_source
     examples/fft_gpu.cu
     examples/openacc_cufft.cpp
@@ -448,6 +533,8 @@ foreach(_cufft_cpp_source
             "-I${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cuda"
             "-I${CMAKE_SOURCE_DIR}/common/c-cpp/include"
             "${CMAKE_SOURCE_DIR}/nvidia/c-cpp/cufft/${_cufft_cpp_source}")
+  set_tests_properties("cufft_syntax_${_cufft_cpp_stem}" PROPERTIES
+    LABELS "profile-independent;compiler-gnu-like")
 endforeach()
 
 foreach(_phase3_library cublas cusparse cusolver curand thrust)
@@ -479,8 +566,12 @@ foreach(_phase3_library cublas cusparse cusolver curand thrust)
               "-I${CMAKE_SOURCE_DIR}/common/c-cpp/include"
               "-I${CMAKE_SOURCE_DIR}/nvidia/c-cpp/${_phase3_library}/benchmarks"
               "${CMAKE_SOURCE_DIR}/nvidia/c-cpp/${_phase3_library}/${_phase3_source}")
+    set_tests_properties(
+      "phase3_syntax_${_phase3_library}_${_phase3_source_stem}" PROPERTIES
+      LABELS "profile-independent;compiler-gnu-like")
   endforeach()
 endforeach()
+endif()
 
 foreach(_cuda_metadata_library cufft cublas cusparse cusolver curand thrust)
   string(TOUPPER "${_cuda_metadata_library}" _cuda_metadata_macro)
@@ -496,6 +587,8 @@ foreach(_cuda_metadata_library cufft cublas cusparse cusolver curand thrust)
     CXX_STANDARD_REQUIRED YES
     CXX_EXTENSIONS NO)
   add_test(NAME ${_cuda_metadata_target} COMMAND ${_cuda_metadata_target})
+  set_tests_properties(${_cuda_metadata_target} PROPERTIES
+    LABELS profile-independent)
 endforeach()
 
 set(_openacc_only_tests_build
@@ -512,7 +605,48 @@ add_test(
           -DGPU_SUITE_BUILD_CUDA=OFF
           -DGPU_SUITE_BUILD_OPENACC=ON
           -DGPU_SUITE_BUILD_TESTS=ON)
-set_tests_properties(cmake_openacc_only_tests_generate PROPERTIES TIMEOUT 300)
+set_tests_properties(cmake_openacc_only_tests_generate PROPERTIES
+  FIXTURES_SETUP gpu_suite_openacc_only_configured
+  LABELS "profile-independent;profile-openacc-validation"
+  TIMEOUT 300)
+if(Python3_Interpreter_FOUND)
+  set(_gpu_suite_openacc_inventory_arguments)
+  foreach(_cpu_only_test IN LISTS _gpu_suite_cpu_only_test_names)
+    list(APPEND _gpu_suite_openacc_inventory_arguments
+      --forbid-test "${_cpu_only_test}")
+  endforeach()
+  foreach(_cpu_artifact_prefix
+      GPU_SUITE_FFTW_
+      GPU_SUITE_CPU_PROVIDER_
+      GPU_SUITE_CBLAS_
+      GPU_SUITE_SPARSE_
+      GPU_SUITE_SOLVER_
+      GPU_SUITE_RAND_CPU_
+      GPU_SUITE_REDUCE_CPU_)
+    list(APPEND _gpu_suite_openacc_inventory_arguments
+      --forbid-environment-prefix "${_cpu_artifact_prefix}")
+  endforeach()
+  add_test(
+    NAME cmake_openacc_only_test_inventory
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/python/check_test_inventory.py"
+            --ctest "${CMAKE_CTEST_COMMAND}"
+            --build "${_openacc_only_tests_build}"
+            --require-test test_checked
+            --require-test test_cuda_metadata_cufft
+            --require-test python_unittest
+            --require-test python39_compat
+            --require-test non_git_source_build
+            --require-test cmake_openacc_only_tests_generate
+            --environment-test python_unittest
+            --require-label-prefix profile-
+            ${_gpu_suite_openacc_inventory_arguments})
+  set_tests_properties(cmake_openacc_only_test_inventory PROPERTIES
+    DEPENDS cmake_openacc_only_tests_generate
+    FIXTURES_REQUIRED gpu_suite_openacc_only_configured
+    LABELS "profile-independent;profile-openacc-validation"
+    TIMEOUT 60)
+endif()
 
 foreach(_pegasus_shell
     build_cpu_cuda.sh
@@ -524,6 +658,8 @@ foreach(_pegasus_shell
     NAME "pegasus_bash_syntax_${_pegasus_shell_test}"
     COMMAND bash -n
             "${CMAKE_SOURCE_DIR}/jobs/pegasus/${_pegasus_shell}")
+  set_tests_properties("pegasus_bash_syntax_${_pegasus_shell_test}"
+    PROPERTIES LABELS profile-independent)
 endforeach()
 
 find_program(SHELLCHECK_EXECUTABLE shellcheck)
@@ -534,86 +670,113 @@ if(SHELLCHECK_EXECUTABLE)
       NAME "pegasus_shellcheck_${_pegasus_shell_test}"
       COMMAND "${SHELLCHECK_EXECUTABLE}"
               "${CMAKE_SOURCE_DIR}/jobs/pegasus/${_pegasus_shell}")
+    set_tests_properties("pegasus_shellcheck_${_pegasus_shell_test}"
+      PROPERTIES LABELS profile-independent)
   endforeach()
 else()
   message(STATUS
     "ShellCheck tests not registered: shellcheck is not already available")
 endif()
 
-set(_gpu_suite_nested_cmake_tests
-    cmake_compile_link_probe
-    cmake_fftw_positive_configure
+set(_gpu_suite_nested_cmake_tests cmake_openacc_only_tests_generate)
+if(Python3_Interpreter_FOUND)
+  list(APPEND _gpu_suite_nested_cmake_tests
+    cmake_openacc_only_test_inventory)
+endif()
+if(GPU_SUITE_BUILD_CPU)
+  list(APPEND _gpu_suite_nested_cmake_tests
+      cmake_compile_link_probe
+      cmake_fftw_positive_configure
+      cmake_fftw_positive_build
+      cmake_fftw_header_only_negative
+      cmake_fftw_header_only_has_no_target
+      cmake_cpu_provider_positive_configure
+      cmake_cpu_provider_positive_build
+      cmake_cpu_provider_symbol_negative
+      cpu_provider_negative_no_blas_cpu
+      cpu_provider_negative_no_sparse_cpu
+      cpu_provider_negative_no_solver_cpu
+      cmake_cpu_provider_mixed_rejected
+      cmake_cpu_provider_mixed_no_blas_target
+      cmake_cpu_provider_mixed_no_solver_target
+      cmake_cpu_provider_switch_onemkl
+      cmake_cpu_provider_switch_openblas
+      cmake_cpu_provider_switch_build)
+  set(_gpu_suite_provider_fixture_configure_tests
+      cmake_fftw_positive_configure
+      cmake_fftw_header_only_negative
+      cmake_cpu_provider_positive_configure
+      cmake_cpu_provider_symbol_negative
+      cmake_cpu_provider_mixed_rejected
+      cmake_cpu_provider_switch_onemkl
+      cmake_cpu_provider_switch_openblas)
+  set(_gpu_suite_provider_contamination_environment
+      "FFTW_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/fftw"
+      "MKLROOT=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cpu_libs"
+      "CMAKE_PREFIX_PATH=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/fftw:${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cpu_libs"
+      "CMAKE_INCLUDE_PATH=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/fftw/include:${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cpu_libs/include"
+      "CMAKE_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_cpu_providers>"
+      "PKG_CONFIG_PATH=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/provider-environment/pkgconfig"
+      "CPATH=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/fftw/include:${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cpu_libs/include"
+      "LIBRARY_PATH=$<TARGET_FILE_DIR:fake_cpu_providers>")
+  set_tests_properties(${_gpu_suite_provider_fixture_configure_tests}
+    PROPERTIES ENVIRONMENT "${_gpu_suite_provider_contamination_environment}")
+  set_tests_properties(
     cmake_fftw_positive_build
-    cmake_fftw_header_only_negative
-    cmake_fftw_header_only_has_no_target
-    cmake_cpu_provider_positive_configure
     cmake_cpu_provider_positive_build
-    cmake_cpu_provider_symbol_negative
-    cpu_provider_negative_no_blas_cpu
-    cpu_provider_negative_no_sparse_cpu
-    cpu_provider_negative_no_solver_cpu
-    cmake_cpu_provider_mixed_rejected
-    cmake_cpu_provider_mixed_no_blas_target
-    cmake_cpu_provider_mixed_no_solver_target
-    cmake_cpu_provider_switch_onemkl
-    cmake_cpu_provider_switch_openblas
     cmake_cpu_provider_switch_build
-    cmake_openacc_only_tests_generate)
-set(_gpu_suite_provider_fixture_configure_tests
-    cmake_fftw_positive_configure
-    cmake_fftw_header_only_negative
-    cmake_cpu_provider_positive_configure
-    cmake_cpu_provider_symbol_negative
-    cmake_cpu_provider_mixed_rejected
-    cmake_cpu_provider_switch_onemkl
-    cmake_cpu_provider_switch_openblas)
-set(_gpu_suite_provider_contamination_environment
-    "FFTW_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/fftw"
-    "MKLROOT=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cpu_libs"
-    "CMAKE_PREFIX_PATH=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/fftw:${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cpu_libs"
-    "CMAKE_INCLUDE_PATH=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/fftw/include:${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cpu_libs/include"
-    "CMAKE_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_cpu_providers>"
-    "PKG_CONFIG_PATH=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/provider-environment/pkgconfig"
-    "CPATH=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/fftw/include:${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cpu_libs/include"
-    "LIBRARY_PATH=$<TARGET_FILE_DIR:fake_cpu_providers>")
+    PROPERTIES PROCESSORS 2)
+endif()
 set_tests_properties(${_gpu_suite_nested_cmake_tests} PROPERTIES
   RESOURCE_LOCK gpu_suite_nested_cmake)
-set_tests_properties(${_gpu_suite_provider_fixture_configure_tests} PROPERTIES
-  ENVIRONMENT "${_gpu_suite_provider_contamination_environment}")
-set_tests_properties(
-  cmake_fftw_positive_build
-  cmake_cpu_provider_positive_build
-  cmake_cpu_provider_switch_build
-  PROPERTIES PROCESSORS 2)
 
 if(Python3_Interpreter_FOUND)
-  add_test(
-    NAME cmake_dependency_root_discovery
-    COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/python/check_dependency_discovery.py"
-            --cmake "${CMAKE_COMMAND}"
-            --generator "${CMAKE_GENERATOR}"
-            --source "${CMAKE_CURRENT_SOURCE_DIR}/cmake/dependency_roots"
-            --repository-root "${CMAKE_SOURCE_DIR}"
-            --fixture-root "${_gpu_suite_fixture_root}/dependency-roots"
-            --headers-root "${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
-            --mkl-library "$<TARGET_FILE:fake_cpu_providers>"
-            --fftw-library "$<TARGET_FILE:fake_fftw3f>"
-            --fftw-threads-library "$<TARGET_FILE:fake_fftw3f_threads>")
-  set_tests_properties(cmake_dependency_root_discovery PROPERTIES
-    ENVIRONMENT "PYTHONPYCACHEPREFIX=${_gpu_suite_fixture_pycache}"
-    RESOURCE_LOCK gpu_suite_nested_cmake
-    TIMEOUT 300)
+  if(GPU_SUITE_BUILD_CPU)
+    add_test(
+      NAME cmake_dependency_root_discovery
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/python/check_dependency_discovery.py"
+              --cmake "${CMAKE_COMMAND}"
+              --generator "${CMAKE_GENERATOR}"
+              --source "${CMAKE_CURRENT_SOURCE_DIR}/cmake/dependency_roots"
+              --repository-root "${CMAKE_SOURCE_DIR}"
+              --fixture-root "${_gpu_suite_fixture_root}/dependency-roots"
+              --headers-root "${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+              --mkl-library "$<TARGET_FILE:fake_cpu_providers>"
+              --fftw-library "$<TARGET_FILE:fake_fftw3f>"
+              --fftw-threads-library "$<TARGET_FILE:fake_fftw3f_threads>")
+    set_tests_properties(cmake_dependency_root_discovery PROPERTIES
+      ENVIRONMENT "PYTHONPYCACHEPREFIX=${_gpu_suite_fixture_pycache}"
+      LABELS profile-cpu
+      RESOURCE_LOCK gpu_suite_nested_cmake
+      TIMEOUT 300)
+  endif()
 
   add_test(
     NAME python_unittest
-    COMMAND "${Python3_EXECUTABLE}" -m unittest discover
-            -s "${CMAKE_CURRENT_SOURCE_DIR}/python" -v)
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/python/run_profiled_unittests.py"
+            --start-directory "${CMAKE_CURRENT_SOURCE_DIR}/python"
+            --profile independent)
   set(_gpu_suite_python_test_environment
       "PYTHONPATH=${CMAKE_SOURCE_DIR}/tools"
       "PYTHONPYCACHEPREFIX=${_gpu_suite_fixture_pycache}"
       "GPU_SUITE_BUILD_METADATA_FILE=${GPU_SUITE_BUILD_METADATA_FILE}"
       "GPU_SUITE_BUILD_METADATA_HEADER=${GPU_SUITE_GENERATED_INCLUDE_DIR}/gpu_suite/build_metadata.h"
+      "GPU_SUITE_CMAKE_COMMAND=${CMAKE_COMMAND}")
+  set_tests_properties(python_unittest PROPERTIES
+    ENVIRONMENT "${_gpu_suite_python_test_environment}"
+    LABELS profile-independent)
+
+  if(GPU_SUITE_BUILD_CPU)
+    add_test(
+      NAME python_cpu_fixture_unittest
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/python/run_profiled_unittests.py"
+              --start-directory "${CMAKE_CURRENT_SOURCE_DIR}/python"
+              --profile cpu-fixture)
+    set(_gpu_suite_cpu_fixture_test_environment
+      ${_gpu_suite_python_test_environment}
       "GPU_SUITE_FFTW_FIXTURE_BENCH=${_fftw_positive_build}/nvidia/c-cpp/cufft/fft_cpu_bench"
       "GPU_SUITE_FFTW_FIXTURE_MANIFEST=${_fftw_positive_build}/partial-manifest.json"
       "GPU_SUITE_FFTW_FIXTURE_METADATA=${_fftw_positive_build}/build-metadata.json"
@@ -621,19 +784,22 @@ if(Python3_Interpreter_FOUND)
       "GPU_SUITE_CPU_PROVIDER_FIXTURE_METADATA=${_cpu_provider_positive_build}/build-metadata.json"
       "GPU_SUITE_CBLAS_FIXTURE_BENCH=${_cpu_provider_positive_build}/nvidia/c-cpp/cublas/blas_cpu_bench"
       "GPU_SUITE_SPARSE_FIXTURE_BENCH=${_cpu_provider_positive_build}/nvidia/c-cpp/cusparse/sparse_cpu_bench"
-      "GPU_SUITE_SOLVER_FIXTURE_BENCH=${_cpu_provider_positive_build}/nvidia/c-cpp/cusolver/solver_cpu_bench"
-      "GPU_SUITE_CMAKE_COMMAND=${CMAKE_COMMAND}")
-  if(TARGET rand_cpu_bench)
-    list(APPEND _gpu_suite_python_test_environment
-      "GPU_SUITE_RAND_CPU_BENCH=$<TARGET_FILE:rand_cpu_bench>")
+      "GPU_SUITE_SOLVER_FIXTURE_BENCH=${_cpu_provider_positive_build}/nvidia/c-cpp/cusolver/solver_cpu_bench")
+    if(TARGET rand_cpu_bench)
+      list(APPEND _gpu_suite_cpu_fixture_test_environment
+        "GPU_SUITE_RAND_CPU_BENCH=$<TARGET_FILE:rand_cpu_bench>")
+    endif()
+    if(TARGET reduce_cpu_bench)
+      list(APPEND _gpu_suite_cpu_fixture_test_environment
+        "GPU_SUITE_REDUCE_CPU_BENCH=$<TARGET_FILE:reduce_cpu_bench>")
+    endif()
+    set_tests_properties(python_cpu_fixture_unittest PROPERTIES
+      DEPENDS "cmake_fftw_positive_build;cmake_cpu_provider_positive_build"
+      ENVIRONMENT "${_gpu_suite_cpu_fixture_test_environment}"
+      FIXTURES_REQUIRED
+        "gpu_suite_fftw_built;gpu_suite_cpu_provider_built"
+      LABELS profile-cpu)
   endif()
-  if(TARGET reduce_cpu_bench)
-    list(APPEND _gpu_suite_python_test_environment
-      "GPU_SUITE_REDUCE_CPU_BENCH=$<TARGET_FILE:reduce_cpu_bench>")
-  endif()
-  set_tests_properties(python_unittest PROPERTIES
-    DEPENDS "cmake_fftw_positive_build;cmake_cpu_provider_positive_build"
-    ENVIRONMENT "${_gpu_suite_python_test_environment}")
 
   add_test(
     NAME python39_compat
@@ -642,7 +808,8 @@ if(Python3_Interpreter_FOUND)
             "${CMAKE_SOURCE_DIR}")
   set_tests_properties(python39_compat PROPERTIES
     ENVIRONMENT
-      "PYTHONPYCACHEPREFIX=${_gpu_suite_fixture_pycache}")
+      "PYTHONPYCACHEPREFIX=${_gpu_suite_fixture_pycache}"
+    LABELS profile-independent)
 
   add_test(
     NAME non_git_source_build
@@ -652,6 +819,7 @@ if(Python3_Interpreter_FOUND)
             --source "${CMAKE_SOURCE_DIR}")
   set_tests_properties(non_git_source_build PROPERTIES
     ENVIRONMENT "PYTHONPYCACHEPREFIX=${_gpu_suite_fixture_pycache}"
+    LABELS profile-independent
     PROCESSORS 2
     RESOURCE_LOCK gpu_suite_nested_cmake
     RUN_SERIAL TRUE
