@@ -60,6 +60,7 @@ TOP_LEVEL_KEYS = {
 SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+@/-]*$")
 SAFE_ENVIRONMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 WALLTIME_RE = re.compile(r"^\d{2,3}:\d{2}:\d{2}$")
+CUDA_COMPONENT_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 
 def _require(condition: bool, message: str) -> None:
@@ -135,6 +136,11 @@ def validate_pegasus_config(config: Mapping[str, Any]) -> Dict[str, Any]:
         "cuda_architectures", "cuda_toolkit_version", "nvhpc_gpu_target",
     ):
         _configured_string(config[name], name)
+    _require(
+        CUDA_COMPONENT_VERSION_RE.fullmatch(config["cuda_toolkit_version"])
+        is not None,
+        "cuda_toolkit_version must be an exact CMake/NVCC component version",
+    )
     toolkit_root = _absolute_path(config["cuda_toolkit_root"], "cuda_toolkit_root")
     nvhpc_home = _absolute_path(config["nvhpc_cuda_home"], "nvhpc_cuda_home")
     _require(toolkit_root == nvhpc_home,

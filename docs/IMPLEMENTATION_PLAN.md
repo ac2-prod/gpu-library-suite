@@ -1044,8 +1044,8 @@ finishes user-facing documentation.
 
 - Human checks queue/module/budget state.
 - Build on an appropriate compute node.
-- Submit a debug smoke job, then inspect trap recovery, metadata, hashes,
-  telemetry, raw results, and aggregate eligibility.
+- Submit a batch smoke job to the `gpu` queue, then inspect trap recovery,
+  metadata, hashes, telemetry, raw results, and aggregate eligibility.
 - Proceed to five or preferably eight production nodes only after smoke success.
 
 ### Risks

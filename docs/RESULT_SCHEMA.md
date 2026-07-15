@@ -432,6 +432,9 @@ NVHPC CUDA home/GPU target, general OpenACC compile/link flags, and the extra
 OpenACC Thrust `-cuda` compile/link interoperation flags. The CMake-generated
 per-target manifest descriptor supplies the target name and backend variant;
 the partial manifest binds every entry to the exact build-metadata hash.
+The CUDA Toolkit version is the complete CMake `CUDAToolkit_VERSION` component
+version. It is not the CUDA module release label and is not a CUDA Runtime API
+version.
 
 The executable manifest contains an entry for every runnable binary with at
 least:
@@ -522,7 +525,8 @@ prebuilt CPU, CUDA, and OpenACC binaries together. It contains at least:
 
 - complete `module list` output or a normalized module list;
 - `PATH` and `LD_LIBRARY_PATH`;
-- NVIDIA driver version and CUDA runtime/Toolkit version and Toolkit path;
+- NVIDIA package-driver version, CUDA Driver API/Runtime versions, and CUDA
+  Toolkit component version and Toolkit path;
 - NVHPC compiler/runtime version;
 - `NVHPC_CUDA_HOME` when set, or the actual CUDA Toolkit selected by NVHPC;
 - detected FFTW, oneMKL, OpenBLAS, LAPACKE, and other selected CPU-library
@@ -537,6 +541,12 @@ The job master creates this document with the project-defined deterministic JSON
 profile after loading the benchmark runtime modules. Compute
 `runtime_environment_sha256` over its exact saved bytes. The hash is stored in
 run, wave, and node provenance and in raw rows.
+
+The configured Toolkit version is compared exactly with the
+`CUDAToolkit_VERSION` stored in build metadata. The CUDA module name remains in
+the module list. CUDA Driver API and Runtime versions come from the local
+`libcudart` probe and are never filled from the configured Toolkit version when
+the probe is unavailable.
 
 An additional wave may share a run ID only when
 `runtime_environment_sha256` matches. Results with different runtime

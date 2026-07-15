@@ -18,6 +18,11 @@ from gpu_suite.hashing import sha256_file  # noqa: E402
 from gpu_suite.manifest import validate_build_metadata  # noqa: E402
 from gpu_suite.runner import load_manifest  # noqa: E402
 from gpu_suite.strict_json import dump_bytes, load  # noqa: E402
+from cuda_runtime_probe import (  # noqa: E402
+    CUDA_RUNTIME_PROBE_KEYS,
+    CudaRuntimeProbe,
+    probe_node_cuda_runtime,
+)
 from job_config import CPU_ENVIRONMENT_KEYS  # noqa: E402
 
 
@@ -108,6 +113,7 @@ def collect_runtime_environment(
     which: Callable[[str], Optional[str]] = shutil.which,
     require_ldd: bool = False, require_gpu_tools: bool = False,
     require_runtime_compilers: bool = False,
+    cuda_runtime_probe: CudaRuntimeProbe = probe_node_cuda_runtime,
 ) -> Dict[str, Any]:
     manifest, manifest_sha256 = load_manifest(manifest_path)
     cpu_environment = {}  # type: Dict[str, str]
@@ -200,11 +206,20 @@ def collect_runtime_environment(
     nvcc = command_record(["nvcc", "--version"], executor, which)
     nvc = command_record(["nvc", "--version"], executor, which)
     nvcxx = command_record(["nvc++", "--version"], executor, which)
+    cuda_runtime_identity = dict(cuda_runtime_probe())
+    if set(cuda_runtime_identity) != CUDA_RUNTIME_PROBE_KEYS:
+        raise RuntimeEnvironmentError("invalid CUDA runtime probe result")
+    if cuda_runtime_identity["query_status"] not in {
+        "success", "failure", "unavailable",
+    }:
+        raise RuntimeEnvironmentError("invalid CUDA runtime probe status")
     if require_gpu_tools:
         for name, probe in (
             ("NVIDIA driver", driver), ("node GPU identity", gpu_identity),
+            ("CUDA Driver API/Runtime", cuda_runtime_identity),
         ):
-            if probe["status"] != "success":
+            status = probe.get("status", probe.get("query_status"))
+            if status != "success":
                 raise RuntimeEnvironmentError(name + " runtime probe failed")
     if require_runtime_compilers:
         for name, probe in (("nvcc", nvcc), ("nvc", nvc), ("nvc++", nvcxx)):
@@ -236,13 +251,12 @@ def collect_runtime_environment(
             "configured_toolkit_root": configured_cuda_root,
             "configured_toolkit_version": configured_cuda_version,
             "nvcc": nvcc,
-            "runtime_version": environment.get(
-                "GPU_SUITE_CUDA_RUNTIME_VERSION", configured_cuda_version
-            ),
+            "runtime_probe": cuda_runtime_identity,
+            "runtime_version": cuda_runtime_identity["cuda_runtime_version"],
             "runtime_version_source": (
-                "environment"
-                if environment.get("GPU_SUITE_CUDA_RUNTIME_VERSION")
-                else "configured-toolkit"
+                "cudaRuntimeGetVersion"
+                if cuda_runtime_identity["query_status"] == "success"
+                else "unavailable"
             ),
         },
         "environment": {

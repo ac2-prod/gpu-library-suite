@@ -396,12 +396,31 @@ class ReviewSourcePolicyTests(unittest.TestCase):
         ]
         self.assertNotRegex(required_block, r"(?:nvcc|nvc|nvc_plus_plus).*status")
         node_tools = read("jobs/pegasus/node_tools.py")
-        self.assertIn("ctypes.CDLL", node_tools)
-        self.assertIn("cudaDriverGetVersion", node_tools)
-        self.assertIn("cudaRuntimeGetVersion", node_tools)
+        cuda_probe = read("jobs/pegasus/cuda_runtime_probe.py")
+        self.assertIn("ctypes.CDLL", cuda_probe)
+        self.assertIn("cudaDriverGetVersion", cuda_probe)
+        self.assertIn("cudaRuntimeGetVersion", cuda_probe)
         self.assertIn('"cuda_runtime_identity"', node_tools)
         self.assertIn('("cuda_driver_version", expected_driver', node_tools)
         self.assertIn('("cuda_runtime_version", expected_runtime', node_tools)
+        self.assertIn('"runtime_probe": cuda_runtime_identity', runtime)
+        self.assertNotIn("GPU_SUITE_CUDA_RUNTIME_VERSION", runtime)
+
+    def test_gpu_provenance_has_distinct_rank_local_producers(self):
+        result = read("common/c-cpp/src/result.c")
+        for obsolete in (
+            "GPU_SUITE_CUDA_DRIVER_VERSION",
+            "GPU_SUITE_CUDA_RUNTIME_VERSION",
+            "GPU_SUITE_LIBRARY_VERSION",
+        ):
+            with self.subTest(obsolete=obsolete):
+                self.assertNotIn(obsolete, result)
+        run_node = read("jobs/pegasus/run_node.sh")
+        node_tools = read("jobs/pegasus/node_tools.py")
+        self.assertIn("GPU_SUITE_NVIDIA_DRIVER_VERSION", run_node)
+        self.assertIn("GPU_SUITE_NVIDIA_DRIVER_VERSION", node_tools)
+        self.assertIn('"nvidia_driver_version"', node_tools)
+        self.assertIn('"cuda_driver_api_version"', node_tools)
 
     def test_result_metadata_has_no_backend_name_inference(self):
         result = read("common/c-cpp/src/result.c")

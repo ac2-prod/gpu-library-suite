@@ -38,7 +38,7 @@ def pegasus_config(directory: Path):
         "build_parallelism": 4,
         "cuda_architectures": "test-architecture",
         "cuda_toolkit_root": str(directory / "cuda"),
-        "cuda_toolkit_version": "test-toolkit",
+        "cuda_toolkit_version": "13.0.88",
         "nvhpc_cuda_home": str(directory / "cuda"),
         "nvhpc_gpu_target": "test-gpu-target",
         "shared_result_root": str(directory / "results"),

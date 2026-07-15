@@ -372,22 +372,26 @@ add_test(
 set_tests_properties(cmake_cpu_provider_switch_build PROPERTIES
   DEPENDS cmake_cpu_provider_switch_openblas)
 
-add_test(
-  NAME rand_cpu_fixture_compute
-  COMMAND $<TARGET_FILE:rand_cpu_bench>
-          --size 65536 --warmup 1 --repeat 2 --trials 1 --scope compute
-          --verify true --output - --format jsonl
-          --cpu-backend cpu-std-random-serial --cpu-threads 48
-          --cpu-threads-effective 1 --cpu-backend-role production
-          --series-role primary --cpu-parallelism serial)
-add_test(
-  NAME reduce_cpu_fixture_end_to_end
-  COMMAND $<TARGET_FILE:reduce_cpu_bench>
-          --size 4096 --warmup 1 --repeat 1 --trials 2 --scope end-to-end
-          --verify true --output - --format jsonl
-          --cpu-backend cpu-stl-serial --cpu-threads 48
-          --cpu-threads-effective 1 --cpu-backend-role production
-          --series-role primary --cpu-parallelism serial)
+if(TARGET rand_cpu_bench)
+  add_test(
+    NAME rand_cpu_fixture_compute
+    COMMAND $<TARGET_FILE:rand_cpu_bench>
+            --size 65536 --warmup 1 --repeat 2 --trials 1 --scope compute
+            --verify true --output - --format jsonl
+            --cpu-backend cpu-std-random-serial --cpu-threads 48
+            --cpu-threads-effective 1 --cpu-backend-role production
+            --series-role primary --cpu-parallelism serial)
+endif()
+if(TARGET reduce_cpu_bench)
+  add_test(
+    NAME reduce_cpu_fixture_end_to_end
+    COMMAND $<TARGET_FILE:reduce_cpu_bench>
+            --size 4096 --warmup 1 --repeat 1 --trials 2 --scope end-to-end
+            --verify true --output - --format jsonl
+            --cpu-backend cpu-stl-serial --cpu-threads 48
+            --cpu-threads-effective 1 --cpu-backend-role production
+            --series-role primary --cpu-parallelism serial)
+endif()
 
 foreach(_cufft_cpp_source
     examples/fft_gpu.cu
@@ -440,15 +444,35 @@ endforeach()
 
 foreach(_cuda_metadata_library cufft cublas cusparse cusolver curand thrust)
   string(TOUPPER "${_cuda_metadata_library}" _cuda_metadata_macro)
-  add_test(
-    NAME "cuda_metadata_syntax_${_cuda_metadata_library}"
-    COMMAND "${CMAKE_CXX_COMPILER}"
-            -x c++ -std=c++17 -fsyntax-only
-            "-DGPU_SUITE_CUDA_LIBRARY_${_cuda_metadata_macro}=1"
-            "-I${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cuda"
-            "-I${CMAKE_SOURCE_DIR}/common/c-cpp/include"
-            "${CMAKE_CURRENT_SOURCE_DIR}/c/test_cuda_metadata.cpp")
+  set(_cuda_metadata_target "test_cuda_metadata_${_cuda_metadata_library}")
+  add_executable(${_cuda_metadata_target} c/test_cuda_metadata.cpp)
+  target_link_libraries(${_cuda_metadata_target} PRIVATE gpu_suite::common)
+  target_include_directories(${_cuda_metadata_target} PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cuda")
+  target_compile_definitions(${_cuda_metadata_target} PRIVATE
+    "GPU_SUITE_CUDA_LIBRARY_${_cuda_metadata_macro}=1")
+  set_target_properties(${_cuda_metadata_target} PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO)
+  add_test(NAME ${_cuda_metadata_target} COMMAND ${_cuda_metadata_target})
 endforeach()
+
+set(_openacc_only_tests_build
+    "${_gpu_suite_fixture_root}/openacc-only-tests")
+add_test(
+  NAME cmake_openacc_only_tests_generate
+  COMMAND "${CMAKE_COMMAND}"
+          -S "${CMAKE_SOURCE_DIR}"
+          -B "${_openacc_only_tests_build}"
+          -G "${CMAKE_GENERATOR}"
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_DISABLE_FIND_PACKAGE_OpenACC=TRUE
+          -DGPU_SUITE_BUILD_CPU=OFF
+          -DGPU_SUITE_BUILD_CUDA=OFF
+          -DGPU_SUITE_BUILD_OPENACC=ON
+          -DGPU_SUITE_BUILD_TESTS=ON)
+set_tests_properties(cmake_openacc_only_tests_generate PROPERTIES TIMEOUT 300)
 
 foreach(_pegasus_shell
     build_cpu_cuda.sh
@@ -478,13 +502,48 @@ endif()
 
 if(Python3_Interpreter_FOUND)
   add_test(
+    NAME cmake_dependency_root_discovery
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/python/check_dependency_discovery.py"
+            --cmake "${CMAKE_COMMAND}"
+            --generator "${CMAKE_GENERATOR}"
+            --source "${CMAKE_CURRENT_SOURCE_DIR}/cmake/dependency_roots"
+            --repository-root "${CMAKE_SOURCE_DIR}"
+            --fixture-root "${_gpu_suite_fixture_root}/dependency-roots"
+            --headers-root "${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+            --mkl-library "$<TARGET_FILE:fake_cpu_providers>"
+            --fftw-library "$<TARGET_FILE:fake_fftw3f>"
+            --fftw-threads-library "$<TARGET_FILE:fake_fftw3f_threads>")
+  set_tests_properties(cmake_dependency_root_discovery PROPERTIES
+    ENVIRONMENT "PYTHONPYCACHEPREFIX=${_gpu_suite_fixture_pycache}"
+    TIMEOUT 300)
+
+  add_test(
     NAME python_unittest
     COMMAND "${Python3_EXECUTABLE}" -m unittest discover
             -s "${CMAKE_CURRENT_SOURCE_DIR}/python" -v)
+  set(_gpu_suite_python_test_environment
+      "PYTHONPATH=${CMAKE_SOURCE_DIR}/tools"
+      "PYTHONPYCACHEPREFIX=${_gpu_suite_fixture_pycache}"
+      "GPU_SUITE_BUILD_METADATA_FILE=${GPU_SUITE_BUILD_METADATA_FILE}"
+      "GPU_SUITE_BUILD_METADATA_HEADER=${GPU_SUITE_GENERATED_INCLUDE_DIR}/gpu_suite/build_metadata.h"
+      "GPU_SUITE_FFTW_FIXTURE_BENCH=${_fftw_positive_build}/nvidia/c-cpp/cufft/fft_cpu_bench"
+      "GPU_SUITE_FFTW_FIXTURE_MANIFEST=${_fftw_positive_build}/partial-manifest.json"
+      "GPU_SUITE_FFTW_FIXTURE_METADATA=${_fftw_positive_build}/build-metadata.json"
+      "GPU_SUITE_CBLAS_FIXTURE_BENCH=${_cpu_provider_positive_build}/nvidia/c-cpp/cublas/blas_cpu_bench"
+      "GPU_SUITE_SPARSE_FIXTURE_BENCH=${_cpu_provider_positive_build}/nvidia/c-cpp/cusparse/sparse_cpu_bench"
+      "GPU_SUITE_SOLVER_FIXTURE_BENCH=${_cpu_provider_positive_build}/nvidia/c-cpp/cusolver/solver_cpu_bench")
+  if(TARGET rand_cpu_bench)
+    list(APPEND _gpu_suite_python_test_environment
+      "GPU_SUITE_RAND_CPU_BENCH=$<TARGET_FILE:rand_cpu_bench>")
+  endif()
+  if(TARGET reduce_cpu_bench)
+    list(APPEND _gpu_suite_python_test_environment
+      "GPU_SUITE_REDUCE_CPU_BENCH=$<TARGET_FILE:reduce_cpu_bench>")
+  endif()
   set_tests_properties(python_unittest PROPERTIES
     DEPENDS "cmake_fftw_positive_build;cmake_cpu_provider_positive_build"
-    ENVIRONMENT
-      "PYTHONPATH=${CMAKE_SOURCE_DIR}/tools;PYTHONPYCACHEPREFIX=${_gpu_suite_fixture_pycache};GPU_SUITE_BUILD_METADATA_FILE=${GPU_SUITE_BUILD_METADATA_FILE};GPU_SUITE_BUILD_METADATA_HEADER=${GPU_SUITE_GENERATED_INCLUDE_DIR}/gpu_suite/build_metadata.h;GPU_SUITE_FFTW_FIXTURE_BENCH=${_fftw_positive_build}/nvidia/c-cpp/cufft/fft_cpu_bench;GPU_SUITE_FFTW_FIXTURE_MANIFEST=${_fftw_positive_build}/partial-manifest.json;GPU_SUITE_FFTW_FIXTURE_METADATA=${_fftw_positive_build}/build-metadata.json;GPU_SUITE_CBLAS_FIXTURE_BENCH=${_cpu_provider_positive_build}/nvidia/c-cpp/cublas/blas_cpu_bench;GPU_SUITE_SPARSE_FIXTURE_BENCH=${_cpu_provider_positive_build}/nvidia/c-cpp/cusparse/sparse_cpu_bench;GPU_SUITE_SOLVER_FIXTURE_BENCH=${_cpu_provider_positive_build}/nvidia/c-cpp/cusolver/solver_cpu_bench;GPU_SUITE_RAND_CPU_BENCH=$<TARGET_FILE:rand_cpu_bench>;GPU_SUITE_REDUCE_CPU_BENCH=$<TARGET_FILE:reduce_cpu_bench>")
+    ENVIRONMENT "${_gpu_suite_python_test_environment}")
 
   add_test(
     NAME python39_compat

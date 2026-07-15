@@ -43,8 +43,17 @@ function(gpu_suite_find_cblas)
     set(_library_names cblas)
     set(_library_pattern "(^|lib)cblas([.].*)?$")
   endif()
-  find_path(${_include_var} NAMES "${_header}")
-  find_library(${_library_var} NAMES ${_library_names})
+  if(_provider STREQUAL "ONEMKL")
+    find_path(${_include_var} NAMES "${_header}"
+      HINTS ENV MKLROOT
+      PATH_SUFFIXES include)
+    find_library(${_library_var} NAMES ${_library_names}
+      HINTS ENV MKLROOT
+      PATH_SUFFIXES lib lib64)
+  else()
+    find_path(${_include_var} NAMES "${_header}")
+    find_library(${_library_var} NAMES ${_library_names})
+  endif()
   set(_include_dir "${${_include_var}}")
   set(_library "${${_library_var}}")
   if(NOT _include_dir OR NOT _library OR
@@ -115,8 +124,17 @@ function(gpu_suite_find_lapacke)
     set(_library_names lapacke)
     set(_library_pattern "(^|lib)lapacke([.].*)?$")
   endif()
-  find_path(${_include_var} NAMES "${_header}")
-  find_library(${_library_var} NAMES ${_library_names})
+  if(_provider STREQUAL "ONEMKL")
+    find_path(${_include_var} NAMES "${_header}"
+      HINTS ENV MKLROOT
+      PATH_SUFFIXES include)
+    find_library(${_library_var} NAMES ${_library_names}
+      HINTS ENV MKLROOT
+      PATH_SUFFIXES lib lib64)
+  else()
+    find_path(${_include_var} NAMES "${_header}")
+    find_library(${_library_var} NAMES ${_library_names})
+  endif()
   set(_include_dir "${${_include_var}}")
   set(_library "${${_library_var}}")
   if(NOT _include_dir OR NOT _library OR
@@ -168,8 +186,12 @@ function(gpu_suite_find_onemkl_sparse)
         "GPU_SUITE_CPU_SPARSE_BACKEND is not ONEMKL" PARENT_SCOPE)
     return()
   endif()
-  find_path(GPU_SUITE_MKL_SPARSE_INCLUDE_DIR NAMES mkl_spblas.h)
-  find_library(GPU_SUITE_MKL_SPARSE_LIBRARY NAMES mkl_rt)
+  find_path(GPU_SUITE_MKL_SPARSE_INCLUDE_DIR NAMES mkl_spblas.h
+    HINTS ENV MKLROOT
+    PATH_SUFFIXES include)
+  find_library(GPU_SUITE_MKL_SPARSE_LIBRARY NAMES mkl_rt
+    HINTS ENV MKLROOT
+    PATH_SUFFIXES lib lib64)
   if(NOT GPU_SUITE_MKL_SPARSE_INCLUDE_DIR OR
      NOT GPU_SUITE_MKL_SPARSE_LIBRARY)
     set(GPU_SUITE_MKL_SPARSE_REASON

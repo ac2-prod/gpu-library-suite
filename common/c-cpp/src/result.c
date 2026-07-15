@@ -509,11 +509,6 @@ void gpu_suite_result_apply_provenance_environment(gpu_suite_result *result) {
   }
   result->gpu_name = environment_or_null("GPU_SUITE_GPU_NAME");
   result->gpu_uuid = environment_or_null("GPU_SUITE_GPU_UUID");
-  result->cuda_driver_version =
-      environment_or_null("GPU_SUITE_CUDA_DRIVER_VERSION");
-  result->library_version = environment_or_null("GPU_SUITE_LIBRARY_VERSION");
-  result->cuda_runtime_version =
-      environment_or_null("GPU_SUITE_CUDA_RUNTIME_VERSION");
   result->git_diff_sha256 = environment_or_null("GPU_SUITE_GIT_DIFF_SHA256");
   result->source_snapshot_sha256 =
       environment_or_null("GPU_SUITE_SOURCE_SNAPSHOT_SHA256");

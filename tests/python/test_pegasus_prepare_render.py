@@ -105,6 +105,25 @@ class PegasusConfigurationAndRenderTests(unittest.TestCase):
         with self.assertRaises(PegasusConfigError):
             load_pegasus_config(example_path)
 
+    def test_cuda_toolkit_version_requires_exact_component_version(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = pegasus_config(Path(temporary))
+            config["cuda_toolkit_version"] = "13.0"
+            with self.assertRaisesRegex(
+                PegasusConfigError, "CMake/NVCC component version"
+            ):
+                validate_pegasus_config(config)
+            config["cuda_toolkit_version"] = "cuda/13.0.2"
+            with self.assertRaisesRegex(
+                PegasusConfigError, "CMake/NVCC component version"
+            ):
+                validate_pegasus_config(config)
+            config["cuda_toolkit_version"] = "13.0.88"
+            self.assertEqual(
+                validate_pegasus_config(config)["cuda_toolkit_version"],
+                "13.0.88",
+            )
+
     def test_build_scripts_fix_profiles_and_module_groups(self):
         cpu_script = (PEGASUS_DIRECTORY / "build_cpu_cuda.sh").read_text(encoding="utf-8")
         openacc_script = (PEGASUS_DIRECTORY / "build_openacc.sh").read_text(encoding="utf-8")

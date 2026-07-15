@@ -117,6 +117,9 @@ class CollectionTests(unittest.TestCase):
             metadata["cuda_runtime_identity"]["cuda_runtime_version"] = "12.7.0"
             with self.assertRaisesRegex(NodeToolError, "CUDA Runtime"):
                 classify_raw(raw, metadata)
+            metadata["cuda_runtime_identity"]["cuda_runtime_version"] = None
+            with self.assertRaisesRegex(NodeToolError, "complete node-matched"):
+                classify_raw(raw, metadata)
 
     def test_all_healthy_nodes_succeed(self):
         with tempfile.TemporaryDirectory() as temporary:

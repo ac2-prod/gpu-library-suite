@@ -1,8 +1,20 @@
 include(FindPackageHandleStandardArgs)
 include(GpuSuiteProbe)
 
-find_path(FFTW3f_INCLUDE_DIR NAMES fftw3.h)
-find_library(FFTW3f_LIBRARY NAMES fftw3f)
+set(_FFTW3f_ROOT_HINTS "")
+if(DEFINED FFTW_ROOT AND NOT "${FFTW_ROOT}" STREQUAL "")
+  list(APPEND _FFTW3f_ROOT_HINTS "${FFTW_ROOT}")
+endif()
+if(DEFINED ENV{FFTW_ROOT} AND NOT "$ENV{FFTW_ROOT}" STREQUAL "")
+  list(APPEND _FFTW3f_ROOT_HINTS "$ENV{FFTW_ROOT}")
+endif()
+
+find_path(FFTW3f_INCLUDE_DIR NAMES fftw3.h
+  HINTS ${_FFTW3f_ROOT_HINTS}
+  PATH_SUFFIXES include)
+find_library(FFTW3f_LIBRARY NAMES fftw3f
+  HINTS ${_FFTW3f_ROOT_HINTS}
+  PATH_SUFFIXES lib lib64)
 
 set(FFTW3f_BASE_LINKS FALSE)
 if(FFTW3f_INCLUDE_DIR AND FFTW3f_LIBRARY)
@@ -43,7 +55,9 @@ set(FFTW3f_THREADS_FOUND FALSE)
 set(FFTW3f_THREADS_DISABLE_REASON "base FFTW3f probe failed")
 if(FFTW3f_FOUND)
   find_package(Threads QUIET)
-  find_library(FFTW3f_THREADS_LIBRARY NAMES fftw3f_threads)
+  find_library(FFTW3f_THREADS_LIBRARY NAMES fftw3f_threads
+    HINTS ${_FFTW3f_ROOT_HINTS}
+    PATH_SUFFIXES lib lib64)
   if(NOT FFTW3f_THREADS_LIBRARY)
     set(FFTW3f_THREADS_DISABLE_REASON "fftw3f_threads library was not found")
   elseif(NOT Threads_FOUND)

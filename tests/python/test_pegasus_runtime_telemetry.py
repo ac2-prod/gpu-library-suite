@@ -26,6 +26,16 @@ from telemetry import (  # noqa: E402
 )
 
 
+def successful_cuda_runtime_probe():
+    return {
+        "cuda_driver_api_version": "13.0.0",
+        "cuda_runtime_version": "13.0.96",
+        "diagnostic": None,
+        "loaded_library": "/fixture/cuda/lib64/libcudart.so",
+        "query_status": "success",
+    }
+
+
 class RuntimeEnvironmentTests(unittest.TestCase):
     def test_complete_document_and_stable_normalized_ldd(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -55,19 +65,20 @@ class RuntimeEnvironmentTests(unittest.TestCase):
                 "PATH": "/fake/bin",
                 "LD_LIBRARY_PATH": "/fake/lib",
                 "NVHPC_CUDA_HOME": str(directory / "cuda"),
-                "GPU_SUITE_CUDA_RUNTIME_VERSION": "fixture-runtime",
             })
             first = collect_runtime_environment(
                 inputs["manifest"], [inputs["metadata"]], module_list,
-                str(directory / "cuda"), "fixture-toolkit",
+                str(directory / "cuda"), "13.0.88",
                 str(directory / "cuda"), environment, execute, which,
                 require_ldd=True, require_gpu_tools=True,
+                cuda_runtime_probe=successful_cuda_runtime_probe,
             )
             second = collect_runtime_environment(
                 inputs["manifest"], [inputs["metadata"]], module_list,
-                str(directory / "cuda"), "fixture-toolkit",
+                str(directory / "cuda"), "13.0.88",
                 str(directory / "cuda"), environment, execute, which,
                 require_ldd=True, require_gpu_tools=True,
+                cuda_runtime_probe=successful_cuda_runtime_probe,
             )
             self.assertEqual(dump_bytes(first), dump_bytes(second))
             self.assertEqual(first["runtime_environment_schema_version"], 1)
@@ -82,7 +93,10 @@ class RuntimeEnvironmentTests(unittest.TestCase):
             self.assertEqual(first["binaries"][0]["ldd"]["output"],
                              ["libfixture.so => /lib/libfixture.so"])
             self.assertEqual(first["cuda"]["configured_toolkit_version"],
-                             "fixture-toolkit")
+                             "13.0.88")
+            self.assertEqual(first["cuda"]["runtime_version"], "13.0.96")
+            self.assertEqual(first["cuda"]["runtime_version_source"],
+                             "cudaRuntimeGetVersion")
             self.assertEqual(first["nvhpc"]["selected_cuda_toolkit"],
                              str(directory / "cuda"))
             self.assertTrue(all(
@@ -101,7 +115,8 @@ class RuntimeEnvironmentTests(unittest.TestCase):
             with self.assertRaises(RuntimeEnvironmentError):
                 collect_runtime_environment(
                     inputs["manifest"], [inputs["metadata"]], module_list,
-                    str(directory / "cuda"), "test", str(directory / "cuda"),
+                    str(directory / "cuda"), "13.0.88",
+                    str(directory / "cuda"),
                     environment,
                 )
 
@@ -131,9 +146,10 @@ class RuntimeEnvironmentTests(unittest.TestCase):
             environment["NVHPC_CUDA_HOME"] = str(directory / "cuda")
             document = collect_runtime_environment(
                 inputs["manifest"], [inputs["metadata"]], module_list,
-                str(directory / "cuda"), "fixture-toolkit",
+                str(directory / "cuda"), "13.0.88",
                 str(directory / "cuda"), environment, execute, which,
                 require_ldd=True, require_gpu_tools=True,
+                cuda_runtime_probe=successful_cuda_runtime_probe,
             )
             self.assertEqual(document["cuda"]["nvcc"]["status"],
                              "unavailable")
@@ -142,10 +158,11 @@ class RuntimeEnvironmentTests(unittest.TestCase):
             with self.assertRaises(RuntimeEnvironmentError):
                 collect_runtime_environment(
                     inputs["manifest"], [inputs["metadata"]], module_list,
-                    str(directory / "cuda"), "fixture-toolkit",
+                    str(directory / "cuda"), "13.0.88",
                     str(directory / "cuda"), environment, execute, which,
                     require_ldd=True, require_gpu_tools=True,
                     require_runtime_compilers=True,
+                    cuda_runtime_probe=successful_cuda_runtime_probe,
                 )
 
 

@@ -32,12 +32,11 @@ Pegasus固有path、module、queue、scheduler directiveを記載しない。
 
 | Queue | 制限・用途 |
 | --- | --- |
-| `debug` | 最大1時間、最大2ノード、debug/smoke test、0 point |
-| `interactive` | 最大24時間、対話利用 |
-| `gpu` | 最大24時間、最大150ノード、projectによって利用可否が異なる |
-| `gen_S` | 1〜31ノード、最大24時間 |
-| `gen_M` | 32〜63ノード、最大24時間 |
-| `gen_L` | 64〜150ノード、最大24時間 |
+| `debug` | `qlogin`によるinteractive verification。最大1時間、最大2ノード、0 point |
+| `gpu` | `qsub`によるbatch smoke、pilot、benchmark。最大24時間、最大150ノード、projectによって利用可否が異なる |
+| `gen_S` | 一般利用/HPCI向け、1〜31ノード、最大24時間。AC2では使用しない |
+| `gen_M` | 一般利用/HPCI向け、32〜63ノード、最大24時間。AC2では使用しない |
+| `gen_L` | 一般利用/HPCI向け、64〜150ノード、最大24時間。AC2では使用しない |
 
 利用可能queueはprojectによって異なる。account、queue、module名・version、
 MPI version、shared output pathを推測または固定しない。投入前に人間が次を
@@ -187,6 +186,12 @@ job masterは`benchmark_runtime_modules`をloadした後、preflight前に
 compiler/runtime、`NVHPC_CUDA_HOME`またはNVHPCが実際に選択したCUDA Toolkit、
 FFTW/oneMKL/OpenBLAS/LAPACKE等のversion、全binaryの`ldd`出力、解決された
 shared-library path、およびCPU thread環境の8変数を保存する。
+
+Pegasus設定の`cuda_toolkit_version`はmodule release名ではなく、CMakeの
+`CUDAToolkit_VERSION`がbuild metadataへ記録する完全なcomponent versionである。
+runtime collectorはこの値をbuild metadataと完全一致で比較する。module名は
+`module_list`へ別に保存し、CUDA Runtime versionは`cudaRuntimeGetVersion`から
+独立に取得する。Runtime probeが失敗した場合にToolkit versionで代用しない。
 
 benchmark runtimeの必須条件は、prebuilt binaryが必要とするdriver、CUDA
 runtime、およびshared libraryが解決・実行可能であることである。`nvcc`、`nvc`、
@@ -377,7 +382,7 @@ raw telemetryとbenchmark resultを保持する。
 
 ### Smoke test
 
-- `debug` queue、1〜2ノード、1時間以内
+- `gpu` queueへのbatch job、1〜2ノード、1時間以内
 - 小さいproblem size
 - build確認、example実行、benchmark 1 trial
 - `compute-sanitizer`

@@ -172,9 +172,20 @@ int main(void) {
   options.size_set = true;
   options.batch = 8U;
   options.repeat = 2;
+  assert(setenv("GPU_SUITE_CUDA_DRIVER_VERSION", "environment-driver", 1) ==
+         0);
+  assert(setenv("GPU_SUITE_CUDA_RUNTIME_VERSION", "environment-runtime", 1) ==
+         0);
+  assert(setenv("GPU_SUITE_LIBRARY_VERSION", "environment-library", 1) == 0);
   assert(gpu_suite_result_init(&gpu) == GPU_SUITE_OK);
   assert(gpu_suite_result_apply_options(&gpu, &options, error,
                                         sizeof(error)) == GPU_SUITE_OK);
+  assert(gpu.cuda_driver_version == NULL);
+  assert(gpu.cuda_runtime_version == NULL);
+  assert(gpu.library_version == NULL);
+  assert(unsetenv("GPU_SUITE_CUDA_DRIVER_VERSION") == 0);
+  assert(unsetenv("GPU_SUITE_CUDA_RUNTIME_VERSION") == 0);
+  assert(unsetenv("GPU_SUITE_LIBRARY_VERSION") == 0);
   finalize_success(&gpu);
   assert(gpu_suite_result_validate(&gpu, error, sizeof(error)) != GPU_SUITE_OK);
   gpu.gpu_name = "Test GPU";
