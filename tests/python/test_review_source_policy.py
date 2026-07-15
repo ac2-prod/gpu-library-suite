@@ -1,5 +1,6 @@
 import re
 import unittest
+from os import walk as directory_walk
 from pathlib import Path
 
 
@@ -381,6 +382,56 @@ class ReviewSourcePolicyTests(unittest.TestCase):
             self.assertIn(name, providers)
         self.assertIn("cmake_cpu_provider_mixed_rejected", tests)
         self.assertIn("cmake_cpu_provider_switch_openblas", tests)
+
+    def test_cmake_env_commands_have_no_unsupported_separator(self):
+        fixture_tests = read("tests/CMakeLists.txt")
+        self.assertGreaterEqual(
+            fixture_tests.count(
+                "COMMAND ${_gpu_suite_clean_provider_environment}"
+            ),
+            7,
+        )
+        cmake_paths = []
+        excluded_directories = {
+            ".git", "CMakeFiles", "__pycache__", "_deps", "build",
+            "manual-validation", "results", "test-fixtures",
+        }
+        for directory, directory_names, file_names in directory_walk(ROOT):
+            directory_names[:] = sorted(
+                name for name in directory_names
+                if name not in excluded_directories
+            )
+            cmake_paths.extend(
+                Path(directory) / name for name in file_names
+                if name == "CMakeLists.txt" or name.endswith(".cmake")
+            )
+        cmake_paths.sort()
+        env_command = re.compile(
+            r'(?:\$\{CMAKE_COMMAND\}["\']?|\bcmake)\s+-E\s+env\b'
+        )
+        unsupported_separator = re.compile(
+            r'(?<!\S)(?:"--"|--)(?=\s|\))'
+        )
+        occurrences = 0
+        for path in cmake_paths:
+            text = path.read_text(encoding="utf-8")
+            for match in env_command.finditer(text):
+                occurrences += 1
+                statement_end = text.find(")", match.end())
+                self.assertNotEqual(
+                    statement_end,
+                    -1,
+                    "unterminated cmake -E env command in {0}".format(
+                        path.relative_to(ROOT)
+                    ),
+                )
+                command = text[match.start():statement_end + 1]
+                self.assertIsNone(
+                    unsupported_separator.search(command),
+                    "CMake 3.20/3.22 does not accept an independent -- after "
+                    "cmake -E env in {0}".format(path.relative_to(ROOT)),
+                )
+        self.assertGreaterEqual(occurrences, 1)
 
     def test_pegasus_mpi_and_optional_compiler_policy(self):
         template = read("jobs/pegasus/run_benchmarks.pbs.in")

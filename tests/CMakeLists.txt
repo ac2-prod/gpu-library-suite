@@ -69,8 +69,7 @@ set(_gpu_suite_clean_provider_environment
     --unset=CPATH
     --unset=C_INCLUDE_PATH
     --unset=CPLUS_INCLUDE_PATH
-    --unset=LIBRARY_PATH
-    --)
+    --unset=LIBRARY_PATH)
 set(_gpu_suite_unavailable_provider_root
     "${_gpu_suite_fixture_root}/unavailable-provider")
 set(_gpu_suite_disable_cpu_provider_options
@@ -622,7 +621,8 @@ if(Python3_Interpreter_FOUND)
       "GPU_SUITE_CPU_PROVIDER_FIXTURE_METADATA=${_cpu_provider_positive_build}/build-metadata.json"
       "GPU_SUITE_CBLAS_FIXTURE_BENCH=${_cpu_provider_positive_build}/nvidia/c-cpp/cublas/blas_cpu_bench"
       "GPU_SUITE_SPARSE_FIXTURE_BENCH=${_cpu_provider_positive_build}/nvidia/c-cpp/cusparse/sparse_cpu_bench"
-      "GPU_SUITE_SOLVER_FIXTURE_BENCH=${_cpu_provider_positive_build}/nvidia/c-cpp/cusolver/solver_cpu_bench")
+      "GPU_SUITE_SOLVER_FIXTURE_BENCH=${_cpu_provider_positive_build}/nvidia/c-cpp/cusolver/solver_cpu_bench"
+      "GPU_SUITE_CMAKE_COMMAND=${CMAKE_COMMAND}")
   if(TARGET rand_cpu_bench)
     list(APPEND _gpu_suite_python_test_environment
       "GPU_SUITE_RAND_CPU_BENCH=$<TARGET_FILE:rand_cpu_bench>")
@@ -649,8 +649,7 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/python/check_non_git_build.py"
             --cmake "${CMAKE_COMMAND}"
-            --source "${CMAKE_SOURCE_DIR}"
-            --fixture-root "${_gpu_suite_fixture_root}/non-git")
+            --source "${CMAKE_SOURCE_DIR}")
   set_tests_properties(non_git_source_build PROPERTIES
     ENVIRONMENT "PYTHONPYCACHEPREFIX=${_gpu_suite_fixture_pycache}"
     PROCESSORS 2
