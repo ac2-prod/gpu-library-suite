@@ -23,14 +23,6 @@ FIGURE_FILENAMES = {
     benchmark: "{0}-elapsed-time.png".format(benchmark)
     for benchmark in PUBLICATION_BENCHMARKS
 }
-FIGURE_TITLES = {
-    "cufft": "cuFFT: FP32 complex batched 1-D C2C forward FFT (batch=4096)",
-    "cublas": "cuBLAS: FP64 DGEMM (default math mode)",
-    "cusparse": "cuSPARSE: FP64 CSR SpMV (regular 2-D Poisson matrix)",
-    "cusolver": "cuSOLVER: FP64 LU factorization + 16-RHS solve",
-    "curand": "cuRAND: uniform double generation",
-    "thrust": "Thrust: double transform_reduce",
-}
 X_LABELS = {
     "cufft": "1-D FFT length (nfft)",
     "cublas": "Matrix order (N)",
@@ -40,16 +32,28 @@ X_LABELS = {
     "thrust": "Input elements (N)",
 }
 PANEL_TITLES = {
-    "compute": "Data-resident compute",
-    "end-to-end": "One-shot host-input-to-host-output",
+    "compute": "Library kernel execution time",
+    "end-to-end": "End-to-end execution time",
 }
 CPU_SERIES_LABELS = {
-    ("cufft", "cpu-fftw-threaded"): "CPU: FFTW threaded, 48 threads",
-    ("cublas", "cpu-onemkl"): "CPU: oneMKL, 48 threads",
-    ("cusparse", "cpu-onemkl"): "CPU: oneMKL, 48 threads",
-    ("cusolver", "cpu-onemkl"): "CPU: oneMKL, 48 threads",
-    ("curand", "cpu-std-random-serial"): "CPU serial reference",
-    ("thrust", "cpu-stl-serial"): "CPU serial reference",
+    ("cufft", "cpu-fftw-threaded"): (
+        "Intel Xeon Platinum 8468, FFTW (48 C)"
+    ),
+    ("cublas", "cpu-onemkl"): (
+        "Intel Xeon Platinum 8468, oneMKL (48 C)"
+    ),
+    ("cusparse", "cpu-onemkl"): (
+        "Intel Xeon Platinum 8468, oneMKL (48 C)"
+    ),
+    ("cusolver", "cpu-onemkl"): (
+        "Intel Xeon Platinum 8468, oneMKL (48 C)"
+    ),
+    ("curand", "cpu-std-random-serial"): (
+        "Intel Xeon Platinum 8468, std::mt19937_64 (single thread)"
+    ),
+    ("thrust", "cpu-stl-serial"): (
+        "Intel Xeon Platinum 8468, STL (single thread)"
+    ),
 }
 
 
@@ -68,10 +72,25 @@ def _series_label(record: Mapping[str, Any]) -> str:
                 "unexpected publication CPU series: {0}/{1}".format(*key)
             ) from error
     if implementation == "cuda":
-        return "CUDA"
+        return "NVIDIA H100 PCIe, CUDA"
     if implementation == "openacc":
-        return "OpenACC"
+        return "NVIDIA H100 PCIe, OpenACC"
     raise PlotError("publication plots accept only CPU, CUDA, and OpenACC")
+
+
+def _binary_tick_label(value: float, _position: Optional[int] = None) -> str:
+    if not math.isfinite(value):
+        return ""
+    integer = int(round(value))
+    if not math.isclose(value, integer, rel_tol=0.0, abs_tol=1.0e-9):
+        return "{0:g}".format(value)
+    if abs(integer) < 1024:
+        return str(integer)
+    if integer % (1024 * 1024) == 0:
+        return "{0}M".format(integer // (1024 * 1024))
+    if integer % 1024 == 0:
+        return "{0}K".format(integer // 1024)
+    return str(integer)
 
 
 def primary_plot_series(records: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
@@ -305,6 +324,7 @@ def render_plots(
         matplotlib = importer("matplotlib")
         matplotlib.use("Agg")
         pyplot = importer("matplotlib.pyplot")
+        ticker = importer("matplotlib.ticker")
     except (ImportError, ModuleNotFoundError) as error:
         metadata["matplotlib"] = {
             "reason": "matplotlib is unavailable: {0}".format(error),
@@ -338,13 +358,24 @@ def render_plots(
                 ]
                 axis.plot(x_values, y_values, marker="o", label=item["label"])
             axis.set_xscale("log", base=2)
+            if benchmark == "cusolver":
+                axis.set_xticks((4096, 8192, 12288))
+            axis.xaxis.set_major_formatter(
+                ticker.FuncFormatter(_binary_tick_label)
+            )
             axis.set_xlabel(X_LABELS[benchmark])
             axis.set_ylabel("Elapsed time [ms]")
             axis.set_title(PANEL_TITLES[scope])
             axis.grid(True, which="both", alpha=0.25)
-            axis.legend()
-        figure.suptitle(FIGURE_TITLES[benchmark] + " — lower is better")
-        figure.tight_layout()
+        legend_handles, legend_labels = axes[0].get_legend_handles_labels()
+        figure.legend(
+            legend_handles,
+            legend_labels,
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.01),
+            ncol=3,
+        )
+        figure.tight_layout(rect=(0.0, 0.12, 1.0, 1.0))
         figure.savefig(str(output_directory / FIGURE_FILENAMES[benchmark]), dpi=150)
         pyplot.close(figure)
     metadata["generated_files"] = filenames
