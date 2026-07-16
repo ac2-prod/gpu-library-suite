@@ -359,6 +359,28 @@ class ReviewSourcePolicyTests(unittest.TestCase):
                     path.read_text(encoding="utf-8"),
                 )
 
+    def test_thrust_targets_resolve_external_toolkit_cccl_before_probing(self):
+        cmake = read("nvidia/c-cpp/thrust/CMakeLists.txt")
+        self.assertIn("CUDAToolkit_INCLUDE_DIRS", cmake)
+        self.assertIn("cccl/thrust/version.h", cmake)
+        self.assertIn(
+            "target_include_directories(${target} BEFORE PRIVATE", cmake
+        )
+        self.assertEqual(
+            cmake.count('INCLUDES "${_thrust_cccl_include_dir}"'), 2
+        )
+        for target in (
+            "reduce_gpu", "reduce_gpu_bench",
+            "openacc_thrust", "openacc_thrust_bench",
+        ):
+            with self.subTest(target=target):
+                self.assertIn(
+                    "_gpu_suite_thrust_use_external_cccl({0})".format(target),
+                    cmake,
+                )
+        for forbidden in ("/system/", "cuda/13", "cc90"):
+            self.assertNotIn(forbidden, cmake)
+
     def test_linux_c17_fixture_and_provider_cmake_policy(self):
         common = read("common/c-cpp/CMakeLists.txt")
         targets = read("cmake/GpuSuiteTargets.cmake")

@@ -29,6 +29,31 @@ from gpu_suite.validation import validate_campaign
 from support import ROOT, ZERO_HASH, pilot_config
 
 
+def cpu_integration_fixture_config():
+    config = pilot_config()
+    parameters = {
+        "cufft": {"batch": 8, "nfft": 256},
+        "cublas": {"size": 128},
+        "cusparse": {"size": 4096},
+        "cusolver": {"nrhs": 2, "size": 64},
+        "curand": {"size": 65536},
+        "thrust": {"size": 65536},
+    }
+    for benchmark, overrides in parameters.items():
+        case = copy.deepcopy(config["benchmarks"][benchmark]["cases"][0])
+        case["parameters"].update(overrides)
+        case["scopes"] = {
+            "compute": {
+                "repeat": 1 if benchmark == "cusolver" else 2,
+                "trials": 1,
+                "warmup": 1,
+            },
+            "end-to-end": {"repeat": 1, "trials": 1, "warmup": 1},
+        }
+        config["benchmarks"][benchmark]["cases"] = [case]
+    return config
+
+
 def execution_fixture(trials=3, continue_on_failure=True):
     config = pilot_config()
     config["continue_on_failure"] = continue_on_failure
@@ -536,8 +561,11 @@ class RunnerTests(unittest.TestCase):
             {entry["library"] for entry in entries},
             fftw_libraries | cpu_provider_libraries,
         )
-        config_path = ROOT / "configs" / "pilot.json"
+        config = cpu_integration_fixture_config()
         with tempfile.TemporaryDirectory() as temporary:
+            config_path = Path(temporary) / "fixture-config.json"
+            config_path.write_bytes(dump_bytes(config))
+            config_sha256 = sha256_file(config_path)
             manifest_path = Path(temporary) / "executables.json"
             manifest_path.write_bytes(dump_bytes({
                 "build_metadata_sha256s": sorted({
@@ -565,12 +593,12 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(run_suite.main(arguments), 1)
             records = load_raw_results(output)
             manifest, _ = load_manifest(manifest_path)
-        self.assertEqual(len(records), 38)
+        self.assertEqual(len(records), 36)
         self.assertEqual(len({
             (record["benchmark"], record["implementation"],
              record["cpu_backend"], record["scope"], record["trial"])
             for record in records
-        }), 38)
+        }), 36)
         self.assertTrue(any(record["status"] == "success" for record in records))
         self.assertTrue(any(record["status"] == "skipped" for record in records))
         attempted = {
@@ -583,8 +611,6 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(attempted, {
             ("cufft", "cpu", "cpu-fftw-threaded", "compute"),
             ("cufft", "cpu", "cpu-fftw-threaded", "end-to-end"),
-            ("cufft", "cpu", "cpu-fftw-serial", "compute"),
-            ("cufft", "cpu", "cpu-fftw-serial", "end-to-end"),
             ("cublas", "cpu", "cpu-onemkl", "compute"),
             ("cublas", "cpu", "cpu-onemkl", "end-to-end"),
             ("cusparse", "cpu", "cpu-onemkl", "compute"),
@@ -601,7 +627,7 @@ class RunnerTests(unittest.TestCase):
             for record in records if record["attempted"]
         ))
         report = validate_campaign(
-            records, pilot_config(), sha256_file(config_path), manifest
+            records, config, config_sha256, manifest
         )
         self.assertEqual(report["validation_status"], "failure")
 

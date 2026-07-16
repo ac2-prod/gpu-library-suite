@@ -109,10 +109,10 @@ trial as failed but does not prevent a restored later trial from running.
 
 ## CPU backend and role
 
-`cpu-fftw-threaded` is the Pegasus production primary denominator.
-`cpu-fftw-serial` is a reference auxiliary teaching-correspondence series. If
-the threads API is unavailable, CMake may retain serial support, but the suite
-does not silently substitute it and produces no primary cuFFT speedup.
+`cpu-fftw-threaded` is the only CPU series in the Pegasus publication
+configuration and is labeled **CPU: FFTW threaded, 48 threads**. CMake may
+retain a separately invoked `cpu-fftw-serial` teaching-correspondence backend,
+but it is not a publication series and is never substituted for threaded FFTW.
 
 ## OpenACC notes
 

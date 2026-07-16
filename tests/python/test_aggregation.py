@@ -53,10 +53,17 @@ class AggregationTests(unittest.TestCase):
         self.assertEqual(sum(metadata["size_order_assignment_counts"].values()), 5)
 
     def test_speedup_uses_only_configured_primary_cpu_backend(self):
+        auxiliary = raw_success(elapsed=0.5, series_role="auxiliary")
+        auxiliary.update({
+            "cpu_backend": "cpu-fftw-serial",
+            "cpu_backend_role": "reference",
+            "cpu_parallelism": "serial",
+            "cpu_threads_effective": 1,
+            "library_name": "cpu-fftw-serial",
+        })
         raw = [
             raw_success(elapsed=2.0, cpu_backend="cpu-fftw-threaded"),
-            raw_success(elapsed=0.5, cpu_backend="cpu-fftw-serial",
-                        series_role="auxiliary"),
+            auxiliary,
             raw_success(implementation="cuda", elapsed=1.0),
         ]
         records, metadata = aggregate_results(raw, pilot_config())

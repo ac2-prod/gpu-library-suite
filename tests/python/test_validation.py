@@ -96,6 +96,7 @@ class ValidationTests(unittest.TestCase):
         for item in build_schedule(config, manifest, context):
             selected = (
                 item["benchmark"] == "cufft"
+                and item["case_index"] == 0
                 and item["scope"] == "compute"
                 and item["series"]["cpu_backend"] == "cpu-fftw-threaded"
             )
@@ -145,8 +146,8 @@ class ValidationTests(unittest.TestCase):
         report = validate_campaign(records, config, ZERO_HASH, manifest)
         self.assertEqual(report["validation_status"], "failure")
         self.assertEqual(report["block_count"], 1)
-        self.assertEqual(report["record_count"], 38)
-        self.assertEqual(report["status_counts"], {"skipped": 38})
+        self.assertEqual(report["record_count"], 108)
+        self.assertEqual(report["status_counts"], {"skipped": 108})
 
     def test_integral_raw_spelling_matches_float_config_parameters(self):
         config, manifest, records = prerequisite_campaign()
@@ -155,8 +156,8 @@ class ValidationTests(unittest.TestCase):
                 record["parameters"]["alpha"] = 1
                 record["parameters"]["beta"] = 1
         report = validate_campaign(records, config, ZERO_HASH, manifest)
-        self.assertEqual(report["record_count"], 38)
-        self.assertEqual(report["status_counts"], {"skipped": 38})
+        self.assertEqual(report["record_count"], 108)
+        self.assertEqual(report["status_counts"], {"skipped": 108})
 
     def test_validation_cli_reports_complete_failed_campaign_as_failure(self):
         _config, manifest, records = prerequisite_campaign()

@@ -233,21 +233,21 @@ runs require Release artifacts and clean source. Dirty smoke/pilot provenance
 uses a deterministic source-snapshot hash that includes tracked and untracked,
 non-ignored build inputs.
 
-### Initial calibration configurations
+### Publication calibration configurations
 
 Both canonical configurations encode `warmup`, `repeat`, and `trials` under each
 scope. Implementations cannot override them. Equality is enforced across CPU,
 CUDA, and OpenACC for each benchmark + normalized problem + scope; compute and
 end-to-end scopes remain independent.
 
-Both files begin with `config_schema_version=1`; ordinary calibration changes
-do not change that value.
+Both files retain `config_schema_version=1`; ordinary calibration changes do
+not change that value.
 
 Each case has the structural shape `problem` plus a `scopes` object containing
 separate `compute` and `end-to-end` objects. Both canonical configurations use
 JSON Lines as the node raw default, enable verification, and set
 `continue_on_failure=true`; failures still make final campaign validation fail.
-Both canonical initial calibration configurations request 48 CPU threads. A
+Both canonical publication calibration configurations request 48 CPU threads. A
 serial backend still records effective thread count 1; requested and effective
 thread counts are separate provenance fields.
 
@@ -290,37 +290,14 @@ library parameters such as alpha/beta. Unknown keys, missing required keys,
 duplicate keys, non-standard numeric constants, and implementation-local timing
 overrides are errors.
 
-`configs/pilot.json` starts with:
-
-| Benchmark | Problem |
-| --- | --- |
-| cuFFT | `nfft=256`, `batch=8` |
-| cuBLAS | `size=128` |
-| cuSPARSE | `size=4096` |
-| cuSOLVER | `size=64`, `nrhs=2` |
-| cuRAND | `size=65536` |
-| Thrust | `size=65536` |
-
-Pilot compute settings are `warmup=1`, `trials=1`, and `repeat=2`; pilot
-end-to-end settings are `warmup=1`, `trials=1`, and `repeat=1`. cuSOLVER uses
-`repeat=1` in both scopes.
-
-`configs/benchmark.json` starts with:
-
-| Benchmark | Problems | Compute repeat |
-| --- | --- | --- |
-| cuFFT | `nfft=[256,1024,4096,16384]`, `batch=4096` | 3 |
-| cuBLAS | `size=[512,1024,2048,4096]` | 3 |
-| cuSPARSE | `size=[65536,262144,1048576,4194304]` | 10 |
-| cuSOLVER | `size=[256,512,1024,2048]`, `nrhs=16` | 1 |
-| cuRAND | `size=[1048576,4194304,16777216,67108864]` | 3 |
-| Thrust | `size=[1048576,4194304,16777216,67108864]` | 10 |
-
-Benchmark compute settings are `warmup=1` and `trials=5`. End-to-end settings
-are `warmup=1`, `repeat=1`, and `trials=5` for every library. These are initial
-calibration candidates, not production-fixed values. After pilot measurement,
-the same canonical `configs/benchmark.json` is updated without renaming it or
-incrementing `config_schema_version`.
+`configs/pilot.json` and `configs/benchmark.json` use the same three-case
+publication workloads and compute-repeat candidates owned by
+[`BENCHMARK_PROTOCOL.md`](BENCHMARK_PROTOCOL.md). Pilot uses one trial and
+production uses five; both use warm-up 1 and end-to-end repeat 1. The expected
+counts with Thrust are 108 pilot rows and 6,480 production rows. A human may
+revise the canonical values once after the Pegasus pilot for a demonstrated
+OOM, verification, walltime, or short-interval problem. No automatic repeat
+search or competing canonical file is introduced.
 
 The initial Pegasus primary CPU selections are:
 
@@ -340,13 +317,15 @@ auxiliary series; none silently replaces a listed primary backend.
 
 ### Primary CPU series and repeat-state semantics
 
-Pegasus cuFFT uses `cpu-fftw-threaded` as the primary production CPU backend.
-`cpu-fftw-serial` is auxiliary or teaching-correspondence only. If the threaded
-probe fails, serial does not replace it and no primary cuFFT speedup is emitted.
+Pegasus publication measurement uses `cpu-fftw-threaded` as the only cuFFT CPU
+series. A separately invoked `cpu-fftw-serial` backend remains available for
+teaching correspondence but is not present in either canonical publication
+configuration and never replaces the threaded series.
 
-cuRAND's `cpu-std-random-serial` and Thrust's `cpu-stl-serial` remain production
-serial baselines. Plots label both exactly **Serial CPU baseline**, even when
-the campaign requested 48 CPU threads.
+cuRAND's `cpu-std-random-serial` and Thrust's `cpu-stl-serial` remain configured
+production serial implementations. Publication plots label both exactly **CPU
+serial reference**, never a parallel or algorithm-equivalent baseline, even
+when the campaign requested 48 CPU threads.
 
 cuBLAS and cuSPARSE compute repeats intentionally carry C or y state through
 the repeat loop, and verification accounts for every update. End-to-end repeats
@@ -696,8 +675,8 @@ finishes user-facing documentation.
 
 - Three canonical cuFFT teaching examples.
 - Three corresponding cuFFT benchmarks.
-- `fft_cpu_bench` with distinct `cpu-fftw-threaded` primary and
-  `cpu-fftw-serial` auxiliary series when threaded support is linked.
+- `fft_cpu_bench` with distinct threaded and serial backend capability; the
+  publication configuration selects only `cpu-fftw-threaded`.
 - FFTW3f base/threaded and OpenACC cuFFT compile-and-link probes.
 - CMake targets with canonical stem names in both build profiles.
 - DC/non-DC verification, state restoration, and both timing scopes.
@@ -725,10 +704,9 @@ finishes user-facing documentation.
   managed array is also explicitly allocated.
 - The OpenACC probe includes `<cufft.h>`, a CUDA Runtime call, and a cuFFT symbol
   and links through `OpenACC::OpenACC_CXX`, `CUDA::cudart`, and `CUDA::cufft`.
-- Pegasus configuration selects `cpu-fftw-threaded` as the primary denominator
-  and `cpu-fftw-serial` as auxiliary/teaching correspondence.
-- If threaded FFTW is unavailable, serial never becomes primary and aggregate
-  output contains no primary cuFFT speedup.
+- Pegasus publication configuration selects only `cpu-fftw-threaded`; a serial
+  teaching-correspondence invocation is separate and never becomes primary.
+- If threaded FFTW is unavailable, serial never becomes a publication series.
 - CPU-only configure remains valid when every GPU dependency is absent.
 - Manifest entries contain the required identity, profile, variant, metadata,
   and binary hashes and pass runner-side consistency fixtures.
@@ -811,8 +789,9 @@ finishes user-facing documentation.
   layers for both scopes.
 - cuRAND emits the required interval metadata and four metrics and applies the
   exact mean and second-central-moment formulas using N.
-- cuRAND and Thrust serial production baselines record requested/effective
-  threads separately and are labeled **Serial CPU baseline**.
+- cuRAND and Thrust serial production implementations record
+  requested/effective threads separately and are labeled **CPU serial
+  reference** in publication output.
 - README and plot metadata state that cuRAND compares the same distribution and
   output type but different RNG algorithms.
 - Reference backends never replace production backends silently.
@@ -869,8 +848,8 @@ finishes user-facing documentation.
 
 ### Required gate
 
-- Both canonical configurations contain exactly the approved initial problem
-  candidates and scope-specific warm-up/repeat/trials values.
+- Both canonical configurations contain exactly the approved three-case
+  publication candidates and scope-specific warm-up/repeat/trials values.
 - Equality is enforced per benchmark + normalized problem + scope across CPU,
   CUDA, and OpenACC, without forcing compute and end-to-end repeats equal.
 - Execution is interleaved by problem size; it never runs all CPU cases before
@@ -901,7 +880,8 @@ finishes user-facing documentation.
   zero/one-sample behavior.
 - Speedup uses only the configured production CPU backend and is omitted rather
   than substituted when unavailable.
-- cuFFT primary speedup requires `cpu-fftw-threaded`; serial remains auxiliary.
+- cuFFT publication output contains only `cpu-fftw-threaded`; serial remains a
+  separate teaching-correspondence capability.
 - Each benchmark has exactly one production CPU backend in a primary campaign;
   additional CPU backends are separate campaigns or explicitly auxiliary
   series and never become an automatic speedup denominator.
@@ -911,8 +891,12 @@ finishes user-facing documentation.
   conflicting path/hash/metadata, and mismatched build profiles.
 - Runner checks manifest/build metadata before launch and raw compiler/Git
   metadata after launch.
-- Serial cuRAND/Thrust CPU baselines use the exact graph label and cuRAND plots
-  carry the algorithm-comparison note in deterministic plot metadata.
+- Plotting emits exactly one two-panel millisecond elapsed-time figure per
+  publication library from cross-wave summaries, with no speedup, throughput,
+  reuse, amortized, or extra generic figure.
+- cuRAND/Thrust use the exact **CPU serial reference** graph label. cuRAND
+  carries the algorithm-comparison note, and Thrust requires equal CUDA/OpenACC
+  raw-result `library_version` evidence before any figure is written.
 - Every Python source passes AST parsing as Python 3.9, normal byte-compilation,
   standard-library API compatibility checks, and unit tests.
 - All Phase 4 tests and `git diff --check` pass.
@@ -1098,8 +1082,8 @@ finishes user-facing documentation.
   failure/skipped semantics, provenance, and node failure isolation agree with
   the synchronized specifications and implemented tests.
 - cuRAND documentation and plot metadata explain the distribution/type task
-  comparison and different algorithms; cuRAND/Thrust serial CPU labels are
-  exact.
+  comparison and different algorithms; cuRAND/Thrust use the exact **CPU serial
+  reference** label.
 - GPU and optimized CPU areas not executed locally remain visibly unverified.
 - Every changed file, command, successful test, unexecuted test/reason, and
   required Pegasus check is reported.

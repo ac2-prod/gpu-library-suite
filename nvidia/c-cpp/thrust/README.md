@@ -29,7 +29,9 @@ The serial CPU targets need only a C++17 standard library. An explicitly
 selected OpenMP CPU variant requires `OpenMP::OpenMP_CXX`. CUDA targets require
 CUDA Runtime and Thrust headers. OpenACC targets require NVHPC OpenACC C++, CUDA
 Runtime, and Thrust, including `-cuda`-equivalent flags at both compile and link
-time.
+time. CMake resolves `include/cccl/thrust/version.h` from
+`CUDAToolkit_INCLUDE_DIRS` and prepends that external Toolkit's `include/cccl`
+for both CUDA and OpenACC probes, examples, and benchmarks.
 
 ## Direct compile
 
@@ -99,9 +101,10 @@ retained but does not become a fatal barrier to a restored later trial.
 
 ## CPU backend and role
 
-`cpu-stl-serial` is the production primary serial CPU backend and is plotted as
-**Serial CPU baseline**. Requested threads may be 48 while effective threads are
-1. An optional `cpu-openmp` build is a separately named backend and is never a
+`cpu-stl-serial` is the configured production primary serial CPU backend and is
+plotted as **CPU serial reference**, not a parallel baseline. Requested threads
+may be 48 while effective threads are 1. No speedup is plotted from this series.
+An optional `cpu-openmp` build is a separately named backend and is never a
 silent replacement.
 
 ## OpenACC notes

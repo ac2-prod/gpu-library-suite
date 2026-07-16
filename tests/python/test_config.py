@@ -18,7 +18,7 @@ class ConfigTests(unittest.TestCase):
         validated = validate_config(config_fixture())
         case = validated["benchmarks"]["cufft"]["cases"][0]
         self.assertEqual(case["scopes"]["compute"], {
-            "repeat": 2, "trials": 1, "warmup": 1
+            "repeat": 5197, "trials": 1, "warmup": 1
         })
         self.assertEqual(case["scopes"]["end-to-end"], {
             "repeat": 1, "trials": 1, "warmup": 1
@@ -42,18 +42,18 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             validate_config(config)
 
-    def test_exact_pilot_calibration_candidates(self):
+    def test_exact_pilot_publication_matrix(self):
         config = config_fixture()
         self.assertEqual(config["cpu_threads"], 48)
         expected = {
-            "cufft": ([256], {"batch": 8}),
-            "cublas": ([128], {}),
-            "cusparse": ([4096], {}),
-            "cusolver": ([64], {"nrhs": 2}),
-            "curand": ([65536], {}),
-            "thrust": ([65536], {}),
+            "cufft": ([256, 4096, 16384], [5197, 328, 83], {"batch": 4096}),
+            "cublas": ([512, 2048, 4096], [2184, 133, 18], {}),
+            "cusparse": ([65536, 1048576, 4194304], [5776, 1520, 206], {}),
+            "cusolver": ([4096, 8192, 12288], [1, 1, 1], {"nrhs": 16}),
+            "curand": ([1048576, 16777216, 67108864], [640, 173, 54], {}),
+            "thrust": ([1048576, 16777216, 67108864], [1932, 532, 167], {}),
         }
-        for benchmark, (sizes, extras) in expected.items():
+        for benchmark, (sizes, repeats, extras) in expected.items():
             cases = config["benchmarks"][benchmark]["cases"]
             key = "nfft" if benchmark == "cufft" else "size"
             self.assertEqual([case["parameters"][key] for case in cases], sizes)
@@ -64,12 +64,16 @@ class ConfigTests(unittest.TestCase):
                 end_to_end = case["scopes"]["end-to-end"]
                 self.assertEqual(compute["warmup"], 1)
                 self.assertEqual(compute["trials"], 1)
-                self.assertEqual(compute["repeat"], 1 if benchmark == "cusolver" else 2)
                 self.assertEqual(end_to_end, {"repeat": 1, "trials": 1, "warmup": 1})
+            self.assertEqual(
+                [case["scopes"]["compute"]["repeat"] for case in cases],
+                repeats,
+            )
         cufft_series = config["benchmarks"]["cufft"]["series"]
-        serial = next(item for item in cufft_series if
-                      item["cpu_backend"] == "cpu-fftw-serial")
-        self.assertEqual(serial["series_role"], "auxiliary")
+        self.assertEqual(len(cufft_series), 3)
+        self.assertFalse(any(
+            item["cpu_backend"] == "cpu-fftw-serial" for item in cufft_series
+        ))
         self.assertEqual(
             config["benchmarks"]["cufft"]["default_speedup_cpu_backend"],
             "cpu-fftw-threaded",
@@ -80,28 +84,25 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(
             verification["expected_second_central_moment"], 1.0 / 12.0
         )
+        self.assertEqual(self.configured_row_count(config), 108)
 
-    def test_exact_benchmark_calibration_candidates(self):
+    def test_exact_benchmark_publication_matrix(self):
         config = load_config(ROOT / "configs" / "benchmark.json")
-        expected_sizes = {
-            "cufft": [256, 1024, 4096, 16384],
-            "cublas": [512, 1024, 2048, 4096],
-            "cusparse": [65536, 262144, 1048576, 4194304],
-            "cusolver": [256, 512, 1024, 2048],
-            "curand": [1048576, 4194304, 16777216, 67108864],
-            "thrust": [1048576, 4194304, 16777216, 67108864],
+        expected = {
+            "cufft": ([256, 4096, 16384], [5197, 328, 83]),
+            "cublas": ([512, 2048, 4096], [2184, 133, 18]),
+            "cusparse": ([65536, 1048576, 4194304], [5776, 1520, 206]),
+            "cusolver": ([4096, 8192, 12288], [1, 1, 1]),
+            "curand": ([1048576, 16777216, 67108864], [640, 173, 54]),
+            "thrust": ([1048576, 16777216, 67108864], [1932, 532, 167]),
         }
-        repeats = {
-            "cufft": 3, "cublas": 3, "cusparse": 10,
-            "cusolver": 1, "curand": 3, "thrust": 10,
-        }
-        for benchmark, sizes in expected_sizes.items():
+        for benchmark, (sizes, repeats) in expected.items():
             cases = config["benchmarks"][benchmark]["cases"]
             key = "nfft" if benchmark == "cufft" else "size"
             self.assertEqual([case["parameters"][key] for case in cases], sizes)
-            for case in cases:
+            for case, repeat in zip(cases, repeats):
                 self.assertEqual(case["scopes"]["compute"], {
-                    "repeat": repeats[benchmark], "trials": 5, "warmup": 1
+                    "repeat": repeat, "trials": 5, "warmup": 1
                 })
                 self.assertEqual(case["scopes"]["end-to-end"], {
                     "repeat": 1, "trials": 5, "warmup": 1
@@ -114,6 +115,28 @@ class ConfigTests(unittest.TestCase):
             case["parameters"]["nrhs"] == 16
             for case in config["benchmarks"]["cusolver"]["cases"]
         ))
+        self.assertEqual(self.configured_row_count(config, node_wave_blocks=12), 6480)
+
+    def test_expected_counts_when_thrust_is_excluded(self):
+        pilot = config_fixture()
+        pilot["benchmarks"]["thrust"]["enabled"] = False
+        self.assertEqual(self.configured_row_count(pilot), 90)
+        production = load_config(ROOT / "configs" / "benchmark.json")
+        production["benchmarks"]["thrust"]["enabled"] = False
+        self.assertEqual(
+            self.configured_row_count(production, node_wave_blocks=12), 5400
+        )
+
+    @staticmethod
+    def configured_row_count(config, node_wave_blocks=1):
+        rows = 0
+        for definition in config["benchmarks"].values():
+            if not definition["enabled"]:
+                continue
+            for case in definition["cases"]:
+                for scope in case["scopes"].values():
+                    rows += len(definition["series"]) * scope["trials"]
+        return rows * node_wave_blocks
 
     def test_configs_use_deterministic_json_profile(self):
         for name in ("pilot.json", "benchmark.json"):

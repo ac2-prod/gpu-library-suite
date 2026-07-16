@@ -161,12 +161,15 @@ class DocumentationTests(unittest.TestCase):
     def test_user_documentation_records_required_roles_and_boundaries(self):
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("cpu-fftw-threaded", readme)
-        self.assertIn("cpu-fftw-serial", readme)
-        self.assertIn("Serial CPU baseline", readme)
+        self.assertNotIn("cpu-fftw-serial", readme)
+        self.assertIn("CPU serial reference", readme)
         self.assertIn("same distribution and output type", readme)
         self.assertIn("RNG algorithms differ", readme)
         self.assertIn("only writer of the node-level raw-result file", readme)
-        self.assertIn("starting points, not final production", readme)
+        self.assertIn("one-node Pegasus", readme)
+        self.assertIn("data-resident compute panel", readme)
+        self.assertIn("one-shot host-input-to-host-output panel", readme)
+        self.assertIn("No speedup, throughput, reuse-count, amortized", readme)
         self.assertIn("No real CUDA GPU", readme)
 
     def test_all_relative_markdown_links_resolve(self):

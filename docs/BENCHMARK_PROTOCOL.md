@@ -186,7 +186,7 @@ had begun. Allocation and length-related C++ exceptions are handled explicitly;
 they do not terminate the process without a result when a valid row can still
 be emitted.
 
-## Configuration scope and initial calibration
+## Canonical publication configuration
 
 Each benchmark configuration contains normalized cases. A case has one
 `parameters` object and a `scopes` object with separate `compute` and
@@ -198,38 +198,33 @@ benchmark/normalized problem/scope. Compute and end-to-end settings are
 independent and need not have the same repeat or warm-up. cuSOLVER requires
 `repeat = 1` in every scope.
 
-The initial `configs/pilot.json` calibration cases are:
+The canonical pilot and production configurations use the same publication
+workloads, sizes, and repeats:
 
-| Benchmark | Problem |
-| --- | --- |
-| cuFFT | `nfft=256`, `batch=8` |
-| cuBLAS | `size=128` |
-| cuSPARSE | `size=4096` |
-| cuSOLVER | `size=64`, `nrhs=2` |
-| cuRAND | `size=65536` |
-| Thrust | `size=65536` |
-
-Pilot compute uses `warmup=1`, `trials=1`, and `repeat=2`; end-to-end uses
-`warmup=1`, `trials=1`, and `repeat=1`. cuSOLVER overrides the compute repeat to
-1.
-
-The initial `configs/benchmark.json` calibration cases are:
-
-| Benchmark | Problem sizes | Compute repeat |
+| Benchmark | Problem sizes | Compute repeats |
 | --- | --- | --- |
-| cuFFT | `nfft=[256,1024,4096,16384]`, `batch=4096` | 3 |
-| cuBLAS | `size=[512,1024,2048,4096]` | 3 |
-| cuSPARSE | `size=[65536,262144,1048576,4194304]` | 10 |
-| cuSOLVER | `size=[256,512,1024,2048]`, `nrhs=16` | 1 |
-| cuRAND | `size=[1048576,4194304,16777216,67108864]` | 3 |
-| Thrust | `size=[1048576,4194304,16777216,67108864]` | 10 |
+| cuFFT | `nfft=[256,4096,16384]`, `batch=4096` | `[5197,328,83]` |
+| cuBLAS | `size=[512,2048,4096]` | `[2184,133,18]` |
+| cuSPARSE | `size=[65536,1048576,4194304]` | `[5776,1520,206]` |
+| cuSOLVER | `size=[4096,8192,12288]`, `nrhs=16` | `[1,1,1]` |
+| cuRAND | `size=[1048576,16777216,67108864]` | `[640,173,54]` |
+| Thrust | `size=[1048576,16777216,67108864]` | `[1932,532,167]` |
 
-Benchmark compute uses `warmup=1` and `trials=5`. Every end-to-end case uses
-`warmup=1`, `repeat=1`, and `trials=5`.
+Every scope uses `warmup=1`. Compute uses the table's per-case repeat;
+end-to-end always uses `repeat=1`. `configs/pilot.json` uses one raw trial and
+`configs/benchmark.json` uses five raw trials. Both request 48 CPU threads.
+The cuFFT publication series contains threaded FFTW only.
 
-These values begin calibration; they are not fixed production values. After a
-pilot, update the same canonical `configs/benchmark.json` without renaming it or
-incrementing `config_schema_version`.
+With all six libraries, one pilot block contains 108 expected raw rows. The
+six-node, two-wave production design contains 6,480 expected rows. If a pilot
+finds different CUDA and OpenACC Thrust versions, exclude Thrust rather than
+combining incomparable series; the corresponding counts are 90 and 5,400.
+
+The compute repeats are measurement amplification only: `elapsed_sec` remains
+one library operation's elapsed time. A human may revise the canonical values
+once after the Pegasus pilot only for OOM, verification failure, extreme
+walltime, or a clearly inadequate timed interval. Do not add an automatic
+repeat search or create another canonical configuration.
 
 ## Trial attempt, failure, and skip behavior
 
@@ -301,18 +296,18 @@ FFTW serial and threaded series use distinct names, for example
 implementation-specific names such as `cpu-onemkl` and `cpu-openblas`.
 `cpu-reference-csr` is a reference backend.
 
-On Pegasus, cuFFT uses `cpu-fftw-threaded` as its primary production CPU
-backend. `cpu-fftw-serial` is auxiliary or teaching-correspondence only. If the
-threaded backend is unavailable, the serial series does not replace it and no
-primary cuFFT speedup is emitted.
+On Pegasus, the canonical publication configuration contains only
+`cpu-fftw-threaded` for cuFFT. A separately invoked `cpu-fftw-serial` executable
+may still support teaching correspondence, but it is not a publication series
+and never replaces the threaded backend.
 
 The canonical cuRAND CPU benchmark is `cpu-std-random-serial`, role
 `production`, using `std::mt19937_64` and
 `std::uniform_real_distribution<double>`. Its effective thread count is 1. The
 canonical Thrust CPU benchmark is `cpu-stl-serial`, role `production`, using
 `std::transform_reduce` without an execution policy; its effective thread count
-is also 1. Plots label both as **Serial CPU baseline**, never as 48-core CPU
-performance.
+is also 1. Publication plots label both as **CPU serial reference**, never as a
+parallel or algorithm-equivalent baseline and never as 48-core CPU performance.
 
 ## Timing fields
 
@@ -559,8 +554,8 @@ partial success record.
   in metadata.
 - Do not require element-wise identity between CPU and GPU streams.
 - `std::mt19937_64` and `CURAND_RNG_PSEUDO_DEFAULT` are different random-number
-  algorithms. This is a throughput comparison of the same task, output type,
-  and uniform distribution, not an algorithm-equivalent comparison.
+  algorithms. Their elapsed times describe the same task, output type, and
+  uniform distribution, not an algorithm-equivalent CPU/GPU comparison.
 - CPU and GPU range sanity checks both permit `0.0 <= x <= 1.0`; record each
   backend's precise interval contract in `verification_thresholds` or
   `parameters`.
@@ -691,3 +686,62 @@ Additional waves may cover different time periods. Flag thermal, power, clock,
 telemetry, or verification anomalies, but never remove a slow node merely
 because of elapsed time. Assignment counts, exclusions caused by actual failure,
 and valid sample counts remain visible in aggregate metadata.
+
+## Publication figures
+
+Publication plotting uses only primary `cross-wave` summary records. It emits
+one two-panel elapsed-time figure per enabled publication library:
+
+- `cufft-elapsed-time.png`;
+- `cublas-elapsed-time.png`;
+- `cusparse-elapsed-time.png`;
+- `cusolver-elapsed-time.png`;
+- `curand-elapsed-time.png`; and
+- `thrust-elapsed-time.png`.
+
+The left panel is **Data-resident compute** and the right panel is **One-shot
+host-input-to-host-output**. Both use the library-specific problem size on the
+x-axis and **Elapsed time [ms]** on the y-axis; lower is better. CPU, CUDA, and
+OpenACC appear together. The plotted compute value is the existing
+per-operation `elapsed_sec` converted from seconds to milliseconds; it is not
+divided by repeat again. The one-shot value comes from `repeat=1` end-to-end
+records. Do not produce a speedup, throughput, bandwidth, FLOPS, sample-rate,
+element-rate, reuse-count, amortized, break-even, or additional generic elapsed
+figure.
+
+The cuFFT CPU series is labeled **CPU: FFTW threaded, 48 threads**. cuBLAS,
+cuSPARSE, and cuSOLVER use **CPU: oneMKL, 48 threads**. cuRAND and Thrust use
+**CPU serial reference**; their CPU time is not a parallel or
+algorithm-equivalent denominator. A Thrust figure requires raw-result evidence
+that successful CUDA and OpenACC rows report one identical `library_version`.
+Missing, mixed, or unequal evidence is an error before any figure is written;
+never silently omit one implementation.
+
+Each publication caption joins the plot's run ID and runtime-environment hash
+to the existing immutable run and node metadata; no result-schema field is
+added. It records the system label, CPU model, GPU model, precision, operation,
+six nodes by two waves, five trials per node block, block median to wave median
+to cross-wave median, both timing boundaries, compute repeat as measurement
+amplification, end-to-end repeat 1, and that lower is better. It also records:
+
+- cuBLAS: FP64 DGEMM with the cuBLAS default math mode;
+- cuFFT: FP32 complex batched 1-D C2C forward transforms, `batch=4096`, and
+  power-of-two lengths;
+- cuSPARSE: FP64 CSR SpMV on the regular 2-D Poisson matrix, without an added
+  preprocess stage;
+- cuSOLVER: FP64 LU factorization plus solve with `nrhs=16`;
+- cuRAND: uniform-double generation with the GPU pseudo-default generator and
+  a non-algorithm-equivalent serial CPU generator; and
+- Thrust: double `transform_reduce` with one common CCCL/Thrust version across
+  CUDA and OpenACC.
+
+The two panels are also the teaching model. Data-resident compute represents an
+application that keeps data on the device for a library operation. The one-shot
+pipeline includes setup, device allocation, H2D, one operation, completion, and
+D2H until the host result is available. Input generation, verification,
+serialization, file I/O, and protocol cleanup remain outside. Reusing
+device-resident data can move observed application cost from the one-shot side
+toward the compute side because transfer contributes relatively less. This is
+an interpretation of the existing two scopes, not a third amortized scope. The
+workloads are one representative operation per library and do not characterize
+every algorithm in that library.

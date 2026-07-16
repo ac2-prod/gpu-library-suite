@@ -105,9 +105,10 @@ the CPU `[0,1)` and cuRAND `(0,1]` contracts. Required metrics are
 
 ## CPU backend and role
 
-`cpu-std-random-serial` is the production primary serial CPU baseline. It is
-plotted as **Serial CPU baseline**; a campaign may request 48 threads while the
-effective count remains 1.
+`cpu-std-random-serial` is the configured production primary serial CPU
+implementation. Publication output labels it **CPU serial reference**, not a
+parallel or algorithm-equivalent baseline; a campaign may request 48 threads
+while the effective count remains 1. No speedup is plotted from this series.
 
 ## OpenACC notes
 

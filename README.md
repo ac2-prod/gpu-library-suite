@@ -80,11 +80,13 @@ rejects unknown Git provenance instead of treating it as clean.
 ## Benchmark configuration and output
 
 [`configs/pilot.json`](configs/pilot.json) and
-[`configs/benchmark.json`](configs/benchmark.json) contain the approved initial
-calibration candidates, with independent `compute` and `end-to-end` warm-up,
-repeat, and trial settings. They are starting points, not final production
-sizes. After calibration, update `configs/benchmark.json` in place; do not
-create a dated or version-suffixed replacement.
+[`configs/benchmark.json`](configs/benchmark.json) contain the same approved
+three-size publication workloads and compute-repeat candidates. Pilot uses one
+trial and production uses five; both retain independent `compute` and
+`end-to-end` settings with end-to-end repeat 1. After the one-node Pegasus
+pilot, a human may update these canonical files once for a demonstrated OOM,
+verification, walltime, or short-interval issue; do not create a dated or
+version-suffixed replacement.
 
 For an individual benchmark:
 
@@ -128,18 +130,32 @@ NaN or infinity in inputs, intermediates, or metrics as an explicit
 are in [`docs/BENCHMARK_PROTOCOL.md`](docs/BENCHMARK_PROTOCOL.md) and
 [`docs/RESULT_SCHEMA.md`](docs/RESULT_SCHEMA.md).
 
+Publication output is six library-specific elapsed-time figures. Each has a
+data-resident compute panel and a one-shot host-input-to-host-output panel, uses
+milliseconds, and places CPU, CUDA, and OpenACC together. Compute repeat only
+amplifies the measured interval; the plotted value remains one operation's
+elapsed time. No speedup, throughput, reuse-count, amortized, or extra generic
+figure is produced. Plotting reads performance values only from cross-wave
+summary records and uses raw results only to require identical CUDA/OpenACC
+Thrust `library_version` evidence before writing a Thrust figure. Exact figure
+and caption rules are in
+[`docs/BENCHMARK_PROTOCOL.md`](docs/BENCHMARK_PROTOCOL.md).
+Pass the aggregate JSONL as the positional input to `tools/plot.py` and the
+campaign's node raw JSONL files through its required `--raw-results` option.
+
 ## CPU baselines and verification notes
 
-Pegasus cuFFT primary speedup uses `cpu-fftw-threaded`. The
-`cpu-fftw-serial` series is auxiliary teaching correspondence and never becomes
-an automatic fallback denominator. Without threaded FFTW, no primary cuFFT
-speedup is produced.
+The canonical Pegasus publication configuration contains only
+`cpu-fftw-threaded` for cuFFT. The serial FFTW executable remains available for
+separate teaching correspondence but is not a publication series and never
+replaces threaded FFTW.
 
 cuRAND's `cpu-std-random-serial` and Thrust's `cpu-stl-serial` are production
-serial baselines, displayed as **Serial CPU baseline** even when 48 CPU threads
-were requested. cuRAND compares the same distribution and output type task
-across CPU and GPU, but the RNG algorithms differ; element-by-element identity
-is not required.
+serial implementations, displayed as **CPU serial reference** even when 48 CPU
+threads were requested. They are not called parallel or algorithm-equivalent
+baselines, and publication plotting computes no speedup from them. cuRAND
+compares the same distribution and output type task across CPU and GPU, but the
+RNG algorithms differ; element-by-element identity is not required.
 
 ## Pegasus execution boundary
 
