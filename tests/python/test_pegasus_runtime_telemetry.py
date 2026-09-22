@@ -65,6 +65,48 @@ def collect_fixture_documents(
 
 
 class RuntimeEnvironmentTests(unittest.TestCase):
+    def test_explicit_module_free_environment_preserves_required_checks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            inputs = write_campaign_inputs(directory)
+            environment = dict(CPU_ENVIRONMENT)
+            environment.update({"PATH": "/usr/bin", "LD_LIBRARY_PATH": ""})
+
+            def collect(execute, values=environment):
+                return collect_runtime_environment_documents(
+                    inputs["manifest"], [inputs["metadata"]], None,
+                    str(directory / "cuda"), "13.0.88", str(directory / "cuda"),
+                    values, execute, lambda name: "/fake/" + name,
+                    require_ldd=True, require_gpu_tools=True,
+                    cuda_runtime_probe=successful_cuda_runtime_probe,
+                )
+
+            document, evidence = collect(lambda arguments: (0, "fixture\n"))
+            self.assertEqual(document["module_list"], [])
+            self.assertEqual(document["module_system"], {
+                "source": "user-specified", "status": "not-used",
+            })
+            self.assertIsNone(evidence["module_list_output"])
+            self.assertIsNone(evidence["module_list_sha256"])
+            self.assertEqual(evidence["module_system"], document["module_system"])
+            self.assertEqual(
+                evidence["runtime_environment_sha256"],
+                deterministic_json_sha256(document),
+            )
+            with self.assertRaisesRegex(RuntimeEnvironmentError, "ldd failed"):
+                collect(lambda arguments: (1, "missing dependency tool\n"))
+            with self.assertRaisesRegex(RuntimeEnvironmentError, "runtime probe failed"):
+                collect(lambda arguments: (
+                    (1, "GPU probe failed\n") if "nvidia-smi" in arguments[0]
+                    else (0, "fixture\n")
+                ))
+            with self.assertRaisesRegex(RuntimeEnvironmentError, "missing CPU runtime"):
+                collect(lambda arguments: (0, "fixture\n"), {})
+
+    def test_empty_module_output_is_not_a_module_free_declaration(self):
+        with self.assertRaisesRegex(RuntimeEnvironmentError, "no module identities"):
+            normalize_module_list("")
+
     def test_complete_document_and_stable_normalized_ldd(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

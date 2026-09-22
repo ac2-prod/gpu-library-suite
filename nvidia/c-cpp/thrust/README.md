@@ -36,6 +36,7 @@ for both CUDA and OpenACC probes, examples, and benchmarks.
 ## Direct compile
 
 ```bash
+mkdir -p /tmp/gpu-library-suite-local-build
 c++ -std=c++17 nvidia/c-cpp/thrust/examples/reduce_cpu.cpp \
   -o /tmp/gpu-library-suite-local-build/reduce_cpu-direct
 nvcc -std=c++17 nvidia/c-cpp/thrust/examples/reduce_gpu.cu \
@@ -70,6 +71,25 @@ cmake --build /tmp/gpu-library-suite-local-build/openacc \
   --target openacc_thrust openacc_thrust_bench
 ```
 
+## Run the examples
+
+From the repository root, after the corresponding targets above built:
+
+```bash
+CPU_CUDA_BUILD="${CPU_CUDA_BUILD:-/tmp/gpu-library-suite-local-build/cpu-cuda}"
+OPENACC_BUILD="${OPENACC_BUILD:-/tmp/gpu-library-suite-local-build/openacc}"
+"$CPU_CUDA_BUILD/nvidia/c-cpp/thrust/reduce_cpu"
+printf 'CPU exit status: %s\n' "$?"
+"$CPU_CUDA_BUILD/nvidia/c-cpp/thrust/reduce_gpu"
+printf 'CUDA exit status: %s\n' "$?"
+"$OPENACC_BUILD/nvidia/c-cpp/thrust/openacc_thrust"
+printf 'OpenACC exit status: %s\n' "$?"
+```
+
+Inspect the square-sum result against the all-ones input count and each exit
+status. A missing target or nonzero exit leaves the comparison incomplete.
+Continue with [measurement and result processing](../../../docs/PORTABILITY.md#measuring-on-your-own-system).
+
 ## Benchmark CLI
 
 ```bash
@@ -88,10 +108,11 @@ and `tools/run_suite.py` remains the sole writer of node raw-result files.
 ## Timing scopes
 
 `compute` prepares input/device storage before timing and times only repeated
-transform-reduce operations. `end-to-end` includes allocation, input creation
-and transfer, reduction, and completion/result retrieval for each repeat;
-cleanup follows the end timestamp. Canonical restoration and verification stay
-outside timing.
+transform-reduce operations. GPU `end-to-end` includes device storage creation,
+input transfer, reduction, and completion/result retrieval for each repeat;
+cleanup follows the end timestamp. The CPU vector and canonical all-ones host
+input are prepared outside timing; the CPU path has no device transfer.
+Canonical restoration and verification stay outside timing.
 
 ## Verification
 
@@ -102,7 +123,8 @@ retained but does not become a fatal barrier to a restored later trial.
 ## CPU backend and role
 
 `cpu-stl-serial` is the configured production primary serial CPU backend and is
-plotted as **CPU serial reference**, not a parallel baseline. Requested threads
+plotted as **Intel Xeon Platinum 8468, STL (single thread)** in the approved
+legend, not as a parallel baseline. Requested threads
 may be 48 while effective threads are 1. No speedup is plotted from this series.
 An optional `cpu-openmp` build is a separately named backend and is never a
 silent replacement.
@@ -123,3 +145,5 @@ declared floating-point tolerance rather than bitwise equality. Local tests run
 the serial CPU implementation and fake-header GPU syntax; real Thrust/CUDA,
 NVHPC, GPU, OpenMP production configuration, and Pegasus execution remain
 locally unverified.
+Later saved real execution records are distinguished from these local tests in
+[the validation report](../../../docs/VALIDATION_REPORT.md#saved-execution-evidence-reviewed-for-publication).

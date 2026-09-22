@@ -38,6 +38,7 @@ The default CPU source includes `<lapacke.h>` unless CMake supplies its
 provider header. Representative direct commands are:
 
 ```bash
+mkdir -p /tmp/gpu-library-suite-local-build
 cc -std=c17 nvidia/c-cpp/cusolver/examples/solver_cpu.c \
   -llapacke -llapack -lblas -lm \
   -o /tmp/gpu-library-suite-local-build/solver_cpu-direct
@@ -73,6 +74,26 @@ cmake -S . -B /tmp/gpu-library-suite-local-build/openacc \
 cmake --build /tmp/gpu-library-suite-local-build/openacc \
   --target openacc_cusolver openacc_cusolver_bench
 ```
+
+## Run the examples
+
+From the repository root, after the corresponding targets above built:
+
+```bash
+CPU_CUDA_BUILD="${CPU_CUDA_BUILD:-/tmp/gpu-library-suite-local-build/cpu-cuda}"
+OPENACC_BUILD="${OPENACC_BUILD:-/tmp/gpu-library-suite-local-build/openacc}"
+"$CPU_CUDA_BUILD/nvidia/c-cpp/cusolver/solver_cpu"
+printf 'CPU exit status: %s\n' "$?"
+"$CPU_CUDA_BUILD/nvidia/c-cpp/cusolver/solver_gpu"
+printf 'CUDA exit status: %s\n' "$?"
+"$OPENACC_BUILD/nvidia/c-cpp/cusolver/openacc_cusolver"
+printf 'OpenACC exit status: %s\n' "$?"
+```
+
+Inspect solver `info` values, the solution error and each exit status. A missing
+target or nonzero exit leaves the comparison incomplete. The CPU teaching call
+is `LAPACKE_dgesv`; the benchmark separates factorization and solve as explained
+below. Continue with [measurement and result processing](../../../docs/PORTABILITY.md#measuring-on-your-own-system).
 
 ## Benchmark CLI
 
@@ -126,3 +147,5 @@ The algorithm does not switch numerical mode after hardware detection and will
 report allocation or factorization failure directly. Local tests use fake
 LAPACKE/CUDA interfaces and do not execute a production LAPACKE installation,
 cuSOLVER runtime, NVHPC compiler, real GPU, or Pegasus job; those remain locally unverified.
+Later saved real execution records are distinguished from these local tests in
+[the validation report](../../../docs/VALIDATION_REPORT.md#saved-execution-evidence-reviewed-for-publication).

@@ -256,6 +256,30 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(record["scheduler"], "NQSV")
         self.assertEqual(record["scheduler_job_id"], "0:866211.nqsv")
 
+    def test_launch_context_owns_scheduler_environment(self):
+        for scheduler, job_id in ((None, None), ("NQSV", "0:866211.nqsv")):
+            with self.subTest(scheduler=scheduler), tempfile.TemporaryDirectory() as temporary:
+                item, context, metadata = execution_fixture(trials=1)
+                context.update(scheduler=scheduler, scheduler_job_id=job_id)
+                completed = SimpleNamespace(
+                    returncode=0, stderr="",
+                    stdout=dumps(successful_record(item, context, metadata, 0)) + "\n",
+                )
+                with mock.patch.dict(os.environ, {
+                    "GPU_SUITE_SCHEDULER": "stale", "GPU_SUITE_SCHEDULER_JOB_ID": "stale",
+                }), mock.patch("gpu_suite.runner.subprocess.run", return_value=completed) as launch:
+                    self.assertEqual(execute_schedule(
+                        [item], context, Path(temporary) / "raw.jsonl", ZERO_HASH,
+                        ZERO_HASH, metadata, None, None,
+                    ), 0)
+                environment = launch.call_args.kwargs["env"]
+                if scheduler is None:
+                    self.assertNotIn("GPU_SUITE_SCHEDULER", environment)
+                    self.assertNotIn("GPU_SUITE_SCHEDULER_JOB_ID", environment)
+                else:
+                    self.assertEqual(environment["GPU_SUITE_SCHEDULER"], scheduler)
+                    self.assertEqual(environment["GPU_SUITE_SCHEDULER_JOB_ID"], job_id)
+
     def test_rejects_source_hash_mismatch(self):
         self.assert_subprocess_mismatch(
             lambda record: record.__setitem__(

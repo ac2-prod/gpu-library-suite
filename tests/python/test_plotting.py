@@ -137,17 +137,35 @@ def publication_records():
 
 
 def raw_version_records(cuda="300001", openacc="300001"):
-    return [
-        {
-            "benchmark": "thrust",
-            "implementation": implementation,
-            "library_version": version,
-            "run_id": "run-1",
-            "runtime_environment_sha256": ZERO_HASH,
-            "status": "success",
-        }
-        for implementation, version in (("cuda", cuda), ("openacc", openacc))
-    ]
+    records = []
+    for benchmark in PUBLICATION_BENCHMARKS:
+        for scope in ("compute", "end-to-end"):
+            for implementation in ("cpu", "cuda", "openacc"):
+                cpu = implementation == "cpu"
+                effective = (1 if benchmark in {"curand", "thrust"}
+                             else 48 if benchmark == "cufft" else None)
+                records.append({
+                    "benchmark": benchmark, "scope": scope,
+                    "implementation": implementation,
+                    "cpu_backend": CPU_BACKENDS[benchmark] if cpu else None,
+                    "cpu_threads_requested": 48 if cpu else None,
+                    "cpu_threads_effective": effective if cpu else None,
+                    "gpu_name": None if cpu else "NVIDIA H100 PCIe",
+                    "hostname": "fixture-host",
+                    "library_version": cuda if implementation == "cuda" else openacc,
+                    "run_id": "run-1", "series_role": "primary",
+                    "runtime_environment_sha256": ZERO_HASH, "status": "success",
+                })
+    return records
+
+
+def publication_display():
+    return {
+        "plot_display_schema_version": 1,
+        "run_id": "run-1", "runtime_environment_sha256": ZERO_HASH,
+        "cpu_model": "Intel Xeon Platinum 8468", "gpu_model": None,
+        "thread_label_mode": "compact-requested",
+    }
 
 
 class FakeFormatter:
@@ -297,7 +315,113 @@ class PlottingTests(unittest.TestCase):
         return build_plot_metadata(
             publication_records(), ZERO_HASH,
             raw_records=raw if raw is not None else raw_version_records(),
+            display_configuration=publication_display(),
         )
+
+    def test_default_labels_never_invent_cpu_model_or_effective_count(self):
+        metadata = build_plot_metadata(
+            publication_records(), ZERO_HASH, raw_records=raw_version_records()
+        )
+        label = next(item["label"] for item in metadata["series"]
+                     if item["benchmark"] == "cublas" and item["implementation"] == "cpu")
+        self.assertEqual(label, "CPU model unknown, oneMKL (requested 48; effective unknown)")
+        self.assertEqual(metadata["display"]["cpu_model"]["source"], "unknown")
+        self.assertEqual(metadata["display"]["gpu_model"]["source"], "raw-results")
+
+    def test_other_machine_backend_and_thread_counts_are_used(self):
+        records, raw = publication_records(), raw_version_records()
+        for row in records + raw:
+            if row["benchmark"] == "cublas" and row["implementation"] == "cpu":
+                row["cpu_backend"] = "cpu-openblas"
+        for row in raw:
+            if row["implementation"] == "cpu":
+                row["cpu_threads_requested"] = 8
+                if row["benchmark"] == "cublas":
+                    row["cpu_threads_effective"] = 4
+            else:
+                row["gpu_name"] = "NVIDIA test GPU"
+        display = publication_display()
+        display.update(cpu_model="AMD test CPU", thread_label_mode="requested-and-effective")
+        metadata = build_plot_metadata(records, ZERO_HASH, raw, display)
+        cpu = next(item for item in metadata["series"]
+                   if item["benchmark"] == "cublas" and item["implementation"] == "cpu")
+        self.assertEqual(cpu["label"], "AMD test CPU, OpenBLAS (requested 8; effective 4)")
+        self.assertEqual(cpu["display_evidence"]["cpu_threads"]["effective_values"], [4])
+        self.assertEqual(metadata["display"]["cpu_model"]["source"], "user-specified")
+        self.assertEqual(metadata["display"]["gpu_model"]["value"], "NVIDIA test GPU")
+
+    def test_observed_node_cpu_identity_and_unknown_gpu_are_distinct(self):
+        raw = raw_version_records()
+        for row in raw:
+            row["gpu_name"] = None
+        node = {"run_id": "run-1", "runtime_environment_sha256": ZERO_HASH,
+                "hostname": "fixture-host", "cpu_identity": {
+                    "name": "Observed CPU", "query_status": "success", "source": "lscpu",
+                }}
+        metadata = build_plot_metadata(publication_records(), ZERO_HASH, raw, node_metadata=[node])
+        self.assertEqual(metadata["display"]["cpu_model"]["source"], "node-metadata")
+        self.assertEqual(metadata["display"]["cpu_model"]["value"], "Observed CPU")
+        self.assertEqual(metadata["display"]["gpu_model"]["source"], "unknown")
+        self.assertTrue(any(item["label"] == "GPU model unknown, CUDA"
+                            for item in metadata["series"]))
+
+    def test_explicit_identity_and_provenance_mismatches_are_rejected(self):
+        display = publication_display()
+        display["gpu_model"] = "different GPU"
+        with self.assertRaisesRegex(PlotError, "contradicts"):
+            build_plot_metadata(publication_records(), ZERO_HASH, raw_version_records(), display)
+        display = publication_display()
+        display["run_id"] = "another-run"
+        with self.assertRaisesRegex(PlotError, "provenance differs"):
+            build_plot_metadata(publication_records(), ZERO_HASH, raw_version_records(), display)
+        display = publication_display()
+        display["extra"] = True
+        with self.assertRaisesRegex(PlotError, "configuration keys"):
+            build_plot_metadata(publication_records(), ZERO_HASH, raw_version_records(), display)
+        for key, value in (("thread_label_mode", []), ("thread_label_mode", {}),
+                           ("cpu_model", "first\u2028second"), ("gpu_model", 123)):
+            with self.subTest(key=key, value=value):
+                display = publication_display()
+                display[key] = value
+                with self.assertRaises(PlotError):
+                    build_plot_metadata(publication_records(), ZERO_HASH, raw_version_records(), display)
+
+    def test_solver_ticks_follow_non_publication_cases(self):
+        records = publication_records()
+        sizes = {4096: 128, 8192: 512, 12288: 2048}
+        for record in records:
+            if record["benchmark"] == "cusolver":
+                record["problem_size"] = sizes[record["problem_size"]]
+        metadata = build_plot_metadata(records, ZERO_HASH, raw_version_records())
+        pyplot, matplotlib, ticker = FakePyplot(), FakeMatplotlib(), FakeTicker()
+        def importer(name):
+            return {"matplotlib": matplotlib, "matplotlib.pyplot": pyplot,
+                    "matplotlib.ticker": ticker}[name]
+        with tempfile.TemporaryDirectory() as temporary:
+            render_plots(metadata, Path(temporary), importer=importer)
+        for axis in pyplot.figures[3].axes:
+            self.assertEqual(axis.xticks, (128, 512, 2048))
+        for figure in pyplot.figures:
+            self.assertEqual(figure.legend_calls[0]["kwargs"]["ncol"], 1)
+            self.assertEqual(figure.tight_layout_calls, [{"rect": (0.0, 0.25, 1.0, 1.0)}])
+
+    def test_missing_mixed_and_partial_identity_evidence_is_not_filled(self):
+        raw = raw_version_records()
+        for row in raw:
+            if row["implementation"] == "cpu":
+                row["cpu_threads_requested"] = None
+                row["cpu_threads_effective"] = None
+        metadata = build_plot_metadata(publication_records(), ZERO_HASH, raw)
+        self.assertTrue(all("requested unknown; effective unknown" in item["label"]
+                            for item in metadata["series"] if item["implementation"] == "cpu"))
+        raw[-1]["gpu_name"] = "A different model"
+        with self.assertRaisesRegex(PlotError, "different machine models"):
+            build_plot_metadata(publication_records(), ZERO_HASH, raw)
+        raw = raw_version_records()
+        raw[-1]["gpu_name"] = None
+        metadata = build_plot_metadata(publication_records(), ZERO_HASH, raw)
+        self.assertEqual(metadata["display"]["gpu_model"]["source"], "unknown")
+        self.assertEqual(metadata["display"]["gpu_model"]["observed_values"], ["NVIDIA H100 PCIe"])
 
     def test_publication_series_are_cross_wave_elapsed_only(self):
         metadata = self.build_metadata()

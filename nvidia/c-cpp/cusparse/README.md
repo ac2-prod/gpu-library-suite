@@ -39,6 +39,7 @@ These representative commands assume the selected libraries are on compiler
 search paths:
 
 ```bash
+mkdir -p /tmp/gpu-library-suite-local-build
 cc -std=c17 nvidia/c-cpp/cusparse/examples/sparse_cpu.c \
   -lmkl_rt -lpthread -ldl -lm \
   -o /tmp/gpu-library-suite-local-build/sparse_cpu-direct
@@ -74,6 +75,25 @@ cmake -S . -B /tmp/gpu-library-suite-local-build/openacc \
 cmake --build /tmp/gpu-library-suite-local-build/openacc \
   --target openacc_cusparse openacc_cusparse_bench
 ```
+
+## Run the examples
+
+From the repository root, after the corresponding targets above built:
+
+```bash
+CPU_CUDA_BUILD="${CPU_CUDA_BUILD:-/tmp/gpu-library-suite-local-build/cpu-cuda}"
+OPENACC_BUILD="${OPENACC_BUILD:-/tmp/gpu-library-suite-local-build/openacc}"
+"$CPU_CUDA_BUILD/nvidia/c-cpp/cusparse/sparse_cpu"
+printf 'CPU exit status: %s\n' "$?"
+"$CPU_CUDA_BUILD/nvidia/c-cpp/cusparse/sparse_gpu"
+printf 'CUDA exit status: %s\n' "$?"
+"$OPENACC_BUILD/nvidia/c-cpp/cusparse/openacc_cusparse"
+printf 'OpenACC exit status: %s\n' "$?"
+```
+
+Inspect the Poisson SpMV error and each exit status. A missing target or nonzero
+exit leaves the three-way check incomplete. Continue with
+[measurement and result processing](../../../docs/PORTABILITY.md#measuring-on-your-own-system).
 
 ## Benchmark CLI
 
@@ -126,3 +146,5 @@ Only square problem sizes are accepted by the canonical suite configuration,
 and allocation failure is reported without automatic downsizing. Local tests
 use a fake oneMKL provider and fake CUDA headers; a production oneMKL Sparse
 runtime, real cuSPARSE, NVHPC, GPU, and Pegasus execution remain locally unverified.
+Later saved real execution records are distinguished from these local tests in
+[the validation report](../../../docs/VALIDATION_REPORT.md#saved-execution-evidence-reviewed-for-publication).

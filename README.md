@@ -9,6 +9,59 @@ systems are intentionally deferred; the repository does not contain empty
 placeholder implementations for them. The project is maintained under
 `ac2-prod` and is not an official HAIRDESC repository.
 
+This is the source repository for **Library Edition (NVIDIA GPU, C/C++)**
+（ライブラリ編（NVIDIA GPU，C/C++））. You do not need Pegasus access or the
+authors' conversation history to read or build the examples. Running a GPU
+example does require a suitable NVIDIA GPU and the dependencies below.
+
+## Publication scope
+
+The selected publication scope is the NVIDIA C/C++ teaching and benchmark code,
+its existing common code/tools, configurations and tests, and the documentation
+for understanding, building, running and measuring it. Additional general-purpose
+measurement infrastructure is not a prerequisite for this code publication.
+
+Saved measurements, raw results, execution logs, metadata and prepared local
+distribution archives are **not included in this publication**. There is no
+teaching-data download supplied with the source. The
+[saved-data replay reference](docs/PORTABILITY.md#regenerating-the-teaching-figures-from-saved-data)
+is only for readers who separately hold those inputs; the normal route below
+uses the reader's own measurements.
+
+## Start here
+
+If you know CPU C/C++ but are new to CUDA, follow this route:
+
+1. Read [the cuBLAS CPU example](nvidia/c-cpp/cublas/examples/blas_cpu.c) to
+   recognize allocation, all-ones input, DGEMM, and result checking. Then compare
+   [direct CUDA](nvidia/c-cpp/cublas/examples/blas_gpu.cu) with
+   [OpenACC-managed data](nvidia/c-cpp/cublas/examples/openacc_cublas.cpp): both
+   GPU programs call cuBLAS; they differ in who manages device storage/movement.
+2. Follow [cuBLAS: first build and run](nvidia/c-cpp/cublas/README.md#first-build-and-run).
+   Start with the CPU example, then run the available GPU variants and check
+   their exit status and numerical output. A teaching example is not a timing
+   experiment.
+3. Read [how the example becomes a benchmark](nvidia/c-cpp/cublas/README.md#from-example-to-benchmark),
+   then follow [measuring on your own system](docs/PORTABILITY.md#measuring-on-your-own-system)
+   for a small check, configuration, measurement, validation, and aggregation.
+4. Create figures from
+   [your own measurements](docs/PORTABILITY.md#figures-from-your-own-measurements).
+   Your own figures use observed or explicitly supplied machine identities,
+   without assuming the teaching machine or requiring its saved data.
+5. Use [reading the figures](docs/BENCHMARK_PROTOCOL.md#reading-the-figures-and-applying-the-results)
+   to relate compute/E2E costs to your application. Other libraries have their
+   own source, dependency, build, and verification notes in the table below.
+
+| Read this area | What it helps you understand |
+| --- | --- |
+| Each library's `examples/` | One complete library-call flow, without benchmark infrastructure |
+| Each library's `benchmarks/` | Runtime sizes, scope-specific resource lifetime, restoration, timing, and verification |
+| [`common/c-cpp`](common/c-cpp) | Shared [CLI](common/c-cpp/src/cli.c), [monotonic clock](common/c-cpp/src/clock.c), [result writing](common/c-cpp/src/result.c), and [GPU provenance](common/c-cpp/include/gpu_suite/cuda_metadata.hpp); read these after an example, not first |
+| [`configs/pilot.json`](configs/pilot.json), [`configs/benchmark.json`](configs/benchmark.json) | Workloads, CPU backends, verification thresholds, and per-scope repetitions/trials |
+| [`tools/run_suite.py`](tools/run_suite.py) | Interleaved execution and the sole node raw-result writer |
+| [`tools/validate_results.py`](tools/validate_results.py), [`tools/aggregate.py`](tools/aggregate.py), [`tools/plot.py`](tools/plot.py) | Check raw records, compute hierarchical summaries, and render the two-panel figures |
+| [`jobs/pegasus`](jobs/pegasus) | Site-specific modules, PBS, telemetry, and recovery; this is not the general workstation entry point |
+
 ## What is implemented
 
 Each library has three direct, single-source teaching examples and three
@@ -17,12 +70,12 @@ their source stems.
 
 | Library | CPU | CUDA | OpenACC | CPU benchmark | CUDA benchmark | OpenACC benchmark |
 | --- | --- | --- | --- | --- | --- | --- |
-| cuFFT | `fft_cpu` | `fft_gpu` | `openacc_cufft` | `fft_cpu_bench` | `fft_gpu_bench` | `openacc_cufft_bench` |
-| cuBLAS | `blas_cpu` | `blas_gpu` | `openacc_cublas` | `blas_cpu_bench` | `blas_gpu_bench` | `openacc_cublas_bench` |
-| cuSPARSE | `sparse_cpu` | `sparse_gpu` | `openacc_cusparse` | `sparse_cpu_bench` | `sparse_gpu_bench` | `openacc_cusparse_bench` |
-| cuSOLVER | `solver_cpu` | `solver_gpu` | `openacc_cusolver` | `solver_cpu_bench` | `solver_gpu_bench` | `openacc_cusolver_bench` |
-| cuRAND | `rand_cpu` | `rand_gpu` | `openacc_curand` | `rand_cpu_bench` | `rand_gpu_bench` | `openacc_curand_bench` |
-| Thrust | `reduce_cpu` | `reduce_gpu` | `openacc_thrust` | `reduce_cpu_bench` | `reduce_gpu_bench` | `openacc_thrust_bench` |
+| [cuFFT](nvidia/c-cpp/cufft/README.md) | [fft_cpu](nvidia/c-cpp/cufft/examples/fft_cpu.c) | [fft_gpu](nvidia/c-cpp/cufft/examples/fft_gpu.cu) | [openacc_cufft](nvidia/c-cpp/cufft/examples/openacc_cufft.cpp) | [fft_cpu_bench](nvidia/c-cpp/cufft/benchmarks/fft_cpu_bench.c) | [fft_gpu_bench](nvidia/c-cpp/cufft/benchmarks/fft_gpu_bench.cu) | [openacc_cufft_bench](nvidia/c-cpp/cufft/benchmarks/openacc_cufft_bench.cpp) |
+| [cuBLAS](nvidia/c-cpp/cublas/README.md) | [blas_cpu](nvidia/c-cpp/cublas/examples/blas_cpu.c) | [blas_gpu](nvidia/c-cpp/cublas/examples/blas_gpu.cu) | [openacc_cublas](nvidia/c-cpp/cublas/examples/openacc_cublas.cpp) | [blas_cpu_bench](nvidia/c-cpp/cublas/benchmarks/blas_cpu_bench.c) | [blas_gpu_bench](nvidia/c-cpp/cublas/benchmarks/blas_gpu_bench.cu) | [openacc_cublas_bench](nvidia/c-cpp/cublas/benchmarks/openacc_cublas_bench.cpp) |
+| [cuSPARSE](nvidia/c-cpp/cusparse/README.md) | [sparse_cpu](nvidia/c-cpp/cusparse/examples/sparse_cpu.c) | [sparse_gpu](nvidia/c-cpp/cusparse/examples/sparse_gpu.cu) | [openacc_cusparse](nvidia/c-cpp/cusparse/examples/openacc_cusparse.cpp) | [sparse_cpu_bench](nvidia/c-cpp/cusparse/benchmarks/sparse_cpu_bench.c) | [sparse_gpu_bench](nvidia/c-cpp/cusparse/benchmarks/sparse_gpu_bench.cu) | [openacc_cusparse_bench](nvidia/c-cpp/cusparse/benchmarks/openacc_cusparse_bench.cpp) |
+| [cuSOLVER](nvidia/c-cpp/cusolver/README.md) | [solver_cpu](nvidia/c-cpp/cusolver/examples/solver_cpu.c) | [solver_gpu](nvidia/c-cpp/cusolver/examples/solver_gpu.cu) | [openacc_cusolver](nvidia/c-cpp/cusolver/examples/openacc_cusolver.cpp) | [solver_cpu_bench](nvidia/c-cpp/cusolver/benchmarks/solver_cpu_bench.c) | [solver_gpu_bench](nvidia/c-cpp/cusolver/benchmarks/solver_gpu_bench.cu) | [openacc_cusolver_bench](nvidia/c-cpp/cusolver/benchmarks/openacc_cusolver_bench.cpp) |
+| [cuRAND](nvidia/c-cpp/curand/README.md) | [rand_cpu](nvidia/c-cpp/curand/examples/rand_cpu.cpp) | [rand_gpu](nvidia/c-cpp/curand/examples/rand_gpu.cu) | [openacc_curand](nvidia/c-cpp/curand/examples/openacc_curand.cpp) | [rand_cpu_bench](nvidia/c-cpp/curand/benchmarks/rand_cpu_bench.cpp) | [rand_gpu_bench](nvidia/c-cpp/curand/benchmarks/rand_gpu_bench.cu) | [openacc_curand_bench](nvidia/c-cpp/curand/benchmarks/openacc_curand_bench.cpp) |
+| [Thrust](nvidia/c-cpp/thrust/README.md) | [reduce_cpu](nvidia/c-cpp/thrust/examples/reduce_cpu.cpp) | [reduce_gpu](nvidia/c-cpp/thrust/examples/reduce_gpu.cu) | [openacc_thrust](nvidia/c-cpp/thrust/examples/openacc_thrust.cpp) | [reduce_cpu_bench](nvidia/c-cpp/thrust/benchmarks/reduce_cpu_bench.cpp) | [reduce_gpu_bench](nvidia/c-cpp/thrust/benchmarks/reduce_gpu_bench.cu) | [openacc_thrust_bench](nvidia/c-cpp/thrust/benchmarks/openacc_thrust_bench.cpp) |
 
 `examples/` is the teaching-material source of truth. Those programs have no
 benchmark CLI or machine-readable output. `benchmarks/` adds two timing scopes,
@@ -151,8 +204,9 @@ separate teaching correspondence but is not a publication series and never
 replaces threaded FFTW.
 
 cuRAND's `cpu-std-random-serial` and Thrust's `cpu-stl-serial` are production
-serial implementations, displayed as **CPU serial reference** even when 48 CPU
-threads were requested. They are not called parallel or algorithm-equivalent
+serial implementations, displayed with **single thread** in the approved
+publication legends even when 48 CPU threads were requested. They are not
+called parallel or algorithm-equivalent
 baselines, and publication plotting computes no speedup from them. cuRAND
 compares the same distribution and output type task across CPU and GPU, but the
 RNG algorithms differ; element-by-element identity is not required.
@@ -196,7 +250,16 @@ a workflow definition is not itself evidence that either job executed.
 
 No real CUDA GPU, CUDA Toolkit, NVHPC compiler, Pegasus scheduler, or production
 CPU-library installation was exercised by that local validation. Those checks
-remain manual and must not be inferred from syntax-only or fake-provider tests.
+must not be inferred from syntax-only or fake-provider tests. Separately saved
+Pegasus records do contain real build, example, memcheck, and measurement
+results, and Linux CI ran on the approved plotting commit. See
+[saved execution evidence](docs/VALIDATION_REPORT.md#saved-execution-evidence-reviewed-for-publication)
+for the code versions, coverage, and remaining limits. The initial reader-guide
+checks were static; subsequent
+[reader-tool tests and private offline replay](docs/VALIDATION_REPORT.md#reader-tools-and-offline-replay-validation)
+were completed separately. Neither establishes GPU execution of the full reader
+workflow in an arbitrary environment, and the private replay inputs are not
+distributed with this code publication.
 
 ## Documentation map
 
@@ -218,5 +281,10 @@ remain manual and must not be inferred from syntax-only or fake-provider tests.
 
 ## License
 
-A project license has not been selected. Do not infer permission to redistribute
-the repository from its source availability.
+Original content in this repository is licensed under the [MIT License](LICENSE).
+
+Copyright (c) 2026 Ryohei Kobayashi
+
+Existing third-party copyright notices and license terms remain applicable.
+This license does not relicense external libraries or separately distributed
+teaching slides and videos.

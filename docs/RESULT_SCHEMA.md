@@ -562,6 +562,14 @@ columns; duplicate, non-contiguous, ambiguous, or unsafe module identities are
 errors. Search-path normalization removes only later duplicate canonical paths;
 relative and empty path components are errors.
 
+For an explicitly module-free invocation, `--no-module-system` records
+`module_list=[]` and `module_system={"source":"user-specified","status":"not-used"}`.
+The evidence sidecar records the same declaration with null
+`module_list_output` and `module_list_sha256`: no command output is fabricated.
+This is distinct from a failed or empty `--module-list` input, which remains an
+error. Binary, dependency, Toolkit and requested mandatory probe checks are
+unchanged. Existing module-based identities retain their existing representation.
+
 The canonical identity intentionally excludes node allocation and observation
 facts: hostname, scheduler job ID, wave/node number, timestamp, process ID,
 scratch path, GPU name and UUID, raw command formatting, `ldd` addresses and raw
@@ -653,6 +661,16 @@ corrects the pre-acceptance definition of stable runtime identity and adds a
 separately versioned evidence document; it does not introduce a second
 incompatible canonical format. Existing raw artifacts are never rewritten.
 
+For one ordinary local worker, `prepare_wave.py --local` uses the same immutable
+config/manifest/runtime/source checks and exclusive-write layout. Both scheduler
+fields are null, the hostname is observed, and the sole mapping index 0 is an
+ordering index, not a claim that MPI ran. Run metadata records
+`launcher.execution_mode="local"`. The runtime evidence sidecar is retained
+directly under the wave directory. Local preparation creates the single node's
+metadata before measurement; it rejects an explicit scheduler/job ID, a supplied
+mapping or hostname, and node counts other than one. It does not fabricate
+job-completion or collection status, allocate nodes, or collect telemetry.
+
 ## Node metadata and status
 
 Each node process writes its own `node-metadata.json` through the shared Python
@@ -675,6 +693,51 @@ serialization utility. It contains:
 `node-status.json` records process completion, raw-result collection, log
 collection, telemetry status, exit status, and messages. It does not replace
 failure rows in raw results.
+
+Local node metadata additionally records `execution_mode="local"`,
+`cpu_identity` (`name`, `query_status`, `source`) and `local_machine_probes`.
+CPU identity comes from a successful `lscpu --json` model-name query, or remains
+null/unavailable. GPU identity comes from a node-local query, not a model-name
+setting; multiple GPUs require one explicitly selected UUID with matching
+`CUDA_VISIBLE_DEVICES`. The logical benchmark device is 0. A manifest containing
+GPU artifacts requires successful GPU identity and CUDA-runtime observations.
+
+## Plot display configuration
+
+`tools/plot.py --display-config FILE` accepts a strict JSON object with exactly
+these keys. It changes labels only, never raw values, aggregation or precision.
+
+| Key | Type and requirement |
+| --- | --- |
+| `plot_display_schema_version` | Integer 1 |
+| `run_id` | String equal to the aggregate/raw campaign ID |
+| `runtime_environment_sha256` | String equal to the aggregate/raw runtime hash |
+| `cpu_model` | Nonempty single-line string of at most 160 characters, or null |
+| `gpu_model` | The same name type; null uses the observed raw GPU identity |
+| `thread_label_mode` | `requested-and-effective` (normal use) or explicitly opted-in `compact-requested` (approved teaching display) |
+
+Without a display configuration, names come from optional `--node-metadata`
+CPU identities and successful raw GPU rows; missing identities remain unknown.
+Metadata inputs must have matching run/runtime provenance. CPU identity must
+cover every raw hostname; partial coverage is not silently generalized.
+Conflicting models are rejected. Supplied names cannot contradict observations;
+removing registered/trademark markers is allowed as a display normalization.
+
+Plot metadata records each model's `value`, `source` (`node-metadata`,
+`raw-results`, `user-specified` or `unknown`) and observed values, plus input
+configuration/node-metadata hashes. Each CPU series records the backend source
+and the distinct requested/effective value sets from its raw rows. A null
+effective count stays unknown; mixed counts are not replaced by one value.
+The normal legend exposes those distinctions. A reported effective count of 1
+is displayed as single-threaded, regardless of a larger request.
+
+`compact-requested` requires known machine identities and one recorded CPU
+request per non-serial series. Its `(N C)` is explicitly a request convention,
+not an effective-thread or utilization measurement. It reproduces the approved
+teaching labels without making those machine/count values defaults. Backend
+labels derive from the actual aggregate backend; unknown backend identifiers
+are displayed verbatim, not replaced by oneMKL or FFTW. The plot's basic
+two-panel layout, units and summary values are unchanged.
 
 ## Telemetry metadata
 

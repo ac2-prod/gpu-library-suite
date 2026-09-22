@@ -35,6 +35,7 @@ creation and uniform-double generation before enabling GPU targets.
 ## Direct compile
 
 ```bash
+mkdir -p /tmp/gpu-library-suite-local-build
 c++ -std=c++17 nvidia/c-cpp/curand/examples/rand_cpu.cpp \
   -o /tmp/gpu-library-suite-local-build/rand_cpu-direct
 nvcc -std=c++17 nvidia/c-cpp/curand/examples/rand_gpu.cu \
@@ -68,6 +69,27 @@ cmake -S . -B /tmp/gpu-library-suite-local-build/openacc \
 cmake --build /tmp/gpu-library-suite-local-build/openacc \
   --target openacc_curand openacc_curand_bench
 ```
+
+## Run the examples
+
+From the repository root, after the corresponding targets above built:
+
+```bash
+CPU_CUDA_BUILD="${CPU_CUDA_BUILD:-/tmp/gpu-library-suite-local-build/cpu-cuda}"
+OPENACC_BUILD="${OPENACC_BUILD:-/tmp/gpu-library-suite-local-build/openacc}"
+"$CPU_CUDA_BUILD/nvidia/c-cpp/curand/rand_cpu"
+printf 'CPU exit status: %s\n' "$?"
+"$CPU_CUDA_BUILD/nvidia/c-cpp/curand/rand_gpu"
+printf 'CUDA exit status: %s\n' "$?"
+"$OPENACC_BUILD/nvidia/c-cpp/curand/openacc_curand"
+printf 'OpenACC exit status: %s\n' "$?"
+```
+
+Inspect each exit status and the reported distribution statistics. Do not expect
+element-by-element CPU/GPU identity: the RNG algorithms differ. A missing target
+or nonzero exit is not a successful three-way check. Continue with
+[measurement and result processing](../../../docs/PORTABILITY.md#measuring-on-your-own-system),
+whose benchmark verification uses the explicit statistical thresholds below.
 
 ## Benchmark CLI
 
@@ -106,8 +128,9 @@ the CPU `[0,1)` and cuRAND `(0,1]` contracts. Required metrics are
 ## CPU backend and role
 
 `cpu-std-random-serial` is the configured production primary serial CPU
-implementation. Publication output labels it **CPU serial reference**, not a
-parallel or algorithm-equivalent baseline; a campaign may request 48 threads
+implementation. The approved legend is **Intel Xeon Platinum 8468,
+std::mt19937_64 (single thread)**, not a parallel or algorithm-equivalent
+baseline; a campaign may request 48 threads
 while the effective count remains 1. No speedup is plotted from this series.
 
 ## OpenACC notes
@@ -122,3 +145,5 @@ The statistical test compares distribution behavior, not sequence equivalence,
 and finite samples may fail according to the configured bound. Local tests run
 the serial CPU generator and fake GPU syntax only. A real cuRAND runtime,
 NVHPC compiler, GPU, and Pegasus campaign remain locally unverified.
+Later saved real execution records are distinguished from these local tests in
+[the validation report](../../../docs/VALIDATION_REPORT.md#saved-execution-evidence-reviewed-for-publication).

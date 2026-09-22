@@ -37,6 +37,7 @@ From the repository root, adjust ordinary compiler search paths for the local
 installation:
 
 ```bash
+mkdir -p /tmp/gpu-library-suite-local-build
 cc -std=c17 nvidia/c-cpp/cufft/examples/fft_cpu.c \
   -lfftw3f -lm -o /tmp/gpu-library-suite-local-build/fft_cpu-direct
 nvcc -std=c++17 nvidia/c-cpp/cufft/examples/fft_gpu.cu \
@@ -75,6 +76,26 @@ cmake --build /tmp/gpu-library-suite-local-build/openacc \
 CUDA architecture, Toolkit root, and NVHPC GPU target remain explicit external
 inputs; portable sources do not select them.
 
+## Run the examples
+
+From the repository root, after the corresponding targets above built:
+
+```bash
+CPU_CUDA_BUILD="${CPU_CUDA_BUILD:-/tmp/gpu-library-suite-local-build/cpu-cuda}"
+OPENACC_BUILD="${OPENACC_BUILD:-/tmp/gpu-library-suite-local-build/openacc}"
+"$CPU_CUDA_BUILD/nvidia/c-cpp/cufft/fft_cpu"
+printf 'CPU exit status: %s\n' "$?"
+"$CPU_CUDA_BUILD/nvidia/c-cpp/cufft/fft_gpu"
+printf 'CUDA exit status: %s\n' "$?"
+"$OPENACC_BUILD/nvidia/c-cpp/cufft/openacc_cufft"
+printf 'OpenACC exit status: %s\n' "$?"
+```
+
+Inspect the reported transform error and require each available example to exit
+0. Do not treat a missing target or nonzero exit as a passed comparison. The CPU
+teaching program uses serial FFTW, not the threaded benchmark backend. Continue
+with [measurement and result processing](../../../docs/PORTABILITY.md#measuring-on-your-own-system).
+
 ## Benchmark CLI
 
 A standalone threaded CPU smoke run is:
@@ -110,7 +131,9 @@ trial as failed but does not prevent a restored later trial from running.
 ## CPU backend and role
 
 `cpu-fftw-threaded` is the only CPU series in the Pegasus publication
-configuration and is labeled **CPU: FFTW threaded, 48 threads**. CMake may
+configuration and is labeled **Intel Xeon Platinum 8468, FFTW (48 C)** in the
+approved figures. It uses the FFTW threads API; the saved publication library
+was built with pthread-based `--enable-threads`. CMake may
 retain a separately invoked `cpu-fftw-serial` teaching-correspondence backend,
 but it is not a publication series and is never substituted for threaded FFTW.
 
@@ -128,3 +151,5 @@ not exercise a real CUDA GPU, cuFFT runtime, NVHPC compiler, or Pegasus run;
 those production dependencies remain locally unverified and require the manual
 Pegasus checks in
 [`docs/PEGASUS_EXECUTION.md`](../../../docs/PEGASUS_EXECUTION.md).
+Later saved real execution records are distinguished from these local tests in
+[the validation report](../../../docs/VALIDATION_REPORT.md#saved-execution-evidence-reviewed-for-publication).

@@ -4,6 +4,7 @@
 import argparse
 import os
 import re
+import socket
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
@@ -30,6 +31,7 @@ from gpu_suite.runner import (  # noqa: E402
 )
 from gpu_suite.scheduler import validate_scheduler_identity  # noqa: E402
 from gpu_suite.strict_json import dump_bytes, load  # noqa: E402
+from node_tools import build_local_node_metadata  # noqa: E402
 
 
 class WavePreparationError(ValueError):
@@ -200,13 +202,14 @@ def _validate_existing_campaign(
 
 def prepare_wave(
     result_root: Path, run_id: str, wave: int, expected_nodes: int,
-    mapping_path: Path, config_path: Path, manifest_path: Path,
+    mapping_path: Optional[Path], config_path: Path, manifest_path: Path,
     build_metadata_paths: Sequence[Path], runtime_environment_path: Path,
     runtime_environment_evidence_path: Path,
-    system_label: str, scheduler: str, scheduler_job_id: str,
+    system_label: str, scheduler: Optional[str], scheduler_job_id: Optional[str],
     submission_host: str, git_diff_sha256: Optional[str] = None,
     source_snapshot_sha256: Optional[str] = None,
     timestamp: Optional[str] = None,
+    local: bool = False, gpu_uuid: Optional[str] = None,
 ) -> Dict[str, Any]:
     validate_execution_context(run_id, system_label, submission_host, wave, 0, 0)
     if (
@@ -222,7 +225,15 @@ def prepare_wave(
         raise WavePreparationError(str(error)) from error
     if not result_root.is_dir() or result_root.is_symlink():
         raise WavePreparationError("shared result root must be an existing real directory")
-    mapping = parse_rank_host_mapping(mapping_path, expected_nodes)
+    if local:
+        if (expected_nodes != 1 or mapping_path is not None or scheduler is not None
+                or scheduler_job_id is not None or submission_host != socket.gethostname()):
+            raise WavePreparationError("local preparation requires one observed host and no scheduler/mapping")
+        mapping = [{"hostname": submission_host, "rank": 0}]
+    else:
+        if mapping_path is None or gpu_uuid is not None:
+            raise WavePreparationError("scheduled preparation requires a mapping and no local GPU selection")
+        mapping = parse_rank_host_mapping(mapping_path, expected_nodes)
     config = load_config(config_path)
     config_content = _require_deterministic(config_path, config, "effective config")
     manifest, manifest_sha256 = load_manifest(manifest_path)
@@ -297,6 +308,14 @@ def prepare_wave(
         run_id, system_label, config, config_sha256, manifest_sha256,
         runtime_sha256, git, submission_host, now,
     )
+    local_node = None
+    if local:
+        expected_run_metadata["launcher"]["execution_mode"] = "local"
+        local_node = build_local_node_metadata(
+            config_path, manifest_path, run_id, wave, runtime_sha256, gpu_uuid,
+        )
+        if local_node["cpu_runtime_environment"] != runtime_environment.get("cpu_runtime_environment"):
+            raise WavePreparationError("local CPU environment changed since runtime collection")
     run_root = result_root / run_id
     if run_root.exists():
         if not run_root.is_dir() or run_root.is_symlink():
@@ -361,6 +380,14 @@ def prepare_wave(
         "wave_metadata_schema_version": 1,
     }
     _exclusive_write(wave_root / "wave-metadata.json", dump_bytes(wave_metadata))
+    if local_node is not None:
+        node_root = wave_root / "nodes" / submission_host
+        node_root.mkdir()
+        _exclusive_write(node_root / "node-metadata.json", dump_bytes(local_node))
+        _exclusive_write(
+            wave_root / "runtime-environment-evidence.json",
+            runtime_environment_evidence_path.read_bytes(),
+        )
     return wave_metadata
 
 
@@ -369,8 +396,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--result-root", required=True, type=Path)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--wave", required=True, type=int)
-    parser.add_argument("--expected-nodes", required=True, type=int)
-    parser.add_argument("--mapping", required=True, type=Path)
+    parser.add_argument("--expected-nodes", type=int)
+    parser.add_argument("--mapping", type=Path)
+    parser.add_argument("--local", action="store_true")
+    parser.add_argument("--gpu-uuid")
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--build-metadata", required=True, action="append", type=Path)
@@ -379,13 +408,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--runtime-environment-evidence", required=True, type=Path
     )
     parser.add_argument("--system-label", required=True)
-    parser.add_argument("--scheduler", required=True)
-    parser.add_argument("--scheduler-job-id", required=True)
-    parser.add_argument("--submission-host", required=True)
+    parser.add_argument("--scheduler")
+    parser.add_argument("--scheduler-job-id")
+    parser.add_argument("--submission-host")
     parser.add_argument("--git-diff-sha256")
     parser.add_argument("--source-snapshot-sha256")
     arguments = parser.parse_args(argv)
     try:
+        if arguments.local:
+            if arguments.submission_host is not None:
+                raise WavePreparationError("local submission host is observed, not supplied")
+            arguments.submission_host = socket.gethostname()
+            if arguments.expected_nodes is None:
+                arguments.expected_nodes = 1
+        elif any(value is None for value in (
+            arguments.expected_nodes, arguments.mapping, arguments.scheduler,
+            arguments.scheduler_job_id, arguments.submission_host,
+        )):
+            raise WavePreparationError("scheduled preparation requires mapping, nodes, scheduler, job ID and host")
         prepare_wave(
             arguments.result_root, arguments.run_id, arguments.wave,
             arguments.expected_nodes, arguments.mapping, arguments.config,
@@ -396,7 +436,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             arguments.scheduler, arguments.scheduler_job_id,
             arguments.submission_host, arguments.git_diff_sha256,
             arguments.source_snapshot_sha256,
+            local=arguments.local, gpu_uuid=arguments.gpu_uuid,
         )
+        if arguments.local:
+            print(arguments.result_root / arguments.run_id / "waves" /
+                  str(arguments.wave) / "nodes" / arguments.submission_host)
     except (OSError, ValueError) as error:
         print("wave preparation failed: {0}".format(error), file=sys.stderr)
         return 1

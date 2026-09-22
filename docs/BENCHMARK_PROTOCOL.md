@@ -219,6 +219,9 @@ With all six libraries, one pilot block contains 108 expected raw rows. The
 six-node, two-wave production design contains 6,480 expected rows. If a pilot
 finds different CUDA and OpenACC Thrust versions, exclude Thrust rather than
 combining incomparable series; the corresponding counts are 90 and 5,400.
+Such an explicitly reduced campaign is a five-library comparison, not a
+successful reproduction of all six libraries. Preserve the mismatch evidence;
+do not delete failed rows or silently omit an implementation from a figure.
 
 The compute repeats are measurement amplification only: `elapsed_sec` remains
 one library operation's elapsed time. A human may revise the canonical values
@@ -280,16 +283,23 @@ unestablished parallelism is `unknown`.
 
 Backend-specific thread control is as follows:
 
-- OpenMP code uses the requested value through `OMP_NUM_THREADS` and, where the
-  implementation controls a region directly, the corresponding OpenMP runtime
-  control. Record `OMP_PROC_BIND` and `OMP_PLACES`.
+- OpenMP runtime variables may control a linked library even when the calling
+  source has no OpenMP parallel loop. Record `OMP_NUM_THREADS`, `OMP_PROC_BIND`,
+  and `OMP_PLACES`; the presence or absence of the application's `-fopenmp`
+  option does not identify the library's threading implementation.
 - oneMKL uses `MKL_NUM_THREADS` or the supported local thread-control API and
-  records the effective setting.
+  records the request separately from an established effective count. The
+  saved Pegasus campaign used `MKL_NUM_THREADS=48` and
+  `MKL_THREADING_LAYER=INTEL`; its oneMKL raw rows retain
+  `cpu_threads_effective=null`, not a measured effective count of 48.
 - OpenBLAS uses `OPENBLAS_NUM_THREADS` or a supported backend API. If a build
   cannot determine the effective count, record null and `unknown` rather than
   claiming the requested count.
 - Threaded FFTW initializes its threaded interface and applies the requested
   count before plan creation. Serial FFTW always records effective count 1.
+  The saved publication build used FFTW's `--enable-threads` pthread-based
+  implementation and the FFTW threads API with 48 threads. The cuFFT CPU
+  teaching example is serial; this threaded setting belongs to the benchmark.
 
 FFTW serial and threaded series use distinct names, for example
 `cpu-fftw-serial` and `cpu-fftw-threaded`. oneMKL and OpenBLAS series also use
@@ -306,8 +316,10 @@ The canonical cuRAND CPU benchmark is `cpu-std-random-serial`, role
 `std::uniform_real_distribution<double>`. Its effective thread count is 1. The
 canonical Thrust CPU benchmark is `cpu-stl-serial`, role `production`, using
 `std::transform_reduce` without an execution policy; its effective thread count
-is also 1. Publication plots label both as **CPU serial reference**, never as a
-parallel or algorithm-equivalent baseline and never as 48-core CPU performance.
+is also 1. The approved publication legends explicitly say **single thread**
+for both, never parallel or algorithm-equivalent performance and never 48-core
+CPU performance. Exact displayed labels are listed under
+[Publication figures](#publication-figures).
 
 ## Timing fields
 
@@ -699,8 +711,10 @@ one two-panel elapsed-time figure per enabled publication library:
 - `curand-elapsed-time.png`; and
 - `thrust-elapsed-time.png`.
 
-The left panel is **Data-resident compute** and the right panel is **One-shot
-host-input-to-host-output**. Both use the library-specific problem size on the
+The left panel is titled **Library kernel execution time** and represents
+data-resident compute. The right is titled **End-to-end execution time** and
+represents the one-shot host-input-to-host-output pipeline. Both use the
+library-specific problem size on the
 x-axis and **Elapsed time [ms]** on the y-axis; lower is better. CPU, CUDA, and
 OpenACC appear together. The plotted compute value is the existing
 per-operation `elapsed_sec` converted from seconds to milliseconds; it is not
@@ -709,10 +723,32 @@ records. Do not produce a speedup, throughput, bandwidth, FLOPS, sample-rate,
 element-rate, reuse-count, amortized, break-even, or additional generic elapsed
 figure.
 
-The cuFFT CPU series is labeled **CPU: FFTW threaded, 48 threads**. cuBLAS,
-cuSPARSE, and cuSOLVER use **CPU: oneMKL, 48 threads**. cuRAND and Thrust use
-**CPU serial reference**; their CPU time is not a parallel or
-algorithm-equivalent denominator. A Thrust figure requires raw-result evidence
+The approved shared legend is below the two panels. Its exact labels are:
+
+| Series | Label |
+| --- | --- |
+| cuFFT CPU | `Intel Xeon Platinum 8468, FFTW (48 C)` |
+| cuBLAS/cuSPARSE/cuSOLVER CPU | `Intel Xeon Platinum 8468, oneMKL (48 C)` |
+| cuRAND CPU | `Intel Xeon Platinum 8468, std::mt19937_64 (single thread)` |
+| Thrust CPU | `Intel Xeon Platinum 8468, STL (single thread)` |
+| CUDA | `NVIDIA H100 PCIe, CUDA` |
+| OpenACC | `NVIDIA H100 PCIe, OpenACC` |
+
+The `(48 C)` labels describe the approved campaign configuration; they do not
+change the oneMKL effective-thread evidence described above. cuRAND and Thrust
+are serial references, not parallel or algorithm-equivalent denominators.
+The logarithmic x-axis uses binary K/M notation (`1K=1024`, `1M=1048576`);
+cuSOLVER retains `4K`, `8K`, `12K` for those input sizes and uses actual input
+sizes for other sweeps. The table is the approved teaching configuration, not
+a default for unknown hardware. Use `--display-config` with the explicit
+`compact-requested` convention to reproduce it. Normal labels distinguish
+requested and reported effective counts; missing values remain unknown.
+`--node-metadata` can supply observed CPU identities and raw rows supply GPU
+identities. The [display schema](RESULT_SCHEMA.md#plot-display-configuration)
+defines provenance and validation; follow the
+[own-measurement route](PORTABILITY.md#figures-from-your-own-measurements).
+
+A Thrust figure requires raw-result evidence
 that successful CUDA and OpenACC rows report one identical `library_version`.
 Missing, mixed, or unequal evidence is an error before any figure is written;
 never silently omit one implementation.
@@ -745,3 +781,55 @@ toward the compute side because transfer contributes relatively less. This is
 an interpretation of the existing two scopes, not a third amortized scope. The
 workloads are one representative operation per library and do not characterize
 every algorithm in that library.
+
+## Reading the figures and applying the results
+
+The figure is a comparison of two boundaries, not a promise of whole-application
+speedup. Read the x-axis as the configured problem size and the y-axis as
+milliseconds per operation; lower is better. Compare CPU, CUDA, and OpenACC
+only at the same size and within the same panel. Do not divide the plotted
+compute value by `repeat` again.
+
+| Work | Compute panel | One-shot E2E panel |
+| --- | --- | --- |
+| Host input allocation/generation and canonical restoration | Outside | Outside |
+| GPU allocation, H2D, plan/handle/descriptor/workspace setup | Prepared before timing | Inside the per-repeat pipeline where the library requires it |
+| Library operation and synchronization that establishes its completion | Inside | Inside |
+| D2H/result retrieval | After compute timing | Inside, before the end timestamp |
+| OpenACC data entry/exit and required copyin/copyout | Outside | Inside |
+| Explicit post-result cleanup, numerical verification, serialization and file I/O | Outside | Outside |
+
+CPU implementations use their corresponding operation/setup boundary without
+inventing host-device copies. Library-specific resource details, especially
+cuSOLVER restoration and FFT plans, remain in the scope and workload sections
+above and each library README. E2E is **not** the entire program's wall time:
+input generation, verification, output, and post-result cleanup are excluded.
+
+Warm-up is untimed and follows the chosen scope. Each raw trial starts from
+restored state. Compute repetition amplifies the measurable interval; E2E
+publication repeat is 1, and cuSOLVER repeat is always 1. A block median is
+formed from valid trials, then a wave median from blocks, then a cross-wave
+median from wave medians. One block/wave is useful for checking the pipeline,
+but does not establish cross-node/time variability. Inspect sample counts,
+quartiles, failure counts, and provenance as well as the plotted median.
+
+Before applying a result to your program, check whether its data stays on the
+GPU, whether plans/handles can be reused, how often transfers and synchronization
+are needed, and what fraction of application time is in this operation. A
+shorter GPU compute time may coexist with a slower one-shot pipeline. Their
+difference suggests costs to investigate; it is not a separately measured
+transfer-only time or proof of a particular bottleneck. Host work, I/O, other
+kernels, and contention can limit whole-application gains. No overlap or reuse
+optimization is measured merely because it could be implemented.
+
+Keep precision, operation, parameters, verification thresholds, CPU provider,
+thread request/effective evidence, compiler flags, GPU/software versions, and timing scope
+visible when comparing runs. The configured all-ones or analytical problems
+are controlled examples, not a survey of real-world input distributions.
+cuRAND compares different RNG algorithms; cuRAND/Thrust CPU series are
+single-threaded. Never generalize their ratios to optimized parallel CPU
+implementations. Failed, skipped, or nonfinite trials remain in the raw data
+and are excluded from numerical aggregation, not erased as inconvenient data.
+
+For the exact configuration edit locations and the executable command sequence,
+use [the reader workflow](PORTABILITY.md#measuring-on-your-own-system).

@@ -7,10 +7,10 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from gpu_suite.hashing import sha256_bytes
+from gpu_suite.hashing import sha256_bytes, sha256_file
 from gpu_suite.plotting import build_plot_metadata, render_plots
 from gpu_suite.schema import validate_raw_result
-from gpu_suite.strict_json import dump_bytes, loads
+from gpu_suite.strict_json import dump_bytes, load, loads
 
 
 def load_aggregate(paths: Sequence[Path]) -> List[Dict[str, Any]]:
@@ -60,6 +60,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--metadata-output", required=True, type=Path)
     parser.add_argument("aggregate_results", nargs="+", type=Path)
     parser.add_argument("--raw-results", required=True, nargs="+", type=Path)
+    parser.add_argument("--display-config", type=Path)
+    parser.add_argument("--node-metadata", nargs="+", type=Path, default=[])
     arguments = parser.parse_args(argv)
     try:
         if not arguments.output_directory.is_dir():
@@ -70,8 +72,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         records = load_aggregate(arguments.aggregate_results)
         raw_records = load_raw_results(arguments.raw_results)
         metadata = build_plot_metadata(
-            records, sha256_bytes(source), raw_records=raw_records
+            records, sha256_bytes(source), raw_records=raw_records,
+            display_configuration=(load(arguments.display_config)
+                                   if arguments.display_config else None),
+            node_metadata=[load(path) for path in arguments.node_metadata],
         )
+        metadata["display_config_sha256"] = (
+            sha256_file(arguments.display_config) if arguments.display_config else None
+        )
+        metadata["node_metadata_sha256s"] = [
+            sha256_file(path) for path in arguments.node_metadata
+        ]
         metadata = render_plots(metadata, arguments.output_directory)
         exclusive_write(arguments.metadata_output, dump_bytes(metadata))
         if metadata["matplotlib"]["status"] == "unexecuted":

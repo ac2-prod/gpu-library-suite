@@ -224,7 +224,8 @@ def _library_probe(
 
 
 def collect_runtime_environment_documents(
-    manifest_path: Path, build_metadata_paths: Sequence[Path], module_list_path: Path,
+    manifest_path: Path, build_metadata_paths: Sequence[Path],
+    module_list_path: Optional[Path],
     configured_cuda_root: str, configured_cuda_version: str,
     nvhpc_cuda_home: str, environment: Mapping[str, str] = os.environ,
     executor: CommandExecutor = _default_executor,
@@ -251,10 +252,13 @@ def collect_runtime_environment_documents(
     ):
         raise RuntimeEnvironmentError("runtime CUDA Toolkit selection is inconsistent")
 
-    raw_module_list = module_list_path.read_bytes().decode(
-        "utf-8", errors="strict"
+    # None is an explicit declaration that no module system is used, not a
+    # failed/empty module command disguised as successful discovery.
+    raw_module_list = (
+        module_list_path.read_bytes().decode("utf-8", errors="strict")
+        if module_list_path is not None else None
     )
-    modules = normalize_module_list(raw_module_list)
+    modules = normalize_module_list(raw_module_list) if raw_module_list is not None else []
 
     build_metadata = []
     metadata_by_hash = {}  # type: Dict[str, Dict[str, Any]]
@@ -451,6 +455,10 @@ def collect_runtime_environment_documents(
         "resolved_shared_library_paths": sorted(all_resolved_paths),
         "runtime_environment_schema_version": 1,
     }
+    if module_list_path is None:
+        document["module_system"] = {
+            "source": "user-specified", "status": "not-used",
+        }
     evidence = {
         "binaries": raw_binary_evidence,
         "command_probes": {
@@ -464,10 +472,14 @@ def collect_runtime_environment_documents(
         "cuda_runtime_probe": dict(cuda_runtime_identity),
         "executables_manifest_sha256": manifest_sha256,
         "module_list_output": raw_module_list,
-        "module_list_sha256": sha256_file(module_list_path),
+        "module_list_sha256": (
+            sha256_file(module_list_path) if module_list_path is not None else None
+        ),
         "runtime_environment_evidence_schema_version": 1,
         "runtime_environment_sha256": deterministic_json_sha256(document),
     }
+    if module_list_path is None:
+        evidence["module_system"] = dict(document["module_system"])
     return document, evidence
 
 
@@ -486,7 +498,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--build-metadata", required=True, action="append", type=Path)
-    parser.add_argument("--module-list", required=True, type=Path)
+    modules = parser.add_mutually_exclusive_group(required=True)
+    modules.add_argument("--module-list", type=Path)
+    modules.add_argument(
+        "--no-module-system", action="store_true",
+        help="Explicitly record that no module system is used; other probes remain enforced",
+    )
     parser.add_argument("--cuda-toolkit-root", required=True)
     parser.add_argument("--cuda-toolkit-version", required=True)
     parser.add_argument("--nvhpc-cuda-home", required=True)

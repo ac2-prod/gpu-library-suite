@@ -2,7 +2,11 @@
 """Create deterministic node metadata, raw classification, and final status."""
 
 import argparse
+import csv
 import os
+import shutil
+import socket
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -26,7 +30,8 @@ from gpu_suite.runner import (  # noqa: E402
     validate_sha256,
 )
 from gpu_suite.scheduler import validate_scheduler_identity  # noqa: E402
-from gpu_suite.strict_json import dump_bytes, load  # noqa: E402
+from gpu_suite.strict_json import dump_bytes, load, loads  # noqa: E402
+from collect_runtime_environment import command_record, CommandExecutor  # noqa: E402
 from cuda_runtime_probe import (  # noqa: E402
     CUDA_RUNTIME_PROBE_KEYS,
     CudaRuntimeProbe,
@@ -153,6 +158,94 @@ def build_node_metadata(
         "size_order_index": order_index,
         "wave": wave,
     }
+
+
+def _local_executor(arguments: Sequence[str]):
+    environment = dict(os.environ)
+    environment["LC_ALL"] = "C"
+    completed = subprocess.run(
+        list(arguments), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        env=environment, check=False,
+    )
+    return completed.returncode, completed.stdout.decode("utf-8", errors="strict")
+
+
+def build_local_node_metadata(
+    config_path: Path, manifest_path: Path, run_id: str, wave: int,
+    runtime_environment_sha256: str, gpu_uuid: Optional[str] = None,
+    environment: Mapping[str, str] = os.environ,
+    executor: CommandExecutor = _local_executor,
+    which=shutil.which,
+    cuda_runtime_probe: CudaRuntimeProbe = probe_node_cuda_runtime,
+) -> Dict[str, Any]:
+    """Observe one local worker, without scheduler or MPI identity fabrication."""
+    selected_environment = dict(environment)
+    for name in (
+        "GPU_SUITE_GPU_NAME", "GPU_SUITE_GPU_UUID", "GPU_SUITE_NVIDIA_DRIVER_VERSION",
+        "GPU_SUITE_NODE_GPU_QUERY_STATUS", "GPU_SUITE_NODE_GPU_QUERY_DIAGNOSTIC",
+    ):
+        selected_environment.pop(name, None)
+    cpu_probe = command_record(["lscpu", "--json"], executor, which)
+    cpu_name = None
+    if cpu_probe["status"] == "success":
+        try:
+            cpu = loads("\n".join(cpu_probe["output"]))
+            names = [item["data"] for item in cpu["lscpu"]
+                     if item.get("field", "").strip().rstrip(":") == "Model name"]
+            if len(names) == 1 and isinstance(names[0], str) and names[0].strip():
+                cpu_name = names[0].strip()
+        except (ValueError, KeyError, TypeError, AttributeError):
+            pass
+    gpu_probe = command_record([
+        "nvidia-smi", "--query-gpu=name,uuid,driver_version", "--format=csv,noheader",
+    ], executor, which)
+    chosen = None
+    if gpu_probe["status"] == "success":
+        rows = [[part.strip() for part in row]
+                for row in csv.reader(gpu_probe["output"]) if row]
+        if any(len(row) != 3 or not all(row) for row in rows):
+            raise NodeToolError("malformed local GPU identity response")
+        if gpu_uuid is not None:
+            if environment.get("CUDA_VISIBLE_DEVICES") != gpu_uuid:
+                raise NodeToolError("local GPU UUID requires the same CUDA_VISIBLE_DEVICES UUID")
+            selected = [row for row in rows if row[1] == gpu_uuid]
+            if len(selected) != 1:
+                raise NodeToolError("local GPU UUID is not uniquely observed")
+            chosen = selected[0]
+        elif len(rows) == 1:
+            visible = environment.get("CUDA_VISIBLE_DEVICES")
+            if visible not in {None, "0", rows[0][1]}:
+                raise NodeToolError("local GPU visibility differs from the observed single GPU")
+            chosen = rows[0]
+        elif len(rows) > 1:
+            raise NodeToolError("multiple local GPUs require --gpu-uuid and CUDA_VISIBLE_DEVICES")
+    if chosen is not None:
+        selected_environment.update({
+            "GPU_SUITE_GPU_NAME": chosen[0], "GPU_SUITE_GPU_UUID": chosen[1],
+            "GPU_SUITE_NVIDIA_DRIVER_VERSION": chosen[2],
+            "GPU_SUITE_NODE_GPU_QUERY_STATUS": "success",
+        })
+    else:
+        selected_environment.update({
+            "GPU_SUITE_NODE_GPU_QUERY_STATUS": "unavailable",
+            "GPU_SUITE_NODE_GPU_QUERY_DIAGNOSTIC": "local GPU identity was not observed",
+        })
+    document = build_node_metadata(
+        config_path, manifest_path, run_id, wave, 0, socket.gethostname(),
+        runtime_environment_sha256, selected_environment, cuda_runtime_probe,
+    )
+    manifest, _ = load_manifest(manifest_path)
+    if any(entry["implementation"] in {"cuda", "openacc"} for entry in manifest["entries"]):
+        if chosen is None or document["cuda_runtime_identity"]["query_status"] != "success":
+            raise NodeToolError("local GPU artifacts require observed GPU and CUDA runtime identity")
+    document["cpu_identity"] = {
+        "name": cpu_name,
+        "source": "lscpu" if cpu_name is not None else "unknown",
+        "query_status": "success" if cpu_name is not None else "unavailable",
+    }
+    document["local_machine_probes"] = {"cpu": cpu_probe, "gpu": gpu_probe}
+    document["execution_mode"] = "local"
+    return document
 
 
 def classify_raw(

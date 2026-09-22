@@ -17,6 +17,12 @@ to the Phase 1 specification-delta gate. Once synchronized, each owning
 specification remains normative; this plan does not become a competing schema,
 protocol, or operating manual.
 
+The current [code-publication scope](../README.md#publication-scope) retains the
+completed implementation and documentation. The phase criteria below describe
+implementation and measurement validation; they do not require publication of
+private measurement artifacts or additional general-purpose measurement
+infrastructure before this code publication.
+
 ## Planning baseline and cross-phase constraints
 
 ### Planning status and local toolchain preflight
@@ -894,9 +900,10 @@ finishes user-facing documentation.
 - Plotting emits exactly one two-panel millisecond elapsed-time figure per
   publication library from cross-wave summaries, with no speedup, throughput,
   reuse, amortized, or extra generic figure.
-- cuRAND/Thrust use the exact **CPU serial reference** graph label. cuRAND
-  carries the algorithm-comparison note, and Thrust requires equal CUDA/OpenACC
-  raw-result `library_version` evidence before any figure is written.
+- cuRAND/Thrust are explicitly labeled single-threaded, with the exact approved
+  legends owned by [Publication figures](BENCHMARK_PROTOCOL.md#publication-figures).
+  cuRAND carries the algorithm-comparison note, and Thrust requires equal
+  CUDA/OpenACC raw-result `library_version` evidence before any figure is written.
 - Every Python source passes AST parsing as Python 3.9, normal byte-compilation,
   standard-library API compatibility checks, and unit tests.
 - All Phase 4 tests and `git diff --check` pass.
@@ -1133,9 +1140,12 @@ left to the implementer:
   library installation path, NVHPC CUDA selection, and shared output path.
 - Actual GPU/CPU performance, production-calibrated sizes/repeats after pilot,
   and anomaly/exclusion policy.
-- Project license and publication policy.
 - Future NVIDIA Fortran, AMD C/C++/Fortran, common Fortran, Miyabi, TSUBAME4.0,
   and Sirius implementation. Furo remains outside the approved job scope.
+
+The owner has approved MIT and the copyright-holder attribution described in
+the [README](../README.md#license), together with publication operations for the
+selected [code scope](../README.md#publication-scope).
 
 No empty directory, dummy target, or placeholder implementation is created for
 deferred source areas. Configuration examples use explicit placeholders for

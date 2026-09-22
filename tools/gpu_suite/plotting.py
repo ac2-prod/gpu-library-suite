@@ -2,9 +2,12 @@
 
 import importlib
 import math
+import textwrap
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, DefaultDict, Dict, List, Mapping, Optional, Sequence, Tuple
+
+from gpu_suite.plot_display import build_display_context, series_display
 
 
 CURAND_COMPARISON_NOTE = (
@@ -35,47 +38,10 @@ PANEL_TITLES = {
     "compute": "Library kernel execution time",
     "end-to-end": "End-to-end execution time",
 }
-CPU_SERIES_LABELS = {
-    ("cufft", "cpu-fftw-threaded"): (
-        "Intel Xeon Platinum 8468, FFTW (48 C)"
-    ),
-    ("cublas", "cpu-onemkl"): (
-        "Intel Xeon Platinum 8468, oneMKL (48 C)"
-    ),
-    ("cusparse", "cpu-onemkl"): (
-        "Intel Xeon Platinum 8468, oneMKL (48 C)"
-    ),
-    ("cusolver", "cpu-onemkl"): (
-        "Intel Xeon Platinum 8468, oneMKL (48 C)"
-    ),
-    ("curand", "cpu-std-random-serial"): (
-        "Intel Xeon Platinum 8468, std::mt19937_64 (single thread)"
-    ),
-    ("thrust", "cpu-stl-serial"): (
-        "Intel Xeon Platinum 8468, STL (single thread)"
-    ),
-}
 
 
 class PlotError(ValueError):
     pass
-
-
-def _series_label(record: Mapping[str, Any]) -> str:
-    implementation = record["implementation"]
-    if implementation == "cpu":
-        key = (record["benchmark"], record.get("cpu_backend"))
-        try:
-            return CPU_SERIES_LABELS[key]
-        except KeyError as error:
-            raise PlotError(
-                "unexpected publication CPU series: {0}/{1}".format(*key)
-            ) from error
-    if implementation == "cuda":
-        return "NVIDIA H100 PCIe, CUDA"
-    if implementation == "openacc":
-        return "NVIDIA H100 PCIe, OpenACC"
-    raise PlotError("publication plots accept only CPU, CUDA, and OpenACC")
 
 
 def _binary_tick_label(value: float, _position: Optional[int] = None) -> str:
@@ -93,7 +59,11 @@ def _binary_tick_label(value: float, _position: Optional[int] = None) -> str:
     return str(integer)
 
 
-def primary_plot_series(records: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+def primary_plot_series(
+    records: Sequence[Mapping[str, Any]],
+    raw_records: Sequence[Mapping[str, Any]] = (),
+    display: Optional[Mapping[str, Any]] = None,
+) -> List[Dict[str, Any]]:
     """Select per-operation elapsed-time cross-wave records."""
 
     grouped = defaultdict(list)  # type: DefaultDict[Tuple[str, ...], List[Mapping[str, Any]]]
@@ -127,6 +97,8 @@ def primary_plot_series(records: Sequence[Mapping[str, Any]]) -> List[Dict[str, 
         grouped[key].append(record)
     if len(provenance) != 1:
         raise PlotError("plot input must contain one campaign provenance")
+    if display is None:
+        display = build_display_context(next(iter(provenance)), raw_records)
 
     series = []  # type: List[Dict[str, Any]]
     for key in sorted(grouped):
@@ -160,13 +132,18 @@ def primary_plot_series(records: Sequence[Mapping[str, Any]]) -> List[Dict[str, 
                 }
             )
         first = group[0]
+        try:
+            presentation = series_display(first, raw_records, display)
+        except ValueError as error:
+            raise PlotError(str(error)) from error
         series.append(
             {
                 "benchmark": first["benchmark"],
                 "comparison": None,
                 "cpu_backend": first.get("cpu_backend"),
                 "implementation": first["implementation"],
-                "label": _series_label(first),
+                "label": presentation["label"],
+                "display_evidence": presentation,
                 "metric": "elapsed_sec",
                 "points": points,
                 "scope": first["scope"],
@@ -281,6 +258,8 @@ def _validate_thrust_versions(
 def build_plot_metadata(
     records: Sequence[Mapping[str, Any]], source_sha256: str,
     raw_records: Optional[Sequence[Mapping[str, Any]]] = None,
+    display_configuration: Optional[Mapping[str, Any]] = None,
+    node_metadata: Sequence[Mapping[str, Any]] = (),
 ) -> Dict[str, Any]:
     provenance = sorted(
         {
@@ -290,12 +269,19 @@ def build_plot_metadata(
     )
     if len(provenance) != 1:
         raise PlotError("plot input must contain one campaign provenance")
-    series = primary_plot_series(records)
+    try:
+        display = build_display_context(
+            provenance[0], raw_records or (), display_configuration, node_metadata
+        )
+    except ValueError as error:
+        raise PlotError(str(error)) from error
+    series = primary_plot_series(records, raw_records or (), display)
     benchmarks = _validate_series_contract(series)
     _validate_thrust_versions(benchmarks, raw_records, provenance[0])
     run_id, runtime_hash = provenance[0]
     return {
         "curand_comparison_note": CURAND_COMPARISON_NOTE,
+        "display": display,
         "generated_files": [],
         "matplotlib": {"status": "not-attempted", "version": None},
         "plot_metadata_schema_version": 1,
@@ -359,7 +345,7 @@ def render_plots(
                 axis.plot(x_values, y_values, marker="o", label=item["label"])
             axis.set_xscale("log", base=2)
             if benchmark == "cusolver":
-                axis.set_xticks((4096, 8192, 12288))
+                axis.set_xticks([point["problem_size"] for point in selected[0]["points"]])
             axis.xaxis.set_major_formatter(
                 ticker.FuncFormatter(_binary_tick_label)
             )
@@ -368,14 +354,17 @@ def render_plots(
             axis.set_title(PANEL_TITLES[scope])
             axis.grid(True, which="both", alpha=0.25)
         legend_handles, legend_labels = axes[0].get_legend_handles_labels()
+        compact = metadata["display"]["thread_label_mode"] == "compact-requested"
+        if not compact:
+            legend_labels = [textwrap.fill(label, width=90) for label in legend_labels]
         figure.legend(
             legend_handles,
             legend_labels,
             loc="lower center",
             bbox_to_anchor=(0.5, 0.01),
-            ncol=3,
+            ncol=3 if compact else 1,
         )
-        figure.tight_layout(rect=(0.0, 0.12, 1.0, 1.0))
+        figure.tight_layout(rect=(0.0, 0.12 if compact else 0.25, 1.0, 1.0))
         figure.savefig(str(output_directory / FIGURE_FILENAMES[benchmark]), dpi=150)
         pyplot.close(figure)
     metadata["generated_files"] = filenames

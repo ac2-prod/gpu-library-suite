@@ -155,14 +155,17 @@ class DocumentationTests(unittest.TestCase):
                 REPOSITORY_ROOT / "nvidia" / "c-cpp" / library / "README.md"
             ).read_text(encoding="utf-8")
             for stem in stems:
-                self.assertIn("`{0}`".format(stem), root_readme)
+                self.assertRegex(
+                    root_readme,
+                    r"\[" + re.escape(stem) + r"\]\(nvidia/c-cpp/" + library + r"/",
+                )
                 self.assertIn("`{0}`".format(stem), library_readme)
 
     def test_user_documentation_records_required_roles_and_boundaries(self):
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("cpu-fftw-threaded", readme)
         self.assertNotIn("cpu-fftw-serial", readme)
-        self.assertIn("CPU serial reference", readme)
+        self.assertIn("single thread", readme)
         self.assertIn("same distribution and output type", readme)
         self.assertIn("RNG algorithms differ", readme)
         self.assertIn("only writer of the node-level raw-result file", readme)

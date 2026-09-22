@@ -840,6 +840,10 @@ def execute_schedule(
                     "GPU_SUITE_RUNTIME_ENVIRONMENT_SHA256": runtime_environment_sha256,
                 }
             )
+            # The explicit launch context owns scheduler provenance. A local
+            # run must not inherit stale identity from a parent job shell.
+            environment.pop("GPU_SUITE_SCHEDULER", None)
+            environment.pop("GPU_SUITE_SCHEDULER_JOB_ID", None)
             if context["scheduler"] is not None:
                 environment["GPU_SUITE_SCHEDULER"] = context["scheduler"]
             if context["scheduler_job_id"] is not None:
