@@ -1,5 +1,7 @@
 # cuFFT C/C++ examples and benchmarks
 
+[English](README.md) | [日本語](README.ja.md)
+
 This directory compares the canonical batched FP32 forward complex transform
 through FFTW3f, direct cuFFT, and OpenACC/cuFFT. Problem mathematics belong to
 [`docs/PROJECT_SPECIFICATION.md`](../../../docs/PROJECT_SPECIFICATION.md), and

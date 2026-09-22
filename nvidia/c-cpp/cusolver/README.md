@@ -1,5 +1,7 @@
 # cuSOLVER C/C++ examples and benchmarks
 
+[English](README.md) | [日本語](README.ja.md)
+
 This directory solves the canonical dense FP64 system through LAPACKE, direct
 cuSOLVER, and OpenACC/cuSOLVER. System construction belongs to
 [`docs/PROJECT_SPECIFICATION.md`](../../../docs/PROJECT_SPECIFICATION.md), and

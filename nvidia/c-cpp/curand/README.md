@@ -1,5 +1,7 @@
 # cuRAND C/C++ examples and benchmarks
 
+[English](README.md) | [日本語](README.ja.md)
+
 This directory compares uniform-double generation through C++17
 `std::mt19937_64`, direct cuRAND, and OpenACC/cuRAND. Workload ownership belongs
 to [`docs/PROJECT_SPECIFICATION.md`](../../../docs/PROJECT_SPECIFICATION.md),
