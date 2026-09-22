@@ -1,5 +1,7 @@
 # GPU Library Suite
 
+[English](README.md) | [日本語](README.ja.md)
+
 Portable NVIDIA C/C++ teaching examples, reproducible CPU/CUDA/OpenACC
 benchmarks, strict result tooling, and Pegasus job support for cuFFT, cuBLAS,
 cuSPARSE, cuSOLVER, cuRAND, and Thrust.

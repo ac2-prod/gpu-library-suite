@@ -1,5 +1,7 @@
 # GPU Library Suite Benchmark Protocol
 
+[English](BENCHMARK_PROTOCOL.md) | [日本語](BENCHMARK_PROTOCOL.ja.md)
+
 ## Authority and scope
 
 This document owns benchmark command-line behavior, workload sweeps, timing

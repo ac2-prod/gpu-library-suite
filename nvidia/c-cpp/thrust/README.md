@@ -1,5 +1,7 @@
 # Thrust C/C++ examples and benchmarks
 
+[English](README.md) | [日本語](README.ja.md)
+
 This directory compares the canonical FP64 square-sum reduction through C++17
 STL, direct Thrust, and OpenACC/Thrust interoperation. Workload ownership belongs
 to [`docs/PROJECT_SPECIFICATION.md`](../../../docs/PROJECT_SPECIFICATION.md),
