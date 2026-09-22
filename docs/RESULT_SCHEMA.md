@@ -29,6 +29,14 @@ Standalone JSON documents use:
 - nonfinite numbers rejected (`allow_nan=false`); and
 - exactly one LF byte after the JSON value.
 
+C/C++ result serialization fixes `LC_NUMERIC` to `C` before formatting. It uses
+round-trip precision, a period decimal separator, lowercase normalized exponent
+notation without redundant exponent sign/zero padding, and serializes every
+zero including negative zero as `0`. It checks every floating value for
+finiteness before formatting. NaN and infinities are represented by null plus
+the applicable failure/nonfinite status and message, never by non-standard JSON
+tokens.
+
 Compute SHA-256 over the exact saved byte sequence, including the final LF.
 Timestamps use UTC with exactly millisecond precision:
 `YYYY-MM-DDTHH:MM:SS.sssZ`.
@@ -39,15 +47,21 @@ Every project Python JSON loader explicitly supplies both:
   object keys rather than accepting the last value; and
 - `parse_constant` that rejects `NaN`, `Infinity`, and `-Infinity`.
 
+The loader also rejects syntactically standard numbers such as an excessive
+exponent when conversion would produce a nonfinite host floating-point value.
+
 Do not rely on the permissive defaults of `json.load` or `json.loads`. Invalid
 UTF-8 is also a load error. NaN, positive/negative infinity, and other nonfinite
 values are never written as JSON numbers; represent them with null, a
 failure/nonfinite status, and a diagnostic message.
 
-The same future Python utility serializes and hashes `effective-config.json`,
+The shared Python utility serializes and hashes `effective-config.json`,
 `run-metadata.json`, `runtime-environment.json`, `wave-metadata.json`, and
-`node-metadata.json`. C/C++ benchmarks must not independently serialize and hash
-the effective configuration. Executable manifests use the same deterministic
+`node-metadata.json`. The per-wave
+`runtime-environment-evidence.json` sidecar uses the same deterministic profile,
+while preserving captured command output inside JSON strings without newline
+normalization. C/C++ benchmarks must not independently serialize and hash the
+effective configuration. Executable manifests use the same deterministic
 profile.
 
 For JSON Lines, each record is a deterministic-profile JSON object followed by
@@ -84,9 +98,12 @@ sanitize an invalid value silently.
   ```
 
 Store `run_id`, `wave`, and `hostname` as separate fields as well. A hostname
-used as a directory component must be validated as a safe single component; do
-not silently rewrite it. A duplicate hostname within one wave is an error under
-the one-process-per-node model.
+used as a directory component must be validated as a safe single component. It
+must be nonempty, must not equal `.` or `..`, and must not contain `/`,
+backslash, any platform path separator, or a control character. Do not silently
+rewrite it. A duplicate hostname within one wave is an error under the
+one-process-per-node model. `block_id` must equal the exact scalar composition
+of the separately validated `run_id`, `wave`, and `hostname` fields.
 
 ### Scheduler identity
 
@@ -105,8 +122,16 @@ Within a node, `run_suite.py` is the only raw-file writer. It exclusively create
 the node raw file, writes the CSV header once when applicable, validates
 benchmark stdout, and appends accepted rows. Benchmark executables emit
 machine-readable stdout with `--output -` and never append to node raw files.
-The runner synthesizes a schema-valid failure row for a crash, signal, invalid
-output, or missing output. Raw files are never overwritten.
+Before accepting a row, the runner compares every field owned by the effective
+configuration, executable manifest/build metadata, execution context, and
+source/binary/runtime provenance. It also requires the exact library-specific
+metric key set, primary metric, threshold method, and threshold operands; a
+subprocess cannot redefine campaign facts in its stdout.
+The runner preserves validated completed rows. For a crash, signal, invalid
+output, or missing output, it synthesizes one attempted failure row for the
+first unresolved trial and unattempted skipped rows for later trials that did
+not start. It rejects duplicate or out-of-range trial indices and materializes
+each expected index exactly once. Raw files are never overwritten.
 
 ### Fields
 
@@ -128,8 +153,8 @@ output, or missing output. Raw files are never overwritten.
 | `benchmark` | string | yes | `cufft`, `cublas`, `cusparse`, `cusolver`, `curand`, or `thrust`. |
 | `implementation` | string | yes | `cpu`, `cuda`, or `openacc`. |
 | `scope` | string | yes | `compute` or `end-to-end`. |
-| `problem_size` | integer/null | yes | Primary x-axis value; null for non-square DGEMM. |
-| `secondary_size` | integer/null | yes | Library-specific secondary size or null. |
+| `problem_size` | integer/null | yes | Positive primary x-axis value; null only where the benchmark definition permits it, such as non-square DGEMM. |
+| `secondary_size` | integer/null | yes | Positive library-specific secondary size or null. |
 | `parameters` | object | yes | Complete normalized library parameters. CSV stores deterministic JSON text. |
 | `precision` | string | yes | For example `fp32` or `fp64`. |
 | `cpu_backend` | string/null | yes | Stable backend name for CPU, otherwise null. |
@@ -141,6 +166,8 @@ output, or missing output. Raw files are never overwritten.
 | `warmup` | integer | yes | Non-negative warm-up count. |
 | `repeat` | integer | yes | Positive count used in the trial. |
 | `trial` | integer | yes | Non-negative trial index. |
+| `attempted` | boolean | yes | True if this trial began execution; false only for an unstarted skipped trial. |
+| `failure_origin` | string/null | yes | Null on success; otherwise the controlled origin defined below. |
 | `elapsed_total_sec` | number/null | yes | Total measured time; null if unavailable/nonfinite. |
 | `elapsed_sec` | number/null | yes | `elapsed_total_sec / repeat`; null if unavailable/nonfinite. |
 | `clock_id` | string | yes | `CLOCK_MONOTONIC`. |
@@ -151,18 +178,19 @@ output, or missing output. Raw files are never overwritten.
 | `verification_status` | string | yes | `pass`, `failure`, `skipped`, or `nonfinite`. |
 | `getrf_info` | integer/null | yes | cuSOLVER factorization info, otherwise null. |
 | `getrs_info` | integer/null | yes | cuSOLVER solve info, otherwise null. |
-| `device_id` | integer/null | yes | CUDA device index for GPU, otherwise null. |
+| `device_id` | integer/null | yes | Non-negative CUDA device index for GPU, otherwise null. |
 | `gpu_name` | string/null | yes | Reported GPU name or null. |
 | `gpu_uuid` | string/null | yes | Reported GPU UUID or null. |
-| `cuda_driver_version` | string/null | yes | NVIDIA driver version or null when not applicable/unavailable. |
+| `cuda_driver_version` | string/null | yes | CUDA Driver API version returned by `cudaDriverGetVersion`, or null when not applicable/unavailable. |
 | `compiler` | string | yes | Compiler identity. |
 | `compiler_version` | string | yes | Compiler version. |
-| `compiler_flags` | string | yes | Effective relevant flags. |
+| `global_configure_flags` | string | yes | Language-level global CMake configure flags only; this does not claim target compile definitions/options, provider flags, or link options. |
 | `library_name` | string | yes | CPU or GPU library/backend name. |
 | `library_version` | string/null | yes | Version or null if unavailable. |
 | `cuda_runtime_version` | string/null | yes | Runtime version for GPU or null. |
-| `git_commit` | string | yes | Source commit identifier. |
-| `git_dirty` | boolean | yes | Source worktree state. |
+| `git_metadata_available` | boolean | yes | True only when both commit and worktree state were obtained from Git. |
+| `git_commit` | string/null | yes | Source commit identifier, or null when Git metadata is unavailable. |
+| `git_dirty` | boolean/null | yes | Source worktree state, or null when Git metadata is unavailable. |
 | `git_diff_sha256` | string/null | yes | Dirty diff hash when that provenance mode is used. |
 | `source_snapshot_sha256` | string/null | yes | Dirty source snapshot hash when required. |
 | `config_sha256` | string | yes | Effective-config exact-byte hash. |
@@ -177,11 +205,62 @@ Arrays and objects use deterministic-profile JSON text in a correctly escaped
 cell. The schema defines no legacy unqualified thread-count field, scalar
 verification-evidence field, or undifferentiated verification-tolerance field.
 
+For CUDA and OpenACC rows, the benchmark obtains `gpu_name` and `gpu_uuid` from
+`cudaGetDeviceProperties`, `cuda_driver_version` from
+`cudaDriverGetVersion`, and `cuda_runtime_version` from
+`cudaRuntimeGetVersion`. `library_version` comes from the selected library's
+version API (or `THRUST_VERSION` for Thrust). Failure to obtain required runtime
+metadata is a benchmark failure rather than permission to reuse job-master or
+another node's values. Pegasus also independently captures the node-local
+NVIDIA driver/package identity and loads node-local `libcudart` to query Driver
+API and Runtime versions. Successful raw rows must agree with node metadata for
+name, UUID, Driver API version, and Runtime version.
+
+`git_metadata_available`, `git_commit`, and `git_dirty` have one coupled
+state. When metadata is available, availability is true, commit is a nonempty
+string, and dirty is a boolean. For a source archive or another `.git`-less
+source, availability is false and commit and dirty are both null. Unknown Git
+state is never represented as `git_dirty=false`; `"unknown"` and
+`"unavailable"` are not commit identifiers. Production validation rejects
+unavailable Git metadata. Archive/local validation may use the explicit
+false/null state while still producing valid schema-version-1 JSON.
+
 All three raw timestamps use `YYYY-MM-DDTHH:MM:SS.sssZ`. For end-to-end trials,
 the span from `measurement_start_timestamp` to
 `measurement_end_timestamp` can exceed `elapsed_total_sec` because the former
 also spans untimed restoration and cleanup gaps between separately timed
 repeats. `elapsed_total_sec` remains the sum of timed intervals only.
+
+### Attempt and failure-origin rules
+
+`failure_origin` is null or one of:
+
+- `benchmark`: a started trial failed in setup, allocation, timing, or a library
+  operation;
+- `verification`: a started trial completed measurement but failed numerical or
+  structural verification;
+- `subprocess`: the runner observed a crash, signal, or abnormal process exit;
+- `output-validation`: stdout was missing, malformed, contaminated, or failed
+  schema validation;
+- `prior-failure`: this trial did not start after a fatal predecessor; or
+- `prerequisite`: this trial did not start because its executable or another
+  required input was unavailable.
+
+Successful rows require `attempted=true`, `status=success`, null origin,
+`verification_status=pass` or `skipped`, both elapsed fields, `exit_code=0`,
+and an empty message. Started failure rows require `attempted=true`,
+`status=failure`, and a started-failure origin. In particular,
+`failure_origin=verification` requires `verification_status=failure` or
+`nonfinite`; a verification-origin row can never report verification pass.
+Skipped rows require `attempted=false`, `status=skipped`, origin
+`prior-failure` or `prerequisite`, null measurement timestamps and elapsed
+fields, `verification_status=skipped`, and null `exit_code`.
+
+For a process/output failure, the first unresolved trial is an attempted
+synthetic failure. Later unresolved trials are synthetic skipped rows with
+`prior-failure`. A synthetic failure has null timing fields when measurement
+never began and records an available subprocess exit code or signal-derived
+code. Completed rows are never replaced.
 
 ### Verification objects
 
@@ -195,12 +274,19 @@ The required distinct evidence includes:
 
 - cuFFT: separate DC and non-DC metrics;
 - cuSOLVER: `solution_relative_error` and `relative_residual`; and
-- cuRAND: separate values needed to judge range, mean, and variance.
+- cuRAND: `observed_min`, `observed_max`, `sample_mean`, and
+  `second_central_moment_about_half`, with interval contracts and the exact
+  statistical operands specified in `BENCHMARK_PROTOCOL.md`.
 
 A verification failure sets `verification_status = "failure"` and overall
-`status = "failure"`. A nonfinite value is stored as null, sets
+`status = "failure"`. A nonfinite primary value is stored as null, sets
 `verification_status = "nonfinite"` and overall failure, and includes a message.
 The raw record is retained in both cases.
+
+When `verification_primary_metric` is non-null, its value must name an existing
+key in `verification_metrics`. Verification-skipped rows may set it to null.
+The C/C++ validator/serializer and Python loader/validator enforce the same
+status, size, device, hostname, block, and verification-object invariants.
 
 ## Result directory and write ownership
 
@@ -212,6 +298,12 @@ results/<run-id>/
   waves/
     <wave>/
       wave-metadata.json
+      artifact-manifest.json
+      job-master/
+        module-list.txt
+        pbs-nodefile.txt
+        rank-host-mapping.tsv
+        runtime-environment-evidence.json
       nodes/
         <hostname>/
           node-metadata.json
@@ -234,13 +326,16 @@ Before node output begins:
    `mpirun` and captures each `OMPI_COMM_WORLD_RANK`/hostname pair;
 2. the job master runs `jobs/pegasus/prepare_wave.py` with that mapping;
 3. `prepare_wave.py` validates run ID, wave, expected node count, complete
-   rank-host mapping, hostname uniqueness, existing output, and
-   config/binary/source/runtime provenance;
+   rank-host mapping, hostname uniqueness, existing output,
+   config/binary/source/runtime provenance, and the link from the per-wave raw
+   runtime evidence to the canonical runtime identity;
 4. for a new campaign, the job master exclusively creates
    `effective-config.json`, `run-metadata.json`, and
    `runtime-environment.json`; for an existing campaign it validates their
    hashes and immutable provenance;
-5. the job master exclusively creates the new `wave-metadata.json`; and
+5. the job master exclusively creates the new `wave-metadata.json` and copies
+   the linked raw runtime-evidence sidecar into that wave's `job-master/`
+   directory; and
 6. only after successful preflight does the job master start the measurement
    `mpirun` that launches `run_node.sh`.
 
@@ -264,6 +359,13 @@ Human-readable stdout is invalid. Subprocess crash, signal termination, invalid
 output, and missing output produce synthetic failure rows rather than a silent
 gap in the raw data.
 
+`validate_results.py` first requires the complete configured invocation/trial
+set, unique trial indices, and consistent configuration, binary, compiler, Git,
+and runtime-environment provenance. A structurally complete campaign still has
+`validation_status=failure` when any row is `failure` or `skipped`; the tool
+writes the deterministic schema-version-1 validation summary and exits nonzero.
+Only an all-success campaign has `validation_status=pass` and exit status zero.
+
 ## Effective configuration
 
 `effective-config.json` is the final campaign configuration after merging:
@@ -271,6 +373,47 @@ gap in the raw data.
 1. built-in defaults;
 2. the selected configuration file; and
 3. CLI overrides that affect the measurement protocol.
+
+The configuration has this required structural shape:
+
+```text
+config_schema_version
+run_mode
+output_format
+continue_on_failure
+cpu_threads
+benchmarks
+  <benchmark>
+    enabled
+    precision
+    series[]
+      implementation
+      cpu_backend
+      cpu_backend_role
+      cpu_parallelism
+      cpu_threads_effective
+      series_role
+    default_speedup_cpu_backend
+    verification
+    cases[]
+      parameters
+      scopes
+        compute
+          warmup
+          repeat
+          trials
+        end-to-end
+          warmup
+          repeat
+          trials
+```
+
+The same case-level scope values apply to CPU, direct CUDA, and OpenACC; an
+implementation-local warm-up/repeat/trials override is invalid. Compute and
+end-to-end values are independent. Unknown keys and missing required keys are
+errors. Both canonical files begin with `config_schema_version = 1`, select
+JSON Lines by default, enable verification, and set
+`continue_on_failure = true`.
 
 It includes `config_schema_version`, run mode (`smoke`, `pilot`, or
 `production`), benchmarks, problem sizes in configuration order, scopes,
@@ -293,23 +436,77 @@ version. Do not rename the canonical files to encode a revision or date.
 
 ## Executables manifest and source provenance
 
+Each build tree writes one deterministic `build-metadata.json`. It records the
+profile, build type, Git metadata availability/commit/dirty state,
+C/C++/CUDA compiler identities, versions and language-level global configure
+flags, CUDA architectures and Toolkit root/version,
+NVHPC CUDA home/GPU target, general OpenACC compile/link flags, and the extra
+OpenACC Thrust `-cuda` compile/link interoperation flags. The CMake-generated
+per-target manifest descriptor supplies the target name and backend variant;
+the partial manifest binds every entry to the exact build-metadata hash.
+The CUDA Toolkit version is the complete CMake `CUDAToolkit_VERSION` component
+version. It is not the CUDA module release label and is not a CUDA Runtime API
+version.
+
 The executable manifest contains an entry for every runnable binary with at
 least:
 
 | Field | Meaning |
 | --- | --- |
+| `artifact_id` | SHA-256 identity defined below. |
+| `target_name` | Canonical CMake target and executable stem. |
+| `build_profile` | `cpu-cuda` or `openacc`. |
+| `backend_variant` | Compiled provider/capability variant. |
+| `supported_cpu_backends` | Stable CPU backend names supported by this binary, or an empty array for non-CPU targets. |
 | `executable_path` | Configured executable path. |
 | `library` | Library identifier. |
 | `implementation` | CPU, CUDA, or OpenACC. |
+| `executable_role` | `example` or `benchmark`. |
 | `build_type` | Recorded build configuration. |
 | `binary_sha256` | SHA-256 of the exact executable bytes. |
+| `build_metadata_sha256` | SHA-256 of deterministic generated build metadata. |
+| `compiler` | Compiler identity. |
+| `compiler_version` | Compiler version. |
+| `global_configure_flags` | Language-level global configure flags associated with the selected compiler. |
+| `git_metadata_available` | Whether commit and worktree state were obtained from Git. |
+| `git_commit` | Source commit embedded by the build, or null when unavailable. |
+| `git_dirty` | Source dirty state embedded by the build, or null when unavailable. |
+
+`artifact_id` is the SHA-256 of the deterministic-profile JSON object containing
+`library`, `implementation`, `executable_role`, `target_name`, `build_profile`,
+`backend_variant`, and `binary_sha256`.
+
+Within one complete manifest, both of these tuples are unique:
+
+```text
+(library, implementation, executable_role)
+(target_name, build_profile, backend_variant)
+```
+
+A duplicate is an error even if the duplicate entries otherwise match. A merge
+also rejects conflicting paths, binary hashes, build metadata hashes, compiler
+metadata, Git state, build types, or backend providers. Different provider
+builds require distinct campaigns or an explicitly separate auxiliary
+manifest; they are never merged ambiguously.
+
+`backend_variant` records the compiled capability/provider without renaming the
+binary. The entry also records supported stable CPU backend names when one
+binary supports more than one runtime-selectable series.
 
 Serialize the complete manifest with the deterministic JSON profile and compute
 `executables_manifest_sha256` over those exact bytes. The manifest hash thus
 commits to every binary-content hash, not just its path.
 
-Production runs require a clean worktree and reject `git_dirty = true` before
-measurement. Smoke or pilot runs may use dirty source only when metadata stores
+Before launch, the runner compares the manifest with generated build metadata,
+including Git commit/dirty state, compiler ID/version, build type, and profile.
+The CMake-generated target descriptor is the source of the manifest's target
+name and backend variant. After launch, the runner compares raw compiler/Git
+fields with the selected manifest entry.
+
+Production runs require available Git metadata and a clean worktree; they
+reject `git_metadata_available = false`, null Git fields, and
+`git_dirty = true` before measurement. Smoke or pilot runs may use dirty source
+only when metadata stores
 one of:
 
 - `git_diff_sha256`, computed from an exact captured Git binary diff when that
@@ -319,28 +516,88 @@ one of:
 
 When dirty, at least one complete dirty-source hash is required. Metadata states
 which method is authoritative. A clean run stores both dirty-source fields as
-null.
+null. Archive/local validation may store unavailable Git metadata, but it must
+not infer clean state and cannot be used for a production campaign.
+
+`tools/hash_source_snapshot.py REPOSITORY` computes the canonical source
+snapshot hash without modifying Git state. It uses read-only `git ls-files` to
+select the union of tracked and untracked, non-ignored files that currently
+exist; a deleted tracked path is represented by its absence. It rejects
+non-UTF-8 paths, traversal, duplicate normalized paths, symlinks, and non-files.
+After sorting UTF-8 repository-relative POSIX paths, SHA-256 input is the domain
+`gpu-library-suite-source-snapshot-v1` plus a NUL, the uint64 big-endian file
+count, and for each file: uint64 path-byte length, path bytes, one executable-bit
+byte, uint64 content length, and the 32 raw bytes of that file's SHA-256. A file
+that changes during hashing is an error.
 
 ## Runtime software environment
 
-`runtime-environment.json` records the software environment used to execute the
-prebuilt CPU, CUDA, and OpenACC binaries together. It contains at least:
+`runtime-environment.json` is the canonical software identity used to execute
+the prebuilt CPU, CUDA, and OpenACC binaries together. It contains at least:
 
-- complete `module list` output or a normalized module list;
-- `PATH` and `LD_LIBRARY_PATH`;
-- NVIDIA driver version and CUDA runtime version;
-- NVHPC compiler/runtime version;
+- loaded module identities in load order, independent of `module list` display
+  headings, columns, spacing, and tags;
+- canonical absolute, order-preserving, duplicate-free `PATH` and
+  `LD_LIBRARY_PATH` values;
+- NVIDIA package-driver version, CUDA Driver API/Runtime versions, and CUDA
+  Toolkit component version and canonical Toolkit path;
+- NVHPC compiler/runtime version and canonical `NVHPC_CUDA_HOME` or the actual
+  CUDA Toolkit selected by NVHPC;
 - detected FFTW, oneMKL, OpenBLAS, LAPACKE, and other selected CPU-library
   versions;
-- `ldd` output for every executable in the manifest;
-- resolved shared-library paths for every executable; and
-- relevant thread/runtime environment, including OpenMP and CPU-library
-  controls.
+- a canonical dependency mapping for every executable in the manifest;
+- canonical resolved shared-library paths for every executable;
+- build-metadata, executable-manifest, and binary hashes; and
+- `OMP_NUM_THREADS`, `OMP_PROC_BIND`, `OMP_PLACES`, `OMP_DYNAMIC`,
+  `MKL_NUM_THREADS`, `MKL_DYNAMIC`, `MKL_THREADING_LAYER`, and
+  `OPENBLAS_NUM_THREADS`.
 
-The job master creates this document with the project-defined deterministic JSON
-profile after loading the benchmark runtime modules. Compute
+Canonical `ldd` dependency lines retain the SONAME and resolved target or
+interpreter path, remove only trailing ASLR load addresses such as `(0x...)`,
+canonicalize absolute paths, and sort the resulting lines deterministically.
+An unresolved `=> not found` dependency is a preflight error. A changed SONAME,
+resolved target, interpreter, or other dependency text changes the canonical
+identity. Module indices determine load order when the site displays modules in
+columns; duplicate, non-contiguous, ambiguous, or unsafe module identities are
+errors. Search-path normalization removes only later duplicate canonical paths;
+relative and empty path components are errors.
+
+For an explicitly module-free invocation, `--no-module-system` records
+`module_list=[]` and `module_system={"source":"user-specified","status":"not-used"}`.
+The evidence sidecar records the same declaration with null
+`module_list_output` and `module_list_sha256`: no command output is fabricated.
+This is distinct from a failed or empty `--module-list` input, which remains an
+error. Binary, dependency, Toolkit and requested mandatory probe checks are
+unchanged. Existing module-based identities retain their existing representation.
+
+The canonical identity intentionally excludes node allocation and observation
+facts: hostname, scheduler job ID, wave/node number, timestamp, process ID,
+scratch path, GPU name and UUID, raw command formatting, `ldd` addresses and raw
+line order, and probe diagnostics. Host/scheduler/time facts belong to wave and
+node metadata. Each node's GPU name and UUID belong to node metadata and raw
+rows. Excluding those fields from the campaign identity does not discard or
+weaken their node-matched validation.
+
+For every wave, `runtime-environment-evidence.json` preserves the unnormalized
+module-list text, command output and diagnostics, raw `ldd` line order and load
+addresses, job-master GPU query, and raw CUDA Runtime probe. It references the
+canonical `runtime_environment_sha256` and executables-manifest hash. Its exact
+SHA-256 is stored as `runtime_environment_evidence_sha256` in that wave's
+metadata and is validated by the final collector. This sidecar is immutable raw
+evidence, may legitimately differ between waves, and is not a campaign-identity
+gate.
+
+The job master creates both documents after loading the benchmark runtime
+modules. It writes the canonical document with the project-defined deterministic
+JSON profile. Compute
 `runtime_environment_sha256` over its exact saved bytes. The hash is stored in
 run, wave, and node provenance and in raw rows.
+
+The configured Toolkit version is compared exactly with the
+`CUDAToolkit_VERSION` stored in build metadata. The CUDA module name remains in
+the module list. CUDA Driver API and Runtime versions come from the local
+`libcudart` probe and are never filled from the configured Toolkit version when
+the probe is unavailable.
 
 An additional wave may share a run ID only when
 `runtime_environment_sha256` matches. Results with different runtime
@@ -353,16 +610,18 @@ They require a separate campaign or an explicitly non-primary comparison.
 master. It contains at least:
 
 - `run_id`, campaign creation timestamp, `system_label`, and run mode;
-- Git commit and dirty state;
+- Git metadata availability, commit, and dirty state;
 - authoritative dirty-source hash kind/value when applicable;
 - effective-config SHA-256;
 - executables-manifest SHA-256;
 - runtime-environment SHA-256;
 - launcher/tool version information; and
-- submission host or local initiating hostname.
+- campaign-creation submission host or local initiating hostname.
 
 Because a campaign can gain waves, do not store one wave's scheduler job ID,
-node count, or ordering as campaign-global facts.
+node count, current submission host, or ordering as campaign-global facts. The
+run-level `submission_host` records only the host that created the campaign and
+is not an additional-wave equality gate.
 
 An additional wave may use an existing run ID only when all of the following
 match the immutable campaign metadata:
@@ -372,6 +631,7 @@ match the immutable campaign metadata:
 - runtime-environment SHA-256;
 - Git commit;
 - dirty state; and
+- Git metadata availability; and
 - when dirty, authoritative dirty-source hash kind and value.
 
 Any mismatch requires a new run ID. In particular, waves built from different
@@ -384,14 +644,32 @@ preflight. It contains at least:
 
 - `run_id`, non-negative `wave`, timestamp, `scheduler`, and
   `scheduler_job_id`;
+- the submission host that prepared this wave;
 - expected and observed node counts;
 - the complete preflight MPI-rank-to-hostname mapping;
 - `runtime_environment_sha256`;
+- `runtime_environment_evidence_sha256` for the raw sidecar retained under
+  `job-master/`;
 - implementation permutation assignments and
   `permutation_assignment_counts` for indices 0 through 5;
 - size-order assignments and `size_order_assignment_counts` for indices 0 and
   1; and
 - validation outcome for campaign provenance and output collisions.
+
+The canonical runtime and wave metadata remain schema version 1: this change
+corrects the pre-acceptance definition of stable runtime identity and adds a
+separately versioned evidence document; it does not introduce a second
+incompatible canonical format. Existing raw artifacts are never rewritten.
+
+For one ordinary local worker, `prepare_wave.py --local` uses the same immutable
+config/manifest/runtime/source checks and exclusive-write layout. Both scheduler
+fields are null, the hostname is observed, and the sole mapping index 0 is an
+ordering index, not a claim that MPI ran. Run metadata records
+`launcher.execution_mode="local"`. The runtime evidence sidecar is retained
+directly under the wave directory. Local preparation creates the single node's
+metadata before measurement; it rejects an explicit scheduler/job ID, a supplied
+mapping or hostname, and node counts other than one. It does not fabricate
+job-completion or collection status, allocate nodes, or collect telemetry.
 
 ## Node metadata and status
 
@@ -405,13 +683,61 @@ serialization utility. It contains:
 - requested CPU threads and relevant thread environment; and
 - executable/binary identifiers and `runtime_environment_sha256` used on that
   node;
-- `cuda_driver_version` when applicable; and
+- node-local `gpu_identity` with name, UUID, NVIDIA package-driver version,
+  query status, and diagnostic;
+- node-local `cuda_runtime_identity` with loaded `libcudart` path, CUDA Driver
+  API version, CUDA Runtime version, query status, and diagnostic; and
 - for cuRAND, the actual CPU engine or cuRAND generator, seed, offset, and
   order.
 
 `node-status.json` records process completion, raw-result collection, log
 collection, telemetry status, exit status, and messages. It does not replace
 failure rows in raw results.
+
+Local node metadata additionally records `execution_mode="local"`,
+`cpu_identity` (`name`, `query_status`, `source`) and `local_machine_probes`.
+CPU identity comes from a successful `lscpu --json` model-name query, or remains
+null/unavailable. GPU identity comes from a node-local query, not a model-name
+setting; multiple GPUs require one explicitly selected UUID with matching
+`CUDA_VISIBLE_DEVICES`. The logical benchmark device is 0. A manifest containing
+GPU artifacts requires successful GPU identity and CUDA-runtime observations.
+
+## Plot display configuration
+
+`tools/plot.py --display-config FILE` accepts a strict JSON object with exactly
+these keys. It changes labels only, never raw values, aggregation or precision.
+
+| Key | Type and requirement |
+| --- | --- |
+| `plot_display_schema_version` | Integer 1 |
+| `run_id` | String equal to the aggregate/raw campaign ID |
+| `runtime_environment_sha256` | String equal to the aggregate/raw runtime hash |
+| `cpu_model` | Nonempty single-line string of at most 160 characters, or null |
+| `gpu_model` | The same name type; null uses the observed raw GPU identity |
+| `thread_label_mode` | `requested-and-effective` (normal use) or explicitly opted-in `compact-requested` (approved teaching display) |
+
+Without a display configuration, names come from optional `--node-metadata`
+CPU identities and successful raw GPU rows; missing identities remain unknown.
+Metadata inputs must have matching run/runtime provenance. CPU identity must
+cover every raw hostname; partial coverage is not silently generalized.
+Conflicting models are rejected. Supplied names cannot contradict observations;
+removing registered/trademark markers is allowed as a display normalization.
+
+Plot metadata records each model's `value`, `source` (`node-metadata`,
+`raw-results`, `user-specified` or `unknown`) and observed values, plus input
+configuration/node-metadata hashes. Each CPU series records the backend source
+and the distinct requested/effective value sets from its raw rows. A null
+effective count stays unknown; mixed counts are not replaced by one value.
+The normal legend exposes those distinctions. A reported effective count of 1
+is displayed as single-threaded, regardless of a larger request.
+
+`compact-requested` requires known machine identities and one recorded CPU
+request per non-serial series. Its `(N C)` is explicitly a request convention,
+not an effective-thread or utilization measurement. It reproduces the approved
+teaching labels without making those machine/count values defaults. Backend
+labels derive from the actual aggregate backend; unknown backend identifiers
+are displayed verbatim, not replaced by oneMKL or FFTW. The plot's basic
+two-panel layout, units and summary values are unchanged.
 
 ## Telemetry metadata
 
@@ -421,7 +747,8 @@ Each node's `telemetry/telemetry-metadata.json` contains at least:
 - `telemetry_end_timestamp_utc`;
 - `sample_interval_sec`;
 - `timezone`; and
-- `utc_offset`.
+- `utc_offset`; and
+- `midnight_rollover_count`.
 
 All UTC timestamps use `YYYY-MM-DDTHH:MM:SS.sssZ`. Raw
 `nvidia-smi dmon -o T` output is preserved. Because its time column does not
@@ -444,7 +771,8 @@ schema. Every aggregate record identifies:
 - selected production CPU backend for speedup;
 - `runtime_environment_sha256`;
 - `summary_input_statistic` describing the values summarized at that level;
-- valid/invalid sample counts and exclusion reasons;
+- valid-success, attempted-failure, and unattempted-skipped sample counts plus
+  exclusion counts grouped by `failure_origin`;
 - median, Q1, Q3, IQR, minimum, and maximum where defined; and
 - `aggregate_status`.
 

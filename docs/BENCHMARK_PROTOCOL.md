@@ -55,7 +55,13 @@ Every benchmark supports:
 | `--wave` | Non-negative campaign wave supplied by the runner. |
 | `--seed` | Explicit seed where the workload uses randomness. |
 | `--cpu-threads` | Requested CPU thread count. |
+| `--cpu-threads-effective` | Positive observed/configured effective CPU thread count; omit when unknown. |
+| `--cpu-backend-role` | Config-owned CPU role: `production` or `reference`. |
+| `--series-role` | Config-owned series role: `primary` or `auxiliary`. |
+| `--cpu-parallelism` | Config-owned/observed CPU execution kind: `serial`, `threaded`, or `unknown`. |
 | `--implementation-order <list>` | Runner-computed comma-separated list such as `cpu,cuda,openacc`. |
+| `--abs-tolerance` | Non-negative absolute verification tolerance from the effective configuration. |
+| `--rel-tolerance` | Non-negative relative verification tolerance from the effective configuration. |
 | `--help` | Usage and option constraints. |
 
 `--verify` accepts only lowercase `true` or `false`. `--format` accepts only
@@ -85,15 +91,30 @@ file. The runner must:
 - write a CSV header exactly once;
 - append each valid row to the new node raw file;
 - reject any human-readable stdout content;
-- synthesize a schema-valid failure row for a subprocess crash, signal
-  termination, invalid output, or missing output; and
+- preserve every validated completed trial;
+- synthesize one schema-valid attempted failure row for the first unresolved
+  trial after a subprocess crash, signal termination, invalid output, or
+  missing output;
+- synthesize schema-valid unattempted skipped rows for later trials that did not
+  start because of that failure; and
 - create the node raw file exclusively and never overwrite an existing file.
+
+The runner rejects duplicate and out-of-range trial indices and materializes
+each expected index exactly once. It never replaces a validated completed row
+with a synthetic row.
+
+`run_suite.py --dry-run` validates and prints the resolved configuration,
+selected manifest entries, implementation/size order, and argv arrays as one
+deterministic JSON document. A dry run creates no directory, metadata, result,
+or log file and starts no benchmark subprocess.
 
 ### Library-specific options and `--size`
 
 #### cuFFT
 
 - Options: `--batch`, `--transform`, `--cpu-backend`.
+- `--rel-tolerance` applies to the DC relative error and
+  `--abs-tolerance` applies to the maximum non-DC absolute error.
 - `--size` is `nfft`.
 - `--batch` may be combined with `--size`.
 - Initial accepted values are `--transform c2c-forward` and
@@ -129,6 +150,9 @@ file. The runner must:
 #### cuRAND
 
 - Options: `--generator`, `--distribution`, `--offset`, `--order`.
+- Statistical operands are passed explicitly as `--sigma-multiplier`,
+  `--expected-mean`, and `--expected-second-central-moment` from the effective
+  configuration.
 - `--size` is the generated element count.
 - Initial accepted values are `--generator pseudo-default`,
   `--distribution uniform-double`, and `--order default`.
@@ -142,6 +166,81 @@ file. The runner must:
 
 Ambiguous, incomplete, or contradictory dimension arguments are errors. No
 option silently overrides another.
+
+### Dynamic-size and overflow contract
+
+Every runtime dimension is validated before allocation or conversion to a
+classic library API integer. A benchmark uses checked conversion from the CLI's
+unsigned representation to `int` and `size_t`, checked dimension products,
+checked additions such as the CSR row-offset count, and checked
+element-count-to-byte calculations. cuFFT length/batch, cuBLAS dimensions,
+cuSPARSE `n`/`nnz` with its current 32-bit index mode, and cuSOLVER
+`n`/`nrhs`/workspace counts must fit every API type they reach. cuRAND and
+Thrust counts must fit both `size_t` and the selected host container's
+`max_size()`.
+
+No dimension, index count, or byte count may wrap or be silently truncated.
+An out-of-range request produces an API-named diagnostic and a schema-valid
+prerequisite or started benchmark failure row according to whether execution
+had begun. Allocation and length-related C++ exceptions are handled explicitly;
+they do not terminate the process without a result when a valid row can still
+be emitted.
+
+## Canonical publication configuration
+
+Each benchmark configuration contains normalized cases. A case has one
+`parameters` object and a `scopes` object with separate `compute` and
+`end-to-end` entries. Each scope entry contains `warmup`, `repeat`, and
+`trials`. Implementations cannot override those values.
+
+CPU, direct CUDA, and OpenACC must have the same values for one
+benchmark/normalized problem/scope. Compute and end-to-end settings are
+independent and need not have the same repeat or warm-up. cuSOLVER requires
+`repeat = 1` in every scope.
+
+The canonical pilot and production configurations use the same publication
+workloads, sizes, and repeats:
+
+| Benchmark | Problem sizes | Compute repeats |
+| --- | --- | --- |
+| cuFFT | `nfft=[256,4096,16384]`, `batch=4096` | `[5197,328,83]` |
+| cuBLAS | `size=[512,2048,4096]` | `[2184,133,18]` |
+| cuSPARSE | `size=[65536,1048576,4194304]` | `[5776,1520,206]` |
+| cuSOLVER | `size=[4096,8192,12288]`, `nrhs=16` | `[1,1,1]` |
+| cuRAND | `size=[1048576,16777216,67108864]` | `[640,173,54]` |
+| Thrust | `size=[1048576,16777216,67108864]` | `[1932,532,167]` |
+
+Every scope uses `warmup=1`. Compute uses the table's per-case repeat;
+end-to-end always uses `repeat=1`. `configs/pilot.json` uses one raw trial and
+`configs/benchmark.json` uses five raw trials. Both request 48 CPU threads.
+The cuFFT publication series contains threaded FFTW only.
+
+With all six libraries, one pilot block contains 108 expected raw rows. The
+six-node, two-wave production design contains 6,480 expected rows. If a pilot
+finds different CUDA and OpenACC Thrust versions, exclude Thrust rather than
+combining incomparable series; the corresponding counts are 90 and 5,400.
+Such an explicitly reduced campaign is a five-library comparison, not a
+successful reproduction of all six libraries. Preserve the mismatch evidence;
+do not delete failed rows or silently omit an implementation from a figure.
+
+The compute repeats are measurement amplification only: `elapsed_sec` remains
+one library operation's elapsed time. A human may revise the canonical values
+once after the Pegasus pilot only for OOM, verification failure, extreme
+walltime, or a clearly inadequate timed interval. Do not add an automatic
+repeat search or create another canonical configuration.
+
+## Trial attempt, failure, and skip behavior
+
+A trial that starts and then fails has `attempted=true` and `status=failure`.
+An unstarted trial skipped because of a preceding fatal failure has
+`attempted=false` and `status=skipped`. A missing executable or other
+prerequisite also produces an unattempted skipped row. Exact fields and null
+rules are owned by `RESULT_SCHEMA.md`.
+
+Recoverable verification failures may be followed by later trials after full
+canonical restoration. A fatal setup or execution failure stops that benchmark
+invocation and marks only the remaining unstarted trials skipped. Failures and
+skips remain visible and are never performance samples.
 
 ## CPU backends and parallelism
 
@@ -172,31 +271,55 @@ Raw results distinguish:
   when it cannot be established; and
 - `cpu_parallelism`: `serial`, `threaded`, or `unknown`.
 
+The effective configuration is authoritative for `cpu_backend_role`,
+`series_role`, and the expected parallelism/known effective-thread metadata of
+each configured series. `run_suite.py` passes those values to the benchmark and
+validates emitted rows against the same series object. Common result code must
+not infer a role from a backend-name substring, special-case one backend name
+to choose a series role, or classify every non-serial name as threaded. A
+requested thread count is never copied into `cpu_threads_effective` merely
+because no better observation exists. An unobservable effective count is null;
+unestablished parallelism is `unknown`.
+
 Backend-specific thread control is as follows:
 
-- OpenMP code uses the requested value through `OMP_NUM_THREADS` and, where the
-  implementation controls a region directly, the corresponding OpenMP runtime
-  control. Record `OMP_PROC_BIND` and `OMP_PLACES`.
+- OpenMP runtime variables may control a linked library even when the calling
+  source has no OpenMP parallel loop. Record `OMP_NUM_THREADS`, `OMP_PROC_BIND`,
+  and `OMP_PLACES`; the presence or absence of the application's `-fopenmp`
+  option does not identify the library's threading implementation.
 - oneMKL uses `MKL_NUM_THREADS` or the supported local thread-control API and
-  records the effective setting.
+  records the request separately from an established effective count. The
+  saved Pegasus campaign used `MKL_NUM_THREADS=48` and
+  `MKL_THREADING_LAYER=INTEL`; its oneMKL raw rows retain
+  `cpu_threads_effective=null`, not a measured effective count of 48.
 - OpenBLAS uses `OPENBLAS_NUM_THREADS` or a supported backend API. If a build
   cannot determine the effective count, record null and `unknown` rather than
   claiming the requested count.
 - Threaded FFTW initializes its threaded interface and applies the requested
   count before plan creation. Serial FFTW always records effective count 1.
+  The saved publication build used FFTW's `--enable-threads` pthread-based
+  implementation and the FFTW threads API with 48 threads. The cuFFT CPU
+  teaching example is serial; this threaded setting belongs to the benchmark.
 
 FFTW serial and threaded series use distinct names, for example
 `cpu-fftw-serial` and `cpu-fftw-threaded`. oneMKL and OpenBLAS series also use
 implementation-specific names such as `cpu-onemkl` and `cpu-openblas`.
 `cpu-reference-csr` is a reference backend.
 
+On Pegasus, the canonical publication configuration contains only
+`cpu-fftw-threaded` for cuFFT. A separately invoked `cpu-fftw-serial` executable
+may still support teaching correspondence, but it is not a publication series
+and never replaces the threaded backend.
+
 The canonical cuRAND CPU benchmark is `cpu-std-random-serial`, role
 `production`, using `std::mt19937_64` and
 `std::uniform_real_distribution<double>`. Its effective thread count is 1. The
 canonical Thrust CPU benchmark is `cpu-stl-serial`, role `production`, using
 `std::transform_reduce` without an execution policy; its effective thread count
-is also 1. Plots label both as **Serial CPU baseline**, never as 48-core CPU
-performance.
+is also 1. The approved publication legends explicitly say **single thread**
+for both, never parallel or algorithm-equivalent performance and never 48-core
+CPU performance. Exact displayed labels are listed under
+[Publication figures](#publication-figures).
 
 ## Timing fields
 
@@ -317,6 +440,17 @@ run one measured trial
 The first trial is restored even though warm-up restoration just occurred. No
 trial may inherit the final state of a preceding trial.
 
+Warm-up exercises the same scope-specific pipeline selected for measurement.
+For compute scope, create the persistent plan, handle, descriptor, generator,
+device allocation, and workspace first; run the compute operation exactly
+`warmup` times; restore canonical state; and measure trials with that same
+persistent context. For end-to-end scope, do not create or retain a compute-only
+persistent context. Instead run exactly `warmup` complete temporary pipelines,
+each containing the scope's allocation, setup, transfer, operation, result
+retrieval, and complete cleanup. No warm-up handle, descriptor, generator,
+workspace, device allocation, or device container remains alive when the first
+end-to-end trial starts.
+
 In compute scope, operations within one trial's repeat loop may update C or y
 successively. Verification accounts for all `repeat` updates, but C/y are reset
 before the next raw trial. In end-to-end scope, restore host-side inputs and
@@ -356,6 +490,15 @@ unexplained tolerance magic numbers. Ordinary numerical error passes when:
 error <= abs_tolerance + rel_tolerance * reference_scale
 ```
 
+Suite execution requires each benchmark's complete verification object in the
+effective configuration and passes every operand explicitly on the benchmark
+command line. The runner rejects missing operands. Standalone invocation keeps
+documented smoke defaults: absolute `1e-12` and relative `1e-10`, except cuFFT
+absolute `1e-4` and relative `1e-5`; cuRAND uses
+`sigma_multiplier=6`, `expected_mean=0.5`, and
+`expected_second_central_moment=1/12`. These built-in defaults are not
+production-suite configuration and never override an effective configuration.
+
 Every benchmark, including single-metric cases, emits objects:
 
 - `verification_metrics`: metric name to measured value;
@@ -368,6 +511,15 @@ There is no scalar form of the metrics or thresholds. A nonfinite metric is
 represented as null with `verification_status = nonfinite`, overall
 `status = failure`, and a diagnostic message. Any verification failure remains
 in raw results but is excluded from performance aggregation.
+
+Verification checks every raw output, intermediate error/residual, and norm for
+finiteness before passing it to `fmax`, `std::max`, or another reduction.
+Neither `fmax` nor `std::max` is a NaN detector. Finite values within threshold
+pass; finite values outside threshold fail verification; NaN or either infinity
+always produces a nonfinite verification failure. Failure to allocate a JSON
+verification object or insert a required metric/threshold is a fatal result-
+construction/benchmark error, not a numerical verification failure and never a
+partial success record.
 
 ### cuFFT
 
@@ -414,16 +566,41 @@ in raw results but is excluded from performance aggregation.
   in metadata.
 - Do not require element-wise identity between CPU and GPU streams.
 - `std::mt19937_64` and `CURAND_RNG_PSEUDO_DEFAULT` are different random-number
-  algorithms. This is a throughput comparison of the same task, output type,
-  and uniform distribution, not an algorithm-equivalent comparison.
+  algorithms. Their elapsed times describe the same task, output type, and
+  uniform distribution, not an algorithm-equivalent CPU/GPU comparison.
 - CPU and GPU range sanity checks both permit `0.0 <= x <= 1.0`; record each
   backend's precise interval contract in `verification_thresholds` or
   `parameters`.
-- Store separate range, mean, and variance evidence. At minimum, metrics retain
-  observed minimum, maximum, mean, and variance, while threshold objects define
-  the permitted uniform range and deviations from expected mean and variance.
-- Plots and future user-facing documentation must state the equivalent of:
-  **Same output distribution and type; different RNG algorithms.**
+- Record the CPU standard-distribution contract as `[0,1)` and the cuRAND
+  contract as `(0,1]` while applying the common inclusive sanity range.
+- Configuration stores `sigma_multiplier`, `expected_mean`, and
+  `expected_second_central_moment`; initial values are `6.0`, `0.5`, and
+  `1/12` respectively.
+- Required metrics are `observed_min`, `observed_max`, `sample_mean`, and
+  `second_central_moment_about_half`, with:
+
+  ```text
+  second_central_moment_about_half = mean((x_i - 0.5)^2)
+  ```
+
+- Mean verification is:
+
+  ```text
+  abs(sample_mean - 0.5)
+      <= sigma_multiplier * sqrt(1 / (12 * N))
+  ```
+
+- Second-central-moment verification is:
+
+  ```text
+  abs(second_central_moment_about_half - 1/12)
+      <= sigma_multiplier * sqrt(1 / (180 * N))
+  ```
+
+- Verification uses the last retrieved N values and records
+  `verification_sample_count=N`.
+- Plots, plot metadata, aggregate metadata, and user-facing documentation state:
+  **Same distribution and output type task; different RNG algorithms.**
 
 ### Thrust
 
@@ -521,3 +698,138 @@ Additional waves may cover different time periods. Flag thermal, power, clock,
 telemetry, or verification anomalies, but never remove a slow node merely
 because of elapsed time. Assignment counts, exclusions caused by actual failure,
 and valid sample counts remain visible in aggregate metadata.
+
+## Publication figures
+
+Publication plotting uses only primary `cross-wave` summary records. It emits
+one two-panel elapsed-time figure per enabled publication library:
+
+- `cufft-elapsed-time.png`;
+- `cublas-elapsed-time.png`;
+- `cusparse-elapsed-time.png`;
+- `cusolver-elapsed-time.png`;
+- `curand-elapsed-time.png`; and
+- `thrust-elapsed-time.png`.
+
+The left panel is titled **Library kernel execution time** and represents
+data-resident compute. The right is titled **End-to-end execution time** and
+represents the one-shot host-input-to-host-output pipeline. Both use the
+library-specific problem size on the
+x-axis and **Elapsed time [ms]** on the y-axis; lower is better. CPU, CUDA, and
+OpenACC appear together. The plotted compute value is the existing
+per-operation `elapsed_sec` converted from seconds to milliseconds; it is not
+divided by repeat again. The one-shot value comes from `repeat=1` end-to-end
+records. Do not produce a speedup, throughput, bandwidth, FLOPS, sample-rate,
+element-rate, reuse-count, amortized, break-even, or additional generic elapsed
+figure.
+
+The approved shared legend is below the two panels. Its exact labels are:
+
+| Series | Label |
+| --- | --- |
+| cuFFT CPU | `Intel Xeon Platinum 8468, FFTW (48 C)` |
+| cuBLAS/cuSPARSE/cuSOLVER CPU | `Intel Xeon Platinum 8468, oneMKL (48 C)` |
+| cuRAND CPU | `Intel Xeon Platinum 8468, std::mt19937_64 (single thread)` |
+| Thrust CPU | `Intel Xeon Platinum 8468, STL (single thread)` |
+| CUDA | `NVIDIA H100 PCIe, CUDA` |
+| OpenACC | `NVIDIA H100 PCIe, OpenACC` |
+
+The `(48 C)` labels describe the approved campaign configuration; they do not
+change the oneMKL effective-thread evidence described above. cuRAND and Thrust
+are serial references, not parallel or algorithm-equivalent denominators.
+The logarithmic x-axis uses binary K/M notation (`1K=1024`, `1M=1048576`);
+cuSOLVER retains `4K`, `8K`, `12K` for those input sizes and uses actual input
+sizes for other sweeps. The table is the approved teaching configuration, not
+a default for unknown hardware. Use `--display-config` with the explicit
+`compact-requested` convention to reproduce it. Normal labels distinguish
+requested and reported effective counts; missing values remain unknown.
+`--node-metadata` can supply observed CPU identities and raw rows supply GPU
+identities. The [display schema](RESULT_SCHEMA.md#plot-display-configuration)
+defines provenance and validation; follow the
+[own-measurement route](PORTABILITY.md#figures-from-your-own-measurements).
+
+A Thrust figure requires raw-result evidence
+that successful CUDA and OpenACC rows report one identical `library_version`.
+Missing, mixed, or unequal evidence is an error before any figure is written;
+never silently omit one implementation.
+
+Each publication caption joins the plot's run ID and runtime-environment hash
+to the existing immutable run and node metadata; no result-schema field is
+added. It records the system label, CPU model, GPU model, precision, operation,
+six nodes by two waves, five trials per node block, block median to wave median
+to cross-wave median, both timing boundaries, compute repeat as measurement
+amplification, end-to-end repeat 1, and that lower is better. It also records:
+
+- cuBLAS: FP64 DGEMM with the cuBLAS default math mode;
+- cuFFT: FP32 complex batched 1-D C2C forward transforms, `batch=4096`, and
+  power-of-two lengths;
+- cuSPARSE: FP64 CSR SpMV on the regular 2-D Poisson matrix, without an added
+  preprocess stage;
+- cuSOLVER: FP64 LU factorization plus solve with `nrhs=16`;
+- cuRAND: uniform-double generation with the GPU pseudo-default generator and
+  a non-algorithm-equivalent serial CPU generator; and
+- Thrust: double `transform_reduce` with one common CCCL/Thrust version across
+  CUDA and OpenACC.
+
+The two panels are also the teaching model. Data-resident compute represents an
+application that keeps data on the device for a library operation. The one-shot
+pipeline includes setup, device allocation, H2D, one operation, completion, and
+D2H until the host result is available. Input generation, verification,
+serialization, file I/O, and protocol cleanup remain outside. Reusing
+device-resident data can move observed application cost from the one-shot side
+toward the compute side because transfer contributes relatively less. This is
+an interpretation of the existing two scopes, not a third amortized scope. The
+workloads are one representative operation per library and do not characterize
+every algorithm in that library.
+
+## Reading the figures and applying the results
+
+The figure is a comparison of two boundaries, not a promise of whole-application
+speedup. Read the x-axis as the configured problem size and the y-axis as
+milliseconds per operation; lower is better. Compare CPU, CUDA, and OpenACC
+only at the same size and within the same panel. Do not divide the plotted
+compute value by `repeat` again.
+
+| Work | Compute panel | One-shot E2E panel |
+| --- | --- | --- |
+| Host input allocation/generation and canonical restoration | Outside | Outside |
+| GPU allocation, H2D, plan/handle/descriptor/workspace setup | Prepared before timing | Inside the per-repeat pipeline where the library requires it |
+| Library operation and synchronization that establishes its completion | Inside | Inside |
+| D2H/result retrieval | After compute timing | Inside, before the end timestamp |
+| OpenACC data entry/exit and required copyin/copyout | Outside | Inside |
+| Explicit post-result cleanup, numerical verification, serialization and file I/O | Outside | Outside |
+
+CPU implementations use their corresponding operation/setup boundary without
+inventing host-device copies. Library-specific resource details, especially
+cuSOLVER restoration and FFT plans, remain in the scope and workload sections
+above and each library README. E2E is **not** the entire program's wall time:
+input generation, verification, output, and post-result cleanup are excluded.
+
+Warm-up is untimed and follows the chosen scope. Each raw trial starts from
+restored state. Compute repetition amplifies the measurable interval; E2E
+publication repeat is 1, and cuSOLVER repeat is always 1. A block median is
+formed from valid trials, then a wave median from blocks, then a cross-wave
+median from wave medians. One block/wave is useful for checking the pipeline,
+but does not establish cross-node/time variability. Inspect sample counts,
+quartiles, failure counts, and provenance as well as the plotted median.
+
+Before applying a result to your program, check whether its data stays on the
+GPU, whether plans/handles can be reused, how often transfers and synchronization
+are needed, and what fraction of application time is in this operation. A
+shorter GPU compute time may coexist with a slower one-shot pipeline. Their
+difference suggests costs to investigate; it is not a separately measured
+transfer-only time or proof of a particular bottleneck. Host work, I/O, other
+kernels, and contention can limit whole-application gains. No overlap or reuse
+optimization is measured merely because it could be implemented.
+
+Keep precision, operation, parameters, verification thresholds, CPU provider,
+thread request/effective evidence, compiler flags, GPU/software versions, and timing scope
+visible when comparing runs. The configured all-ones or analytical problems
+are controlled examples, not a survey of real-world input distributions.
+cuRAND compares different RNG algorithms; cuRAND/Thrust CPU series are
+single-threaded. Never generalize their ratios to optimized parallel CPU
+implementations. Failed, skipped, or nonfinite trials remain in the raw data
+and are excluded from numerical aggregation, not erased as inconvenient data.
+
+For the exact configuration edit locations and the executable command sequence,
+use [the reader workflow](PORTABILITY.md#measuring-on-your-own-system).
