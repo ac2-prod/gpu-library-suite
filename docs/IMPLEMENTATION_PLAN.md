@@ -1130,6 +1130,19 @@ finishes user-facing documentation.
 - Documentation can drift if ownership boundaries are ignored.
 - A locally unavailable dependency can leave a target manually unverified.
 
+## Approved Fortran implementation follow-on
+
+The owner-approved 2026-09-17 Fortran extraction is now integrated separately
+from the completed initial C/C++ phases: 18 teaching programs, 18 benchmarks,
+helpers, the shared Thrust C++ function, optional-language CMake, language-aware
+manifest/runner/plotting and English/Japanese usage. The implementation uses
+Fortran 2008 features plus NVHPC CUDA/OpenACC extensions. It does not require
+Fortran in the default C/C++ profile. See [integration requirements](ADDING_FORTRAN.md),
+[usage](../nvidia/fortran/README.md) and
+[local versus real-GPU validation](VALIDATION_REPORT.md#fortran-local-validation).
+Real NVHPC/CPU-provider/GPU validation and the production measurement profile
+remain separate, unexecuted follow-on work, not inferred from source completion.
+
 ## External inputs and intentionally deferred scope
 
 The implementation plan is decision-complete without guessing external site
@@ -1140,7 +1153,7 @@ left to the implementer:
   library installation path, NVHPC CUDA selection, and shared output path.
 - Actual GPU/CPU performance, production-calibrated sizes/repeats after pilot,
   and anomaly/exclusion policy.
-- Future NVIDIA Fortran, AMD C/C++/Fortran, common Fortran, Miyabi, TSUBAME4.0,
+- Future AMD C/C++/Fortran, Miyabi, TSUBAME4.0,
   and Sirius implementation. Furo remains outside the approved job scope.
 
 The owner has approved MIT and the copyright-holder attribution described in

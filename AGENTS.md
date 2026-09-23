@@ -10,7 +10,8 @@ For teaching code, canonical filenames, and default teaching problems, the
 authority order is:
 
 1. current user instructions;
-2. the 2026-07-13 edition of *Library Edition (NVIDIA GPU, C/C++)*; and
+2. the 2026-07-13 C/C++ edition and the approved 2026-09-17 Fortran
+   extraction of *Library Edition (NVIDIA GPU)*, for their respective languages; and
 3. other material, including editions dated 2026-07-12 or earlier, as historical
    reference only.
 
@@ -68,8 +69,9 @@ purpose (`examples/` or `benchmarks/`). Principal top-level areas are
 `nvidia/`, `amd/`, `common/`, `configs/`, `tools/`, `jobs/`, `docs/`, and
 `tests/`.
 
-Initial implementation is only `nvidia/c-cpp`. NVIDIA Fortran, AMD C/C++ and
-Fortran, and common C/C++ and Fortran areas are future work. Do not create empty
+The initial `nvidia/c-cpp` implementation is extended by the approved
+`nvidia/fortran` implementation and common Fortran support. AMD areas are future
+work. Do not create empty
 future directories, dummy targets, or placeholder implementations. Miyabi,
 TSUBAME4.0, and Sirius may be documented as future job targets. Initial
 system-specific implementation is only `jobs/pegasus`; do not create Furo job
@@ -79,7 +81,9 @@ directories or scripts.
 
 - `examples/` is the source of truth for code printed in the teaching material.
 - Filenames must exactly match the canonical material.
-- Each example is a complete, independently compilable single-source program.
+- Each C/C++ example is a complete, independently compilable single-source
+  program. Fortran helpers and the Thrust interop object are explicit link inputs
+  as specified in `docs/PROJECT_SPECIFICATION.md`.
 - Do not use ellipses, pseudocode, hidden helper source, benchmark CLI, repeated
   trials, machine-readable result output, or environment metadata.
 - Preserve teaching clarity; avoid abstraction that hides the library-call flow.

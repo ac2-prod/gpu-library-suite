@@ -68,6 +68,14 @@ def primary_plot_series(
 
     grouped = defaultdict(list)  # type: DefaultDict[Tuple[str, ...], List[Mapping[str, Any]]]
     provenance = set()
+    languages = {record.get("parameters", {}).get("source_language", "c-cpp") for record in records}
+    if len(languages) > 1:
+        raise PlotError("C/C++ and Fortran require separate figures")
+    if raw_records and any(
+        row.get("parameters", {}).get("source_language", "c-cpp") not in languages
+        for row in raw_records
+    ):
+        raise PlotError("raw evidence and aggregate source languages differ")
     for record in records:
         if record.get("aggregate_schema_version") != 1:
             raise PlotError("unsupported aggregate schema")

@@ -2,11 +2,13 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
-Portable NVIDIA C/C++ teaching examples, reproducible CPU/CUDA/OpenACC
+Portable NVIDIA C/C++ and Fortran teaching examples, reproducible CPU/CUDA/OpenACC
 benchmarks, strict result tooling, and Pegasus job support for cuFFT, cuBLAS,
 cuSPARSE, cuSOLVER, cuRAND, and Thrust.
 
-The implemented source scope is `nvidia/c-cpp`. AMD, Fortran, and additional
+The source tree includes `nvidia/c-cpp` and the new
+[NVIDIA Fortran implementation](nvidia/fortran/README.md). Fortran GPU execution
+is not yet validated; its local coverage is documented separately. AMD and additional
 systems are intentionally deferred; the repository does not contain empty
 placeholder implementations for them. The project is maintained under
 `ac2-prod` and is not an official HAIRDESC repository.
@@ -22,6 +24,8 @@ The selected publication scope is the NVIDIA C/C++ teaching and benchmark code,
 its existing common code/tools, configurations and tests, and the documentation
 for understanding, building, running and measuring it. Additional general-purpose
 measurement infrastructure is not a prerequisite for this code publication.
+The Fortran addition follows the same code-only boundary; this implementation
+work does not itself publish a new version or provide Fortran measurements.
 
 Saved measurements, raw results, execution logs, metadata and prepared local
 distribution archives are **not included in this publication**. There is no
@@ -31,6 +35,10 @@ is only for readers who separately hold those inputs; the normal route below
 uses the reader's own measurements.
 
 ## Start here
+
+For Fortran, start with the [Fortran source map, build and measurement guide](nvidia/fortran/README.md)
+([日本語](nvidia/fortran/README.ja.md)). The route and source table below describe
+the existing C/C++ edition; compiler requirements are not interchangeable.
 
 If you know CPU C/C++ but are new to CUDA, follow this route:
 
@@ -66,7 +74,7 @@ If you know CPU C/C++ but are new to CUDA, follow this route:
 
 ## What is implemented
 
-Each library has three direct, single-source teaching examples and three
+Each C/C++ library has three direct, single-source teaching examples and three
 measurement-oriented benchmarks. CMake target names and executable names equal
 their source stems.
 

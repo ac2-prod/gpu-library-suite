@@ -2,9 +2,14 @@
 
 ## Scope gate
 
-Fortran is deferred and no Fortran source directory should be created until the
-project owner approves a concrete implementation. This guide describes the
-work required after that approval; it is not a placeholder implementation.
+The project owner approved NVIDIA Fortran examples and benchmarks using the
+2026-09-17 teaching extraction. This guide records integration requirements;
+see [NVIDIA Fortran](../nvidia/fortran/README.md) for usage and validation limits.
+
+The source integration is implemented with `GPU_SUITE_SOURCE_LANGUAGE=fortran`
+in separate trees, Fortran workload callbacks and a narrow C ABI bridge. GNU
+CPU/local fixtures and GPU/NVHPC real-machine checks are distinct gates; see
+[executed local validation](VALIDATION_REPORT.md#fortran-local-validation).
 
 Update [`PROJECT_SPECIFICATION.md`](PROJECT_SPECIFICATION.md) first with the
 authoritative teaching edition, exact filenames, language/library hierarchy,
@@ -32,8 +37,9 @@ and assume that names, APIs, allocation rules, or verification are canonical.
 
 ## Source and benchmark requirements
 
-- Teaching examples remain complete single-source programs and do not call the
-  benchmark wrapper.
+- Teaching examples do not call the benchmark wrapper. The explicitly
+  documented mathematical helpers and Thrust interop object are separate link
+  inputs, as approved in `PROJECT_SPECIFICATION.md`.
 - Benchmarks implement the same problem, precision, scope, repeat-state,
   restoration, verification, and output-ownership contracts as corresponding
   C/C++ benchmarks.

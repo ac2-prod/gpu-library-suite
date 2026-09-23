@@ -62,7 +62,7 @@ def validate_entry(entry: Mapping[str, Any]) -> Dict[str, Any]:
         raise ManifestError("implementation and build_profile conflict")
     if entry["executable_role"] not in {"example", "benchmark"}:
         raise ManifestError("invalid executable_role")
-    if entry["compiler_language"] not in {"c", "cxx", "cuda"}:
+    if entry["compiler_language"] not in {"c", "cxx", "cuda", "fortran"}:
         raise ManifestError("invalid compiler_language")
     if Path(entry["executable_path"]).name != entry["target_name"]:
         raise ManifestError("target_name and executable filename differ")
@@ -112,9 +112,13 @@ def merge_entries(partials: Iterable[Iterable[Mapping[str, Any]]]) -> List[Dict[
     build = set()
     artifact_ids = set()
     paths = {}  # type: Dict[str, Tuple[str, str]]
+    source_languages = set()
     for partial in partials:
         for raw_entry in partial:
             entry = validate_entry(raw_entry)
+            source_languages.add("fortran" if entry["compiler_language"] == "fortran" else "c-cpp")
+            if len(source_languages) > 1:
+                raise ManifestError("C/C++ and Fortran require separate manifests/campaigns")
             semantic_key = (
                 entry["library"],
                 entry["implementation"],

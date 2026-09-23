@@ -183,7 +183,11 @@ def _validate_series(benchmark: str, definition: Mapping[str, Any]) -> None:
 def validate_config(config: Mapping[str, Any]) -> Dict[str, Any]:
     if not isinstance(config, Mapping):
         raise ConfigError("configuration must be an object")
-    _exact_keys(config, TOP_LEVEL_KEYS, "configuration")
+    keys = TOP_LEVEL_KEYS | ({"source_language"} if "source_language" in config else set())
+    _exact_keys(config, keys, "configuration")
+    _require(isinstance(config.get("source_language", "c-cpp"), str) and
+             config.get("source_language", "c-cpp") in {"c-cpp", "fortran"},
+             "invalid source_language")
     if config.get("config_schema_version") != 1:
         raise ConfigError("unsupported config_schema_version")
     _require(config["run_mode"] in {"smoke", "pilot", "production"}, "invalid run_mode")

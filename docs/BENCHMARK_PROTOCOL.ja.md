@@ -225,6 +225,18 @@ Pegasusの正本教材掲載用設定では、cuFFTは`cpu-fftw-threaded`だけ�
 
 正本のcuRAND CPUベンチマークは、`std::mt19937_64`と`std::uniform_real_distribution<double>`を使う`cpu-std-random-serial`で、roleは`production`、有効スレッド数は1です。正本のThrust CPUベンチマークは、execution policyなしの`std::transform_reduce`を使う`cpu-stl-serial`で、roleは`production`、有効スレッド数も1です。承認済み教材掲載用凡例は両方を明示的に**single thread**とし、並列、同一アルゴリズム、48-core CPUの性能とは呼びません。正確な表示ラベルは[教材掲載用図](#publication-figures)を参照してください。
 
+<a id="fortran-binding-of-this-protocol"></a>
+
+## この規約とFortran実装の対応
+
+`nvidia/fortran`でも同じCLI、数学、FP32/FP64精度、検証閾値、試行前復元、compute・one-shot E2Eの契約を使います。Fortran workloadから`ISO_C_BINDING`で既存Cタイマー・CLI・結果出力へ接続し、計算ライブラリ呼出しはFortranに残します。1始まりCSRは同じPoisson問題の表現です。CPU solver benchmarkは`dgetrf`＋`dgetrs`で、教材の`dgesv`とは分けます。
+
+Fortran CPU production backendは`cpu-fftw-serial`/`cpu-fftw-threaded`、`cpu-onemkl`、`cpu-fortran-random-serial`、`cpu-fortran-sum-serial`です。後2者は組込み関数を使い、自動並列化・GPU offloadなし、実効1とコンパイラ識別情報を記録し、C++ MT19937/STLと名乗りません。FFTWはplan前にthreads APIを設定し、oneMKLはAPIで要求数を設定しても未観測の実効数はnullです。CPU乱数は`cpu_engine="Fortran random_number"`を記録し、seed配列を設定seed（LP64符号付き範囲）で埋め、offset分を消費します。GPUはC/C++版と同じcuRAND generator契約で、CPU/GPUの数列一致は要求しません。
+
+Fortran Release既定値は`-O3`です。GNU targetは`-fno-fast-math -ffp-contract=off`、NVHPC targetは`-Kieee -Mnoflushz -Mnodaz`を使い、GPU targetだけにSeparate Memory ModeやOpenACCを明示します。このprofileでは未承認global数値flags、default kind変更、自動並列化/offload、unsafeなbridge flagsを拒否します。`NVCOMPILER_FPU_STATE`はunsetし、NVHPC benchmarkでは非空設定を拒否します。過去のC/C++の`-fast`条件を変更したり遡って承認したりはしません。verificationは明示的で、Releaseでも要求どおり実行します。
+
+Fortran診断configは`configs/fortran/pilot.json`で、本測定profileの承認やC/C++ publication workloadとは別です。言語識別と互換性は[`RESULT_SCHEMA.md`（英語）](RESULT_SCHEMA.md)が定めます。campaignを分け、既存2パネル図とFortran固有ラベルを使い、C/C++測定値を流用しません。
+
 <a id="timing-fields"></a>
 
 ## 時間測定フィールド

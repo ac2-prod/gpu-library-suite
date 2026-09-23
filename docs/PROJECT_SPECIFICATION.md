@@ -16,6 +16,12 @@ is the 2026-07-13 edition of *Library Edition (NVIDIA GPU, C/C++)* (「ライブ
 reference only and must not override the canonical edition. A current user
 instruction takes precedence if it conflicts with that edition.
 
+The approved NVIDIA Fortran addition follows the supplied text extraction of
+*Library Edition (NVIDIA GPU, Fortran)*, 2026-09-17 (58 slides). This is a
+source/provenance authority, not evidence of compilation or GPU execution.
+The original extraction is retained separately in the ignored
+`manual-validation/fortran-input/` directory. C/C++ defaults are unchanged.
+
 ## Project identity and hierarchy
 
 The repository name is `gpu-library-suite`. Users traverse source code in this
@@ -65,7 +71,7 @@ gpu-library-suite/
         benchmarks/
         README.md
         CMakeLists.txt
-    fortran/                 future; do not create as an empty placeholder
+    fortran/                 same six library/purpose subdirectories
   amd/
     c-cpp/                   future; do not create as an empty placeholder
     fortran/                 future; do not create as an empty placeholder
@@ -74,7 +80,7 @@ gpu-library-suite/
       include/
       src/
       CMakeLists.txt
-    fortran/                 future; do not create as an empty placeholder
+    fortran/                 shared mathematical helpers and benchmark support
   configs/
     pilot.json
     benchmark.json
@@ -87,10 +93,15 @@ gpu-library-suite/
 ```
 
 This tree is a target architecture, not permission to create empty directories.
-The initial implementation is limited to `nvidia/c-cpp`. NVIDIA Fortran, AMD
-C/C++ and Fortran, and common C/C++ and Fortran remain documented future work.
+The initial implementation was limited to `nvidia/c-cpp`; the approved addition
+is `nvidia/fortran` and its common support. AMD C/C++ and Fortran remain future work.
 Do not create empty future-area directories, dummy targets, or placeholder
 implementations.
+
+Fortran uses the same library directories and stems as the table below, with
+the `.f90` extension for all 18 examples and 18 benchmark entry points.
+`nvidia/fortran/thrust/examples/thrust_wrapper.cu` is shared by both GPU
+implementations. The incomplete p.13 stream-sharing fragment is not a target.
 
 ## Canonical teaching and benchmark filenames
 
@@ -117,7 +128,7 @@ repository-owned filename and must remain unchanged.
 Each example must:
 
 - match its canonical teaching filename exactly;
-- be a complete, independently compilable single-source program;
+- be a complete program (C/C++ examples are independently compilable single sources);
 - contain no ellipses, pseudocode, hidden helper source, benchmark CLI, repeated
   trials, CSV/JSON output, or environment metadata;
 - preserve a direct, readable library-call sequence and avoid excessive
@@ -126,9 +137,10 @@ Each example must:
   sequence; and
 - contain no architecture-specific compiler option.
 
-`make_poisson2d_csr` must be defined in every cuSPARSE example that uses it.
-`make_dense_system` must be defined in every cuSOLVER example that uses it. No
-separate helper source is allowed for either teaching example.
+For C/C++, `make_poisson2d_csr` and `make_dense_system` must be defined in each
+example that uses them. Fortran instead links the explicitly documented
+`common/fortran/make_poisson2d_csr.f90` and `make_dense_system.f90` helpers,
+as approved to fill the slide omissions without duplicating their bodies.
 
 ## Canonical teaching problems
 
@@ -152,7 +164,8 @@ separate helper source is allowed for either teaching example.
   `y = alpha A x + beta y`.
 - `nx = ny = 1024`, `alpha = 1.0`, and `beta = 1.0`.
 - Every element of x and initial y is `1.0`.
-- CSR uses zero-based indexing, non-transpose operation, and
+- C/C++ CSR uses zero-based indexing; Fortran uses one-based row offsets and
+  column indices for the identical matrix. Both use non-transpose operation and
   `CUSPARSE_SPMV_ALG_DEFAULT`.
 
 For grid coordinates `(ix, iy)`, the row ordering is
@@ -169,7 +182,7 @@ nnz = 5 * nx * ny - 2 * nx - 2 * ny
 
 - FP64 dense solution of `A X = B` in column-major storage.
 - `n = 1024` and `nrhs = 16`.
-- The CPU teaching example calls `LAPACKE_dgesv`.
+- The CPU teaching example calls `LAPACKE_dgesv` (C/C++) or `dgesv` (Fortran).
 - The CUDA and OpenACC teaching examples call `getrf` followed by `getrs`.
 - CPU benchmarks deliberately differ from the CPU teaching example; the staged
   benchmark API is specified in `BENCHMARK_PROTOCOL.md`.
@@ -191,11 +204,18 @@ error and residual.
 - Uniform double-precision pseudorandom generation.
 - `num_rand = 1 << 24`.
 - `CURAND_RNG_PSEUDO_DEFAULT`, seed `1234`, offset `0`, and default order.
+- The Fortran CPU example uses `random_seed` (all seed-vector elements set to
+  1234) and `random_number`; its compiler-dependent sequence need not equal CUDA.
 
 ### Thrust
 
 - FP64 `transform_reduce` computing `sum(values[i]^2)`.
 - `num_elem = 1 << 24` and every `values[i] = 1.0`.
+- Fortran CPU uses the intrinsic `sum(values*values)`, not the C++ STL backend.
+- CUDA Fortran uses typed `device` allocatables and element-count `cudaMemcpy`;
+  OpenACC Fortran retains separate memory, `data` and `host_data use_device`.
+  Fortran library workspace uses typed device `allocate`/`deallocate` and is
+  never simultaneously managed by an OpenACC data clause.
 
 ## OpenACC data management
 

@@ -211,6 +211,9 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
                  "invalid {0}".format(name))
     _require(isinstance(record["parameters"], dict), "parameters must be an object")
     _require_finite_json_numbers(record["parameters"], "parameters")
+    if "source_language" in record["parameters"]:
+        _require(record["parameters"]["source_language"] == "fortran",
+                 "source_language extension must identify Fortran")
     _require(isinstance(record["precision"], str), "precision must be a string")
     for name in ("cpu_backend", "cpu_backend_role", "cpu_parallelism",
                  "verification_primary_metric", "gpu_name", "gpu_uuid",
