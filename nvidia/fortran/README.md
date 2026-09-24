@@ -3,9 +3,10 @@
 [English](README.md) | [日本語](README.ja.md)
 
 Six libraries, each with CPU, direct CUDA Fortran and OpenACC teaching examples
-and benchmarks. This is an implemented source addition, **not an NVHPC/GPU
-validation result**. The approved input is the 2026-09-17 Fortran teaching
-extraction. C/C++ sources, historical flags/results and published figures remain
+and benchmarks. NVHPC builds, real-machine validation and production measurements
+on Pegasus are complete; see [the recorded coverage and limits](../../docs/VALIDATION_REPORT.md#fortran-production-validation).
+The approved input was the 2026-09-17 Fortran teaching extraction.
+C/C++ sources, historical flags/results and published figures remain
 unchanged. No saved measurements, raw logs or distribution archives are supplied.
 
 ## Source map
@@ -32,8 +33,9 @@ is CUDA C++, shared by direct and OpenACC callers.
 ## Build requirements
 
 Use CMake 3.20+, C17/C++17 and Fortran 2008 features. CPU-only builds support
-GNU Fortran or NVHPC. CUDA Fortran/OpenACC requires NVHPC `nvfortran`; the
-interfaces were checked against 25.11 documentation, not compiled on a GPU host.
+GNU Fortran or NVHPC. CUDA Fortran/OpenACC requires NVHPC `nvfortran`.
+Pegasus builds and execution were validated with NVHPC 25.11. This does not
+certify other compiler versions or GPU environments.
 Use the same external Toolkit with CMake, NVHPC and NVCC. Thrust needs NVCC and
 the Toolkit's Thrust/CCCL headers. GNU Fortran cannot compile the device
 extensions. Do not share compiler-generated `.mod` files or build trees across
@@ -120,9 +122,10 @@ python3 tools/merge_manifests.py --output "$RUN_DIR/executables.json" \
 Stop on a failed command; save stdout/stderr, module/compiler versions and all
 build/manifest files in a new validation directory. Do not rebuild or change
 source between the snapshot and a run. The snapshot includes untracked
-non-ignored sources. For this uncommitted implementation, use
+non-ignored sources. For a dirty smoke/pilot tree, use
 `PROVENANCE_ARGS=(--source-snapshot-sha256 "$SOURCE_HASH")` throughout preparation
-and execution. A later clean committed build instead uses an empty array.
+and execution, as illustrated below. A clean committed build may use an empty
+array instead; production requires a clean worktree.
 Inspect both build metadata documents: CMake Toolkit root and
 `nvhpc_cuda_home` must match. A complete build has 36 manifest entries
 (18 examples + 18 benchmarks); missing optional targets are not a complete
@@ -179,7 +182,8 @@ PROVENANCE_ARGS=(--source-snapshot-sha256 "$SOURCE_HASH")
 two trials and both scopes. It preserves problem/precision/verification
 semantics, selects Fortran intrinsic backend names and sets
 `source_language="fortran"`. It is not the historical C/C++ publication workload
-and does not fix the future Fortran production profile. For the first six-row
+and is not the separately saved production configuration. Choose measurement
+settings for your own environment. For the first six-row
 check, edit the new copy: enable only cuBLAS, keep its first case, set
 `run_mode="smoke"` and each scope's warmup/repeat/trials to 1. Retain the other
 five library objects disabled. Do not overwrite the canonical configurations.
@@ -218,16 +222,22 @@ Never relabel old C/C++ results as Fortran or infer rankings from synthetic test
 The page-13 ellipsis-containing cuFFT stream fragment is not a build target.
 Its different synchronization style was not substituted into all main examples.
 Reference extraction files remain unchanged in ignored local validation inputs;
-the PPTX has not been edited or independently verified here.
+the separately distributed teaching slides are not included in this checkout.
 
 Local GNU Fortran CPU checks cover intrinsic programs and helper mathematics.
 Controlled test providers additionally cover all four external CPU call paths,
 both scopes, state restoration and nonfinite/info failures; they are **not**
 oneMKL/FFTW installation or NVHPC ABI validation. See
-[the validation report](../../docs/VALIDATION_REPORT.md#fortran-local-validation)
-for executed commands and remaining checks. Actual NVHPC compilation, real
-FFTW/oneMKL linkage, all GPU examples/benchmarks, compute-sanitizer and Pegasus
-runtime/provenance checks remain required before real performance measurement.
+the [local validation record](../../docs/VALIDATION_REPORT.md#fortran-local-validation)
+and the later [Pegasus production record](../../docs/VALIDATION_REPORT.md#fortran-production-validation)
+for their distinct evidence. Pegasus validation used the CMake profiles; the
+direct-compile recipes and arbitrary other environments are not claimed as
+separately executed. The production campaign passed 6480 numerical checks
+across six nodes per wave and two waves; aggregation and six figures completed.
+oneMKL effective thread counts remain unobserved, while FFTW recorded 48 and
+the intrinsic baselines recorded 1 for a requested count of 48. Scheduler final
+exit codes, short-interval telemetry and unavailable turbostat retain the
+limits stated in the report. Saved raw data and figures are not distributed.
 
 Interface references: [NVIDIA Fortran CUDA Interfaces 25.11](https://docs.nvidia.com/hpc-sdk/archive/25.11/compilers/fortran-cuda-interfaces/index.html),
 [CUDA Fortran Guide 25.11](https://docs.nvidia.com/hpc-sdk/archive/25.11/compilers/cuda-fortran-prog-guide/index.html),

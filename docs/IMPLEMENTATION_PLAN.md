@@ -1139,9 +1139,11 @@ manifest/runner/plotting and English/Japanese usage. The implementation uses
 Fortran 2008 features plus NVHPC CUDA/OpenACC extensions. It does not require
 Fortran in the default C/C++ profile. See [integration requirements](ADDING_FORTRAN.md),
 [usage](../nvidia/fortran/README.md) and
-[local versus real-GPU validation](VALIDATION_REPORT.md#fortran-local-validation).
-Real NVHPC/CPU-provider/GPU validation and the production measurement profile
-remain separate, unexecuted follow-on work, not inferred from source completion.
+[local validation](VALIDATION_REPORT.md#fortran-local-validation).
+The subsequent [Pegasus validation and production record](VALIDATION_REPORT.md#fortran-production-validation)
+covers real NVHPC/CPU-provider/GPU execution, 6480 verified rows across six nodes
+per wave and two waves, aggregation and six figures. This evidence is separate
+from source completion and CPU CI; its recorded limits and private-data boundary remain.
 
 ## External inputs and intentionally deferred scope
 

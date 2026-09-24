@@ -16,7 +16,9 @@ The default build/command examples below describe C/C++. The added
 [Fortran guide](../nvidia/fortran/README.md) supplies its own compiler/provider
 builds and diagnostic configuration, then reuses this same runtime, validation,
 aggregation and plotting workflow. Keep the source families in separate build
-trees, manifests and runs; Fortran GPU validation is still outstanding.
+trees, manifests and runs. Fortran Pegasus builds, GPU checks and production
+measurements are recorded in [the validation report](VALIDATION_REPORT.md#fortran-production-validation);
+they do not establish support for every compiler, GPU or non-PBS environment.
 
 ## Portable layers
 

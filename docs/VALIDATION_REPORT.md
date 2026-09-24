@@ -385,6 +385,11 @@ development or data release is required by the selected code-publication scope.
 
 ## Fortran source addition: local validation
 
+The following subsections retain the historical local handoff, smoke and
+presurvey states. Current production completion is recorded under
+[Fortran production validation](#fortran-production-validation); later evidence
+does not change what was or was not executed at an earlier stage.
+
 This 2026-09-23 implementation is based on
 `94a8adbc310e158c048a08976a17471331e89d0a`, with uncommitted additions on
 `work/nvidia-fortran`. It adds 18 teaching examples and 18 benchmark entry
@@ -614,3 +619,48 @@ the recorded trial intervals. Turbostat is unavailable. Independent node
 probes do not cover every library version. Original files were hash-checked
 before and after analysis and preserved. These presurvey rows remain separate
 from production data; five-trial, six-node, two-wave production has not run.
+
+<a id="fortran-production-validation"></a>
+
+### Fortran production validation and figures
+
+The completed Pegasus production campaign measured commit
+`9567d6e9fdd5e2bb9190fb523ca073ca2a68ee1c`. Its retained, non-distributed
+`postprocessing-summary.json` records processing status `pass`, unchanged
+source-snapshot identity and 305 unchanged original files. This summary is
+under the Git-ignored production RUN_DIR, not an input supplied by a checkout.
+The earlier local, teaching-example, memcheck, smoke and presurvey evidence
+above remains separate from this campaign and from CPU CI.
+
+- Each of two waves contains six node blocks and 3240 raw rows: **6480 rows**
+  in total, all `success` and numerical verification `pass`. Each condition
+  has five trials; the campaign contains 12 node/wave blocks on 11 distinct
+  hosts. No smoke, presurvey or C/C++ rows were mixed in.
+- Saved node status, collection, classification and identity/hash checks passed;
+  252 collected artifacts were accounted for. Wave 0 validation was reused,
+  wave 1 and combined validation passed, and aggregation and plotting exited 0.
+- Aggregation produced 2880 records and 108 cross-wave elapsed-time points,
+  without exclusions. The 864 `insufficient_sample_count` records are
+  block-level paired-speedup summaries with one ratio of block medians, not
+  failed timing trials or missing production measurements.
+- Six library figures were generated and visually checked. Their left panel
+  is compute, right panel E2E, and vertical axis elapsed time in milliseconds;
+  values use `elapsed_sec * 1000`, without dividing by repeat again.
+
+The requested CPU thread count was 48. FFTW recorded effective 48, the Fortran
+intrinsic random/sum baselines effective 1, and oneMKL effective counts remain
+null/unobserved. Intrinsic CPU RNG and cuRAND are not equivalent algorithms.
+Independent node probes do not establish every library version; retained raw
+rows record versions and CUDA/OpenACC versions agree within each library.
+
+Both scheduler final exit codes remain unconfirmed; submission/runner status
+is not a substitute. Of 6480 intervals, 5492 contain no telemetry sample.
+There were 79 nonzero GPU `pviol` samples, overlapping 16 trial intervals;
+no rows were removed. No nonzero `tviol` sample was observed, which does not
+prove the state inside unsampled intervals. Turbostat was unavailable in all
+12 blocks, and two waves do not establish broad cross-wave variability.
+
+These are saved real-machine results, not a new GPU run performed for
+publication. Raw data, metadata, logs, analysis outputs and figures are not
+included in this source publication; users follow the existing own-measurement workflow
+to generate their own inputs and figures.

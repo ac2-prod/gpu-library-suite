@@ -3,8 +3,9 @@
 [English](README.md) | [日本語](README.ja.md)
 
 6ライブラリそれぞれにCPU、直接CUDA Fortran、OpenACCの教材サンプルと
-ベンチマークを実装しています。**ソース追加済みであり、NVHPC/GPUでの実行確認済みではありません。**
-入力は2026-09-17版Fortran教材の掲載コード抽出一式です。
+ベンチマークを実装しています。Pegasus上のNVHPCビルド、実機検証、本測定は完了しており、
+[確認範囲と留保（英語）](../../docs/VALIDATION_REPORT.md#fortran-production-validation)を記録しています。
+実装の入力は2026-09-17版Fortran教材の掲載コード抽出一式です。
 既存C/C++計算本体、過去のflags・測定値、承認済み図は変更していません。
 保存済み測定データ、実機ログ、配布候補archiveは同梱しません。
 
@@ -38,8 +39,8 @@ GPU Thrustだけは提供された[CUDA C++関数](thrust/examples/thrust_wrappe
 
 CMake 3.20以降、C17/C++17、Fortran 2008の機能を使用します。
 CPU-onlyはGNU FortranまたはNVHPC、CUDA Fortran/OpenACCは
-`nvfortran`が必要です。25.11公式interfaceと静的照合していますが、
-NVHPCでのビルド済みという意味ではありません。ThrustにはNVCCと
+`nvfortran`が必要です。PegasusではNVHPC 25.11でビルド・実行を確認しました。
+他のコンパイラ版やGPU環境の動作保証ではありません。ThrustにはNVCCと
 同じToolkitのThrust/CCCLも必要です。GNU Fortranはdevice拡張を扱えません。
 コンパイラ・profile・言語が異なるbuild treeや`.mod`を流用しないでください。
 
@@ -123,9 +124,9 @@ python3 tools/merge_manifests.py --output "$RUN_DIR/executables.json" \
 失敗したコマンドで止め、stdout/stderr、module/compiler version、metadata/manifestを
 新規検証ディレクトリへ保存します。snapshot後にソースを変えたり再ビルドしたりしないでください。
 snapshotにはignore対象でない未追跡ソースも含みます。
-今回の未commit版では、prepare・runner・renderに同じ
+dirtyなsmoke/pilotでは、以下の例のようにprepare・runner・renderに同じ
 `PROVENANCE_ARGS=(--source-snapshot-sha256 "$SOURCE_HASH")`を使用します。
-将来のclean commitからのbuildなら空配列です。
+cleanなcommitからのbuildなら空配列にもできます。productionはclean worktreeが必要です。
 
 両buildのCMake Toolkit rootと`nvhpc_cuda_home`の一致を確認します。
 完全な構成はmanifest 36件（教材18＋benchmark 18）です。
@@ -181,7 +182,8 @@ PROVENANCE_ARGS=(--source-snapshot-sha256 "$SOURCE_HASH")
 `configs/fortran/pilot.json`は各ライブラリ3つの小規模診断ケース、2 trials、
 両scopeを持ちます。問題・精度・verificationを維持し、
 `source_language="fortran"`とFortran組込みbackend名を使用します。
-過去のC/C++ publication workloadとは別で、Fortran本測定profileは未確定です。
+過去のC/C++ publication workloadとも、別途保存したFortran本測定configとも異なります。
+利用者自身の環境に合わせて測定条件を選んでください。
 最初の6行smokeでは、新規コピーを編集し、cuBLASだけ有効、最初のcaseだけ、
 `run_mode="smoke"`、両scopeのwarmup/repeat/trialsを1にします。
 他5ライブラリのobjectは削除せずdisabledにし、正本configを上書きしません。
@@ -218,14 +220,18 @@ CUDA/OpenACC Thrustの同一library versionが必要です。6行smokeは6図の
 
 p.13の省略記号を含むstream補足はbuild対象外です。
 同期方式を全主例に置き換えていません。参照抽出ファイルはignore対象の
-ローカル検証入力に原文のまま保持し、PPTXは編集・独立確認していません。
+ローカル検証入力に原文のまま保持しています。別途配布する教材スライドはcheckoutに含めません。
 
 GNU Fortranで組込みCPU版とhelperの数学を確認しています。
 テスト用代替providerで外部CPU4経路、両scope、状態復元、NaN/Inf・info失敗も
 確認していますが、実oneMKL/FFTWやNVHPC ABIの検証ではありません。
-実行コマンドと未実行項目は[検証報告](../../docs/VALIDATION_REPORT.md#fortran-local-validation)
-を参照してください。NVHPC実コンパイル、実FFTW/oneMKLリンク、GPU全例・benchmark、
-compute-sanitizer、Pegasusのruntime/provenance確認は実性能測定の前に必要です。
+これらの[ローカル検証](../../docs/VALIDATION_REPORT.md#fortran-local-validation)と、
+後続の[Pegasus本測定（英語）](../../docs/VALIDATION_REPORT.md#fortran-production-validation)は別の根拠です。
+Pegasus検証にはCMake profileを使用しており、直接コンパイル手順や任意の別環境を
+個別に実行確認したとは扱いません。本測定では各wave 6ノード×2waveの6480行すべてが
+数値検証に成功し、集計と6図生成まで完了しました。CPU要求48に対し、oneMKLの
+実効数は未観測、FFTWは48、組込み乱数・sumは1です。scheduler最終終了コード、
+短区間telemetry、turbostat未取得の留保は検証報告どおり維持します。保存raw・図は配布しません。
 
 公式照合先：
 [NVIDIA Fortran CUDA Interfaces 25.11](https://docs.nvidia.com/hpc-sdk/archive/25.11/compilers/fortran-cuda-interfaces/index.html)、

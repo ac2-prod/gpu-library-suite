@@ -446,11 +446,13 @@ buildとbenchmark jobを分離し、batch benchmark job内ではcompileしない
 
 <a id="fortran-first-validation"></a>
 
-## Fortran初回実機確認（人間が実行、未実施）
+## Fortran初回実機確認（人間が実行）
 
-Fortran追加の終了点はローカル実装・確認と実機への引渡しであり、
-以下のNVHPC/GPU手順はまだ実行していない。C/C++の保存ログはFortranの
-成功証拠にならない。本測定・公開とは分け、新規のbuild/result/log出力先を使う。
+以下は初回引渡し時に用意した手順である。その後、Fortranの実機確認、
+6ノード×2waveの本測定、検証・集計・6図生成が完了した。現在の根拠と留保は
+[検証報告](VALIDATION_REPORT.md#fortran-production-validation)に記録し、過去のログは保持する。
+別環境で実行する場合もC/C++の保存ログをFortranの成功証拠にせず、
+新規のbuild/result/log出力先を使う。
 
 ### 1. ソースと環境を準備する
 

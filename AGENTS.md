@@ -180,6 +180,10 @@ creation.
 - Keep unverified areas visible in user documentation and the final report.
 - At the end of every task, report changed files, commands run, passed tests,
   unexecuted tests, and manual Pegasus checks still required.
-- Do not commit or push changes.
+- Do not commit or push changes without explicit owner authorization.
+- For an explicitly approved publication, completion includes the PR, required
+  CI, main integration, current public usage guidance, and local synchronization.
+  Do not leave completed, approved implementation work only on a work branch;
+  this completion rule does not itself authorize Git writes or publication.
 - Before handoff, inspect `git diff`, `git diff --check`, and `git status --short`;
   preserve unrelated user changes.

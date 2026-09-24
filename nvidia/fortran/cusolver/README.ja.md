@@ -2,7 +2,7 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
-[共通のFortran利用案内](../README.ja.md)に必要環境、分離CMake build、flags、検証状態をまとめています。GPU実行は未確認です。
+[共通のFortran利用案内](../README.ja.md)に必要環境、分離CMake build、flags、完了したPegasus実機検証の範囲と留保をまとめています。
 
 | 方式 | 教材 | Benchmark |
 | --- | --- | --- |

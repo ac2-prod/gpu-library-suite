@@ -9,7 +9,8 @@ see [NVIDIA Fortran](../nvidia/fortran/README.md) for usage and validation limit
 The source integration is implemented with `GPU_SUITE_SOURCE_LANGUAGE=fortran`
 in separate trees, Fortran workload callbacks and a narrow C ABI bridge. GNU
 CPU/local fixtures and GPU/NVHPC real-machine checks are distinct gates; see
-[executed local validation](VALIDATION_REPORT.md#fortran-local-validation).
+[executed local validation](VALIDATION_REPORT.md#fortran-local-validation) and
+[completed Pegasus validation and production](VALIDATION_REPORT.md#fortran-production-validation).
 
 Update [`PROJECT_SPECIFICATION.md`](PROJECT_SPECIFICATION.md) first with the
 authoritative teaching edition, exact filenames, language/library hierarchy,

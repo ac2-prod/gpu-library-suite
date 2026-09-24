@@ -2,7 +2,7 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
-See the [shared Fortran guide](../README.md) for dependencies, separate CMake builds, numerical flags and validation limits. GPU execution remains unverified.
+See the [shared Fortran guide](../README.md) for dependencies, separate CMake builds, numerical flags, and the scope and limits of completed Pegasus validation.
 
 | Implementation | Example | Benchmark |
 | --- | --- | --- |
