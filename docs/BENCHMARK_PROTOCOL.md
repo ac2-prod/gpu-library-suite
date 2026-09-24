@@ -323,6 +323,41 @@ for both, never parallel or algorithm-equivalent performance and never 48-core
 CPU performance. Exact displayed labels are listed under
 [Publication figures](#publication-figures).
 
+## Fortran binding of this protocol
+
+`nvidia/fortran` applies the same CLI, mathematics, FP32/FP64 precision,
+verification thresholds, trial restoration, compute and one-shot E2E contracts.
+Its Fortran workload callbacks use the existing C timer/CLI/result writer through
+`ISO_C_BINDING`; the computational library calls remain Fortran. Array indexing
+is one-based CSR where required, not a different Poisson problem. CPU solver
+benchmarks use `dgetrf` plus `dgetrs`; teaching `dgesv` remains separate.
+
+Fortran CPU production backends are `cpu-fftw-serial`/`cpu-fftw-threaded`,
+`cpu-onemkl`, `cpu-fortran-random-serial`, and `cpu-fortran-sum-serial`.
+The last two use compiler intrinsics without automatic parallelization or GPU
+offload, record effective count 1 and compiler identity, and never identify
+themselves as C++ MT19937/STL. FFTW initializes threads before planning; oneMKL
+requests threads through its API but keeps an unobserved effective count null.
+Fortran RNG records `cpu_engine="Fortran random_number"`; seed-vector elements
+are filled with the configured seed (LP64 signed range), and offset consumes
+that stream. CUDA uses the same cuRAND generator contract as the C/C++ path;
+CPU/GPU stream identity is not required.
+
+Fortran Release defaults to `-O3`. GNU target options are
+`-fno-fast-math -ffp-contract=off`; NVHPC target options are
+`-Kieee -Mnoflushz -Mnodaz`, with explicit separate GPU memory and OpenACC only
+on GPU targets. The Fortran profile rejects unapproved global numerical,
+default-kind-changing, automatic parallel/offload flags and unsafe bridge flags.
+Unset `NVCOMPILER_FPU_STATE`; NVHPC benchmarks reject a nonempty override.
+This does not change or retroactively approve the historical C/C++ `-fast`
+condition. Verification is explicit and remains enabled when requested in Release.
+
+The Fortran diagnostic configuration is `configs/fortran/pilot.json`; it is not
+an approved production profile or the C/C++ publication workload. Language
+identity and compatibility are specified in [`RESULT_SCHEMA.md`](RESULT_SCHEMA.md).
+Use separate campaigns and the existing two-panel figure path; retain
+Fortran-specific labels and never repurpose C/C++ measurements.
+
 ## Timing fields
 
 For every raw trial:

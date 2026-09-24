@@ -442,3 +442,169 @@ buildとbenchmark jobを分離し、batch benchmark job内ではcompileしない
 - build script自身はscheduler commandを実行しない。
 - 人間が適切な計算node上でbuild scriptを実行する。
 - benchmark jobは事前build済みでmanifestにhash記録されたbinaryだけを使う。
+
+
+<a id="fortran-first-validation"></a>
+
+## Fortran初回実機確認（人間が実行）
+
+以下は初回引渡し時に用意した手順である。その後、Fortranの実機確認、
+6ノード×2waveの本測定、検証・集計・6図生成が完了した。現在の根拠と留保は
+[検証報告](VALIDATION_REPORT.md#fortran-production-validation)に記録し、過去のログは保持する。
+別環境で実行する場合もC/C++の保存ログをFortranの成功証拠にせず、
+新規のbuild/result/log出力先を使う。
+
+### 1. ソースと環境を準備する
+
+人間が変更・新規Fortranファイルを含む同一のソースをPegasusへ用意する。
+既存の正規GPU割当内でbuildと小規模確認を行い、ログインノードではGPU処理しない。
+interactive/batchの選択は本書のqueue手順に従う（debugはinteractive、
+gpuはbatch）。エージェントは接続・module操作・投入をしない。
+
+既存の検証済みローカル設定を入力にする。`build_cpu_cuda.sh`/
+`build_openacc.sh`は既存C/C++用のままであり、Fortran buildには使わない。
+FortranのCPU/CUDA側にもnvfortranが必要なので、既存設定の
+`openacc_build_modules`を順序どおり使用し、実際のcompilerを確認する。
+禁止済みの`nvhpc-nompi/25.11`へ置換しない。
+
+```bash
+PEGASUS_CONFIG="$PWD/jobs/pegasus/pegasus.json"
+helper=(python3 jobs/pegasus/job_config.py --config "$PEGASUS_CONFIG")
+if [[ "$("${helper[@]}" get module_purge)" == true ]]; then
+  module purge
+fi
+mapfile -t build_modules < <("${helper[@]}" modules --profile openacc)
+for module_name in "${build_modules[@]}"; do
+  module load "$module_name"
+done
+CUDA_TOOLKIT_ROOT="$("${helper[@]}" get cuda_toolkit_root)"
+CUDA_ARCHITECTURES="$("${helper[@]}" get cuda_architectures)"
+NVHPC_GPU_TARGET="$("${helper[@]}" get nvhpc_gpu_target)"
+test "$CUDA_TOOLKIT_ROOT" = "$("${helper[@]}" get nvhpc_cuda_home)"
+command -v nvfortran nvcc gcc g++
+nvfortran --version
+nvcc --version
+```
+
+module list、各compiler version、選択Toolkit、`NVCOMPILER_FPU_STATE`が
+unsetであることを、新規ログへ記録する。実FFTW3f/threads、oneMKL LP64、
+対応Fortran interfaceが必要で、見つからなければ該当targetは無効になる。
+module名だけでFortran対応を確認済みとしない。
+
+### 2. 分離buildとmanifestを作る
+
+[Fortran共通案内の完全なCMakeコマンド](../nvidia/fortran/README.ja.md#separate-gpu-build-trees)
+を同じshellで実行する。CPU/CUDA・OpenACCとも`CMAKE_Fortran_COMPILER=nvfortran`、
+補助C/C++はGCC/G++、言語familyは`fortran`、build treeは新規にする。
+この案内で定義される`CPU_CUDA_BUILD`、`OPENACC_BUILD`、
+`RUN_DIR`、`SOURCE_HASH`を以降も使用する。
+
+configure/build stdout・stderr、`fortran-probes/`、
+`compile_commands.json`、両`build-metadata.json`、
+両`partial-manifest.json`、merge後の`executables.json`を保存する。
+期待はCPU/CUDA側24、OpenACC側12、merge後36 artifact。
+全targetがenabledか、Fortran flagsに暗黙の-fastが無いか、
+CMakeとNVHPCのexternal Toolkit rootが一致するかを確認する。
+source snapshotの前後一致と、manifestに記録されたbinary/metadata hashを保持する。
+
+### 3. 教材・小規模数値確認を行う
+
+6ライブラリREADMEにあるCPU/CUDA/OpenACCの全18教材を実行し、
+各stdout/stderr・終了コードとverificationを保存する。
+helper省略やC++ wrapper未リンクは成功としない。
+まずcuBLASの小規模6行を新規診断ファイルに作る例を示す。
+以下のCPU要求1は診断値であり、過去・将来のpublication条件の変更ではない。
+
+```bash
+export OMP_NUM_THREADS=1 OMP_PROC_BIND=spread OMP_PLACES=cores OMP_DYNAMIC=FALSE
+export MKL_NUM_THREADS=1 MKL_DYNAMIC=FALSE MKL_THREADING_LAYER=INTEL OPENBLAS_NUM_THREADS=1
+unset NVCOMPILER_FPU_STATE
+for scope in compute end-to-end; do
+  for implementation in cpu cuda openacc; do
+    cpu_options=()
+    case "$implementation" in
+      cpu)
+        binary="$CPU_CUDA_BUILD/nvidia/fortran/cublas/blas_cpu_bench"
+        cpu_options=(--cpu-backend cpu-onemkl --cpu-threads 1 --cpu-parallelism threaded)
+        ;;
+      cuda) binary="$CPU_CUDA_BUILD/nvidia/fortran/cublas/blas_gpu_bench" ;;
+      openacc) binary="$OPENACC_BUILD/nvidia/fortran/cublas/openacc_cublas_bench" ;;
+    esac
+    "$binary" --size 32 --alpha 1 --beta 1 --warmup 1 --repeat 1 --trials 1 \
+      --scope "$scope" --verify true "${cpu_options[@]}" --format jsonl \
+      --output "$RUN_DIR/standalone-cublas-$implementation-$scope.jsonl" \
+      2> "$RUN_DIR/standalone-cublas-$implementation-$scope.stderr"
+  done
+done
+compute-sanitizer --tool memcheck --error-exitcode 99 \
+  "$CPU_CUDA_BUILD/nvidia/fortran/cublas/blas_gpu_bench" \
+  --size 32 --warmup 1 --repeat 1 --trials 1 --scope compute --verify true \
+  --output "$RUN_DIR/memcheck-cublas-cuda.jsonl" --format jsonl \
+  > "$RUN_DIR/memcheck-cublas-cuda.stdout" 2> "$RUN_DIR/memcheck-cublas-cuda.stderr"
+compute-sanitizer --tool memcheck --error-exitcode 99 \
+  "$OPENACC_BUILD/nvidia/fortran/cublas/openacc_cublas_bench" \
+  --size 32 --warmup 1 --repeat 1 --trials 1 --scope end-to-end --verify true \
+  --output "$RUN_DIR/memcheck-cublas-openacc.jsonl" --format jsonl \
+  > "$RUN_DIR/memcheck-cublas-openacc.stdout" 2> "$RUN_DIR/memcheck-cublas-openacc.stderr"
+```
+
+各コマンドで失敗したら成功経路を止め、rawとstderrを保持して原因を分類する。
+cuSOLVERではrepeat=1と両info、cuSPARSEでは1始まりCSR/boundary、
+cuRANDでは分布とtrial前seed/offset復元、Thrustでは同じwrapper/library versionを確認する。
+残るGPU各方式も各READMEの小規模サイズで確認し、memcheck対象を記録する。
+上のcuBLASだけのmemcheckを全12 GPU benchmarkの確認済みとしない。
+
+### 4. 既存PBS経路でidentity・検証・集計を確認する
+
+単独実行行は完全なcampaignではない。既存PBS preflight、node-local provenance、
+runner、collectorをそのまま使い、Fortran専用manifest/config/result rootを渡す。
+設定コピーにはnodes=1、batch queue、許可walltime、別のPBS stdout/stderr、
+別のshared result rootを人間が設定する。CPU要求・8 runtime変数は
+Fortran smoke configの要求1と整合させる。既存確認済みのmodule順とMPI `-x`
+配列は維持し、runtime librariesのPATH/LD_LIBRARY_PATH伝播を確認する。
+FPU overrideは使わない。設定原本を変更しない。
+
+初回smoke用入力は既存Fortran pilotから数学・精度・seriesを維持して作る。
+
+```bash
+PYTHONPATH=tools python3 - "$RUN_DIR/effective-config.json" <<'PY'
+import sys
+from pathlib import Path
+from gpu_suite.config import load_config, validate_config
+from gpu_suite.strict_json import dump_bytes
+config = load_config("configs/fortran/pilot.json")
+config["run_mode"] = "smoke"
+for name, benchmark in config["benchmarks"].items():
+    benchmark["enabled"] = name == "cublas"
+    benchmark["cases"] = benchmark["cases"][:1]
+    for settings in benchmark["cases"][0]["scopes"].values():
+        settings.update(warmup=1, repeat=1, trials=1)
+with Path(sys.argv[1]).open("xb") as output:
+    output.write(dump_bytes(validate_config(config)))
+PY
+: "${FORTRAN_PEGASUS_CONFIG:?Set the validated one-node smoke site-config copy}"
+: "${FORTRAN_RUN_ID:?Choose a fresh Fortran run ID}"
+python3 jobs/pegasus/render_job.py --config "$FORTRAN_PEGASUS_CONFIG" \
+  --repository-root "$PWD" --benchmark-config "$RUN_DIR/effective-config.json" \
+  --manifest "$RUN_DIR/executables.json" \
+  --build-metadata "$CPU_CUDA_BUILD/build-metadata.json" \
+  --build-metadata "$OPENACC_BUILD/build-metadata.json" \
+  --run-id "$FORTRAN_RUN_ID" --wave 0 --system-label pegasus \
+  --job-name fortran-smoke --source-snapshot-sha256 "$SOURCE_HASH" \
+  --output "$RUN_DIR/run_benchmarks.pbs"
+bash -n "$RUN_DIR/run_benchmarks.pbs"
+```
+
+このrender例は未commit版向けである。clean commitからbuildした場合は
+dirty-source引数を付けない。renderされたaccount/queue/path、
+preflight/measurementのMPI_OPTIONSを人間が確認し、投入は人間だけが行う。
+PBS情報をunsetして`prepare_wave.py --local`に通す方法は使わない。
+
+回収後は[検証・集計](PORTABILITY.ja.md#validate-and-aggregate-a-completed-run)へ進み、
+rawのFortran marker、config/manifest/binary/build/runtime hash、
+node-local GPU/driver/runtime/library identity、verification、collector statusを確認する。
+6行すべて成功したこととfailure/skippedを区別する。telemetryと時刻の対応も既存手順で確認する。
+その後に新規runで`configs/fortran/pilot.json`の小規模216行
+（6 libraries×3 cases×2 scopes×3 implementations×2 trials）を確認できる。
+[既存の6図生成](PORTABILITY.ja.md#figures-from-your-own-measurements)は
+この独立したFortranデータを使い、本測定profile・性能比較の確定は実機確認後とする。

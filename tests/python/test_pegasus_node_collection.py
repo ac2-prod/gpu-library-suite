@@ -75,6 +75,164 @@ def write_node(nodes, hostname, rank, classification):
 
 
 class CollectionTests(unittest.TestCase):
+    def test_curand_metadata_selects_cpu_engine_from_language_and_backend(self):
+        cases = (
+            (None, "pilot.json", "std::mt19937_64"),
+            ("c-cpp", "pilot.json", "std::mt19937_64"),
+            ("fortran", "fortran/pilot.json", "Fortran random_number"),
+        )
+        for language, config_name, engine in cases:
+            with self.subTest(language=language), tempfile.TemporaryDirectory() as temporary:
+                config = load(ROOT / "configs" / config_name)
+                if language is None:
+                    config.pop("source_language", None)
+                else:
+                    config["source_language"] = language
+                inputs = write_campaign_inputs(Path(temporary), config=config)
+                metadata = build_node_metadata(
+                    inputs["config"], inputs["manifest"], "run-1", 0, 0,
+                    "node0", "0" * 64, dict(CPU_ENVIRONMENT),
+                    cuda_runtime_probe=lambda: {
+                        "cuda_driver_api_version": None,
+                        "cuda_runtime_version": None,
+                        "diagnostic": "CPU-only fixture",
+                        "loaded_library": None,
+                        "query_status": "unavailable",
+                    },
+                )
+                self.assertEqual(metadata["curand"]["cpu_engine"], engine)
+                self.assertEqual(
+                    metadata["curand"]["cuda_generator"], "pseudo-default"
+                )
+
+    def test_curand_metadata_rejects_language_backend_mismatch(self):
+        for config_name, language in (
+            ("pilot.json", "fortran"),
+            ("fortran/pilot.json", "c-cpp"),
+        ):
+            with self.subTest(language=language), tempfile.TemporaryDirectory() as temporary:
+                config = load(ROOT / "configs" / config_name)
+                config["source_language"] = language
+                inputs = write_campaign_inputs(Path(temporary), config=config)
+                with self.assertRaisesRegex(NodeToolError, "CPU backend differs"):
+                    build_node_metadata(
+                        inputs["config"], inputs["manifest"], "run-1", 0, 0,
+                        "node0", "0" * 64, dict(CPU_ENVIRONMENT),
+                        cuda_runtime_probe=lambda: {
+                            "cuda_driver_api_version": None,
+                            "cuda_runtime_version": None,
+                            "diagnostic": "CPU-only fixture",
+                            "loaded_library": None,
+                            "query_status": "unavailable",
+                        },
+                    )
+
+    @staticmethod
+    def _curand_node_metadata(record, engine):
+        return {
+            "curand": {
+                "cpu_engine": engine,
+                "cuda_generator": "pseudo-default",
+            },
+            "cuda_runtime_identity": {
+                "cuda_driver_api_version": record["cuda_driver_version"],
+                "cuda_runtime_version": record["cuda_runtime_version"],
+            },
+            "gpu_identity": {
+                "name": record["gpu_name"],
+                "uuid": record["gpu_uuid"],
+            },
+        }
+
+    def test_curand_cpu_raw_engine_matches_node_metadata(self):
+        for engine, backend in (
+            ("std::mt19937_64", "cpu-std-random-serial"),
+            ("Fortran random_number", "cpu-fortran-random-serial"),
+        ):
+            with self.subTest(engine=engine), tempfile.TemporaryDirectory() as temporary:
+                record = raw_success(benchmark="curand")
+                record["parameters"]["cpu_engine"] = engine
+                record["cpu_backend"] = backend
+                record["library_name"] = backend
+                if backend == "cpu-fortran-random-serial":
+                    record["parameters"]["source_language"] = "fortran"
+                raw = Path(temporary) / "raw.jsonl"
+                raw.write_text(dumps(record) + "\n", encoding="utf-8")
+                metadata = self._curand_node_metadata(record, engine)
+                classification = classify_raw(raw, metadata)
+                self.assertEqual(classification["benchmark_status"], "success")
+                self.assertEqual(classification["verification_status"], "success")
+                self.assertEqual(classification["record_count"], 1)
+
+    def test_fortran_curand_raw_rejects_cpp_node_engine(self):
+        record = raw_success(benchmark="curand")
+        record["parameters"].update({
+            "cpu_engine": "Fortran random_number",
+            "source_language": "fortran",
+        })
+        record["cpu_backend"] = "cpu-fortran-random-serial"
+        record["library_name"] = "cpu-fortran-random-serial"
+        metadata = self._curand_node_metadata(record, "std::mt19937_64")
+        with tempfile.TemporaryDirectory() as temporary:
+            raw = Path(temporary) / "raw.jsonl"
+            raw.write_text(dumps(record) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(NodeToolError, "cuRAND CPU engine differs"):
+                classify_raw(raw, metadata)
+
+    def test_successful_curand_cpu_raw_requires_both_engine_records(self):
+        for missing in ("raw", "node", "curand"):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temporary:
+                record = raw_success(benchmark="curand")
+                metadata = self._curand_node_metadata(record, "std::mt19937_64")
+                if missing == "raw":
+                    del record["parameters"]["cpu_engine"]
+                elif missing == "node":
+                    del metadata["curand"]["cpu_engine"]
+                else:
+                    del metadata["curand"]
+                raw = Path(temporary) / "raw.jsonl"
+                raw.write_text(dumps(record) + "\n", encoding="utf-8")
+                with self.assertRaisesRegex(NodeToolError, "node-matched cuRAND CPU engine"):
+                    classify_raw(raw, metadata)
+
+    def test_curand_gpu_generator_is_not_compared_with_cpu_engine(self):
+        for implementation in ("cuda", "openacc"):
+            with self.subTest(implementation=implementation), tempfile.TemporaryDirectory() as temporary:
+                record = raw_success(benchmark="curand", implementation=implementation)
+                self.assertNotIn("cpu_engine", record["parameters"])
+                self.assertEqual(
+                    record["parameters"]["generator_algorithm"],
+                    "CURAND_RNG_PSEUDO_DEFAULT",
+                )
+                metadata = self._curand_node_metadata(record, "Fortran random_number")
+                raw = Path(temporary) / "raw.jsonl"
+                raw.write_text(dumps(record) + "\n", encoding="utf-8")
+                self.assertEqual(classify_raw(raw, metadata)["benchmark_status"], "success")
+
+    def test_curand_missing_engine_preserves_failed_and_skipped_status(self):
+        for status in ("failure", "skipped"):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as temporary:
+                record = raw_success(benchmark="curand")
+                del record["parameters"]["cpu_engine"]
+                record.update({
+                    "status": status,
+                    "attempted": status == "failure",
+                    "failure_origin": "benchmark" if status == "failure" else "prior-failure",
+                    "exit_code": 1 if status == "failure" else None,
+                    "message": "fixture execution failure",
+                    "verification_status": "skipped",
+                    "measurement_start_timestamp": None,
+                    "measurement_end_timestamp": None,
+                    "elapsed_total_sec": None,
+                    "elapsed_sec": None,
+                })
+                metadata = self._curand_node_metadata(record, "Fortran random_number")
+                raw = Path(temporary) / "raw.jsonl"
+                raw.write_text(dumps(record) + "\n", encoding="utf-8")
+                classification = classify_raw(raw, metadata)
+                self.assertEqual(classification["benchmark_status"], "failure")
+                self.assertEqual(classification["status_counts"], {status: 1})
+
     def test_node_metadata_uses_an_independent_cuda_runtime_probe(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

@@ -8,6 +8,8 @@
 
 このガイドは、サイト固有の前提を移植可能なソースへ持ち込まずに、実装済みNVIDIA C/C++スイートを再利用する方法をまとめます。別のビルド仕様やベンチマーク仕様ではありません。恒常的な方針は[`AGENTS.md`（英語）](../AGENTS.md)、ビルド要件は[`IMPLEMENTATION_PLAN.md`（英語）](IMPLEMENTATION_PLAN.md)、時間測定とスキーマの動作は[`BENCHMARK_PROTOCOL.ja.md`](BENCHMARK_PROTOCOL.ja.md)と[`RESULT_SCHEMA.md`（英語）](RESULT_SCHEMA.md)が定めます。
 
+以下の既定build・コマンド例はC/C++用です。[Fortran案内](../nvidia/fortran/README.ja.md)では専用コンパイラ/providerのbuildと診断configを示し、その後のruntime取得・検証・集計・図生成を本ガイドと共用します。言語別にbuild tree・manifest・runを分離してください。FortranのPegasusビルド・GPU確認・本測定は[検証報告（英語）](VALIDATION_REPORT.md#fortran-production-validation)に記録しています。任意のコンパイラ・GPU・非PBS環境の動作保証ではありません。
+
 <a id="portable-layers"></a>
 
 ## 移植可能な層

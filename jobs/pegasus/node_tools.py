@@ -59,6 +59,22 @@ def _cpu_environment(environment: Mapping[str, str]) -> Dict[str, str]:
     return result
 
 
+def _curand_cpu_engine(config: Mapping[str, Any]) -> str:
+    language = config.get("source_language", "c-cpp")
+    backend, engine = {
+        "c-cpp": ("cpu-std-random-serial", "std::mt19937_64"),
+        "fortran": ("cpu-fortran-random-serial", "Fortran random_number"),
+    }[language]
+    configured_backends = {
+        item["cpu_backend"]
+        for item in config["benchmarks"]["curand"]["series"]
+        if item["implementation"] == "cpu"
+    }
+    if configured_backends != {backend}:
+        raise NodeToolError("cuRAND CPU backend differs from source language")
+    return engine
+
+
 def build_node_metadata(
     config_path: Path, manifest_path: Path, run_id: str, wave: int,
     node_index: int, hostname: str, runtime_environment_sha256: str,
@@ -135,7 +151,7 @@ def build_node_metadata(
             "uuid": environment.get("GPU_SUITE_GPU_UUID") or None,
         },
         "curand": {
-            "cpu_engine": "std::mt19937_64",
+            "cpu_engine": _curand_cpu_engine(config),
             "cuda_generator": curand_parameters["generator"],
             "distribution": curand_parameters["distribution"],
             "offset": curand_parameters["offset"],
@@ -276,6 +292,23 @@ def classify_raw(
                 raise NodeToolError(
                     "raw scheduler identity differs from node metadata"
                 )
+            if record["benchmark"] == "curand" and record["implementation"] == "cpu":
+                curand = node_metadata.get("curand")
+                expected_engine = (
+                    curand.get("cpu_engine") if isinstance(curand, Mapping) else None
+                )
+                observed_engine = record["parameters"].get("cpu_engine")
+                if (expected_engine is not None and observed_engine is not None
+                        and observed_engine != expected_engine):
+                    raise NodeToolError(
+                        "raw cuRAND CPU engine differs from node metadata"
+                    )
+                if record["status"] == "success" and (
+                    not expected_engine or not observed_engine
+                ):
+                    raise NodeToolError(
+                        "successful raw row lacks complete node-matched cuRAND CPU engine"
+                    )
             if record["implementation"] not in {"cuda", "openacc"}:
                 continue
             comparisons = (

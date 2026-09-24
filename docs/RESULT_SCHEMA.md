@@ -434,6 +434,21 @@ Canonical configuration filenames are `configs/pilot.json` and
 to sizes, repeat, trials, thresholds, or backend selection do not increment that
 version. Do not rename the canonical files to encode a revision or date.
 
+For the approved Fortran addition, optional top-level `source_language` accepts
+exactly `c-cpp` or `fortran`; omission preserves the existing `c-cpp` meaning
+and bytes. No other top-level keys become optional. `configs/fortran/pilot.json`
+is the separate small Fortran diagnostic input, not a renamed C/C++ canonical
+publication configuration. The schema version remains 1.
+
+Fortran raw rows add `parameters.source_language="fortran"`; the raw top-level
+schema is unchanged and old C/C++ rows do not gain a marker. If a marker is
+present it must be exactly `fortran`. The runner/validator require it for a
+Fortran configuration, including synthesized failure/skipped rows, and retain
+it in aggregation's parameter signature. Fortran RNG's `cpu_engine` is
+`Fortran random_number`, not the C/C++ engine; that engine description is not
+part of the cross-implementation mathematical grouping. The language marker is.
+One manifest/run and one plotted comparison contain only one source family.
+
 ## Executables manifest and source provenance
 
 Each build tree writes one deterministic `build-metadata.json`. It records the
@@ -466,6 +481,7 @@ least:
 | `binary_sha256` | SHA-256 of the exact executable bytes. |
 | `build_metadata_sha256` | SHA-256 of deterministic generated build metadata. |
 | `compiler` | Compiler identity. |
+| `compiler_language` | `c`, `cxx`, `cuda`, or `fortran`; mixed C/C++ and Fortran source families cannot be merged. |
 | `compiler_version` | Compiler version. |
 | `global_configure_flags` | Language-level global configure flags associated with the selected compiler. |
 | `git_metadata_available` | Whether commit and worktree state were obtained from Git. |
@@ -492,6 +508,14 @@ manifest; they are never merged ambiguously.
 `backend_variant` records the compiled capability/provider without renaming the
 binary. The entry also records supported stable CPU backend names when one
 binary supports more than one runtime-selectable series.
+
+Fortran build metadata additionally has a `fortran` compiler/version/global
+configure-flags object. `numerical_target_options`, `cuda_target_options`, and
+`openacc_target_option` separately disclose target options; they do not claim
+to be a complete per-target compile/link transcript. Keep verbose build logs and
+`compile_commands.json` for that inspection. Fortran backend variants start with
+`fortran-`, while target stems remain canonical. Binary, metadata, manifest and
+source hashes follow exactly the existing rules, including dirty-source capture.
 
 Serialize the complete manifest with the deterministic JSON profile and compute
 `executables_manifest_sha256` over those exact bytes. The manifest hash thus

@@ -12,6 +12,14 @@ and timing and schema behavior are in
 [`BENCHMARK_PROTOCOL.md`](BENCHMARK_PROTOCOL.md) and
 [`RESULT_SCHEMA.md`](RESULT_SCHEMA.md).
 
+The default build/command examples below describe C/C++. The added
+[Fortran guide](../nvidia/fortran/README.md) supplies its own compiler/provider
+builds and diagnostic configuration, then reuses this same runtime, validation,
+aggregation and plotting workflow. Keep the source families in separate build
+trees, manifests and runs. Fortran Pegasus builds, GPU checks and production
+measurements are recorded in [the validation report](VALIDATION_REPORT.md#fortran-production-validation);
+they do not establish support for every compiler, GPU or non-PBS environment.
+
 ## Portable layers
 
 - `nvidia/c-cpp/*/examples` contains direct teaching programs with no site

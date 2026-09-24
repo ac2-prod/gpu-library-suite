@@ -250,9 +250,9 @@ class DocumentationTests(unittest.TestCase):
             if versioned.search(path.name)
         ]
         self.assertEqual(bad_paths, [])
-        for relative in (
-            "nvidia/fortran", "amd", "common/fortran", "jobs/furo"
-        ):
+        # NVIDIA/common Fortran are now owner-approved implementations, not
+        # future placeholders. Their source inventory is tested separately.
+        for relative in ("amd", "jobs/furo"):
             self.assertFalse((REPOSITORY_ROOT / relative).exists())
 
     def test_portable_files_have_no_embedded_gpu_architecture(self):

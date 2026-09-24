@@ -166,6 +166,8 @@ def core_raw_parameters(
     result = {
         name: parameters[name] for name in CORE_PARAMETER_KEYS[benchmark]
     }
+    if parameters.get("source_language") == "fortran":
+        result["source_language"] = "fortran"
     for name in ("alpha", "beta"):
         if name in result:
             result[name] = float(result[name])
@@ -252,6 +254,10 @@ def build_schedule(
                     "duplicate benchmark manifest entry: {0}/{1}".format(*key)
                 )
             benchmark_entries[key] = entry
+    for entry in manifest["entries"]:
+        language = "fortran" if entry["compiler_language"] == "fortran" else "c-cpp"
+        if language != config.get("source_language", "c-cpp"):
+            raise RunnerError("configuration and executable source language differ")
     order = tuple(context["implementation_order"])
     schedule = []  # type: List[Dict[str, Any]]
     for benchmark in BENCHMARKS:
@@ -299,6 +305,7 @@ def build_schedule(
                             "scope": scope_name,
                             "scope_settings": dict(scope),
                             "series": dict(series),
+                            "source_language": config.get("source_language", "c-cpp"),
                         }
                     )
     return schedule
@@ -455,20 +462,26 @@ def synthetic_result(
         "status": "failure" if attempted else "skipped",
         "message": message,
     }
+    if item.get("source_language", "c-cpp") == "fortran":
+        record["parameters"]["source_language"] = "fortran"
     return validate_raw_result(record)
 
 
 def expected_raw_parameters(
     benchmark: str, parameters: Mapping[str, Any], implementation: str,
+    source_language: str = "c-cpp",
 ) -> Dict[str, Any]:
     """Reconstruct the exact parameter object a selected executable must emit."""
 
     expected = normalized_parameters(benchmark, parameters)
+    if source_language == "fortran":
+        expected["source_language"] = "fortran"
     if benchmark == "curand":
         expected = dict(expected)
         expected["verification_sample_count"] = expected["size"]
         if implementation == "cpu":
-            expected["cpu_engine"] = "std::mt19937_64"
+            expected["cpu_engine"] = ("Fortran random_number" if source_language == "fortran"
+                                      else "std::mt19937_64")
             expected["distribution_interval"] = "[0,1)"
         else:
             expected["generator_algorithm"] = "CURAND_RNG_PSEUDO_DEFAULT"
@@ -761,7 +774,8 @@ def validate_subprocess_record(
         "problem_size": primary_size,
         "secondary_size": secondary_size,
         "parameters": expected_raw_parameters(
-            benchmark, item["parameters"], series["implementation"]
+            benchmark, item["parameters"], series["implementation"],
+            item.get("source_language", "c-cpp"),
         ),
         "precision": context["config"]["benchmarks"][benchmark]["precision"],
         "warmup": item["scope_settings"]["warmup"],

@@ -2,23 +2,25 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
-cuFFT、cuBLAS、cuSPARSE、cuSOLVER、cuRAND、Thrustを対象とした、移植可能なNVIDIA C/C++教材サンプル、再現可能なCPU/CUDA/OpenACCベンチマーク、厳密な結果処理ツール、Pegasus用ジョブ支援です。
+cuFFT、cuBLAS、cuSPARSE、cuSOLVER、cuRAND、Thrustを対象とした、移植可能なNVIDIA C/C++・Fortran教材サンプル、再現可能なCPU/CUDA/OpenACCベンチマーク、厳密な結果処理ツール、Pegasus用ジョブ支援です。
 
-実装済みのソース範囲は`nvidia/c-cpp`です。AMD、Fortran、その他のシステムへの対応は意図的に今後の対象とし、空の仮実装は置いていません。本プロジェクトは`ac2-prod`で管理しており、HAIRDESCの公式リポジトリではありません。
+ソース範囲は`nvidia/c-cpp`と[NVIDIA Fortran実装](nvidia/fortran/README.ja.md)です。FortranのCPU/CUDA/OpenACCビルド、実機確認、本測定はPegasus上で完了しており、[確認範囲と留保（英語）](docs/VALIDATION_REPORT.md#fortran-production-validation)を記録しています。AMDとその他のシステムへの対応は今後の対象とし、空の仮実装は置いていません。本プロジェクトは`ac2-prod`で管理しており、HAIRDESCの公式リポジトリではありません。
 
-本リポジトリは**Library Edition (NVIDIA GPU, C/C++)**（ライブラリ編（NVIDIA GPU，C/C++））のソースリポジトリです。サンプルを読んだりビルドしたりするために、Pegasusへのアクセスや著者との会話履歴は必要ありません。GPUサンプルの実行には、対応するNVIDIA GPUと以下の依存環境が必要です。
+本リポジトリは**Library Edition (NVIDIA GPU)**（ライブラリ編（NVIDIA GPU））のC/C++版・Fortran版教材のソースリポジトリです。サンプルを読んだりビルドしたりするために、Pegasusへのアクセスや著者との会話履歴は必要ありません。GPUサンプルの実行には、対応するNVIDIA GPUと以下の依存環境が必要です。
 
 <a id="publication-scope"></a>
 
 ## 公開範囲
 
-今回の公開対象は、NVIDIA C/C++の教材・ベンチマークコード、既存の共通コード／ツール、設定、テスト、およびそれらの理解・ビルド・実行・測定に必要な文書です。汎用測定基盤の追加開発は、このコード公開の前提条件ではありません。
+公開対象は、NVIDIA C/C++・Fortranの教材・ベンチマークコード、既存の共通コード／ツール、設定、テスト、およびそれらの理解・ビルド・実行・測定に必要な文書です。汎用測定基盤の追加開発は、このコード公開の前提条件ではありません。両言語ともコードのみの範囲を維持し、本測定が完了していても保存データはcheckoutに含めません。
 
 保存済み測定値、raw結果、実行ログ、メタデータ、作成済みのローカル配布アーカイブは、**今回の公開には含みません**。ソースとともに提供する教材測定データのダウンロード先はありません。[保存データからの再生成手順](docs/PORTABILITY.ja.md#regenerating-the-teaching-figures-from-saved-data)は、その入力を別途保有する読者だけを対象としています。以下の通常の利用手順では、読者自身の測定データを使います。
 
 <a id="start-here"></a>
 
 ## はじめに
+
+Fortranは[コード対応・ビルド・自己測定の案内](nvidia/fortran/README.ja.md)（[English](nvidia/fortran/README.md)）から進めます。以下の入門経路・ソース表・build/config例はC/C++版を対象とし、コンパイラ条件や言語別configをそのままFortranへ流用しません。
 
 CPUのC/C++には慣れていてもCUDAは初めて、という場合は次の順で進めてください。
 
@@ -42,7 +44,7 @@ CPUのC/C++には慣れていてもCUDAは初めて、という場合は次の�
 
 ## 実装済みの内容
 
-各ライブラリには、単一ソースで直接実行できる教材サンプル3本と、測定用ベンチマーク3本があります。CMakeターゲット名と実行ファイル名は、ソースファイル名から拡張子を除いた名前と一致します。
+各C/C++ライブラリには、単一ソースで直接実行できる教材サンプル3本と、測定用ベンチマーク3本があります。CMakeターゲット名と実行ファイル名は、ソースファイル名から拡張子を除いた名前と一致します。
 
 | ライブラリ | CPU | CUDA | OpenACC | CPUベンチマーク | CUDAベンチマーク | OpenACCベンチマーク |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -156,7 +158,8 @@ cuRANDの`cpu-std-random-serial`とThrustの`cpu-stl-serial`はproductionの逐�
 - [`docs/IMPLEMENTATION_PLAN.md`（英語）](docs/IMPLEMENTATION_PLAN.md)：段階ごとの条件と受入基準。
 - [`docs/DECISIONS.md`（英語）](docs/DECISIONS.md)：採用した判断と理由。
 - [`docs/PORTABILITY.ja.md`](docs/PORTABILITY.ja.md)：再利用と依存環境の境界。
-- [`docs/ADDING_A_NEW_VENDOR.md`（英語）](docs/ADDING_A_NEW_VENDOR.md)、[`docs/ADDING_FORTRAN.md`（英語）](docs/ADDING_FORTRAN.md)：将来の拡張ガイド。
+- [`docs/ADDING_A_NEW_VENDOR.md`（英語）](docs/ADDING_A_NEW_VENDOR.md)：将来のvendor拡張ガイド。
+- [`docs/ADDING_FORTRAN.md`（英語）](docs/ADDING_FORTRAN.md)：実装済みFortran統合の要件。
 
 <a id="license"></a>
 

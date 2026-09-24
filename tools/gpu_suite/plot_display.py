@@ -19,6 +19,8 @@ BACKEND_LABELS = {
     "cpu-stl-serial": "STL",
     "cpu-openmp": "OpenMP",
     "cpu-reference": "reference",
+    "cpu-fortran-random-serial": "Fortran random_number",
+    "cpu-fortran-sum-serial": "Fortran sum",
 }
 
 
@@ -137,9 +139,10 @@ def series_display(
     context: Mapping[str, Any],
 ) -> Dict[str, Any]:
     implementation = record["implementation"]
+    language_suffix = " / Fortran" if record.get("parameters", {}).get("source_language") == "fortran" else ""
     if implementation in {"cuda", "openacc"}:
         model = context["gpu_model"]["value"] or "GPU model unknown"
-        return {"label": model + ", " + ("CUDA" if implementation == "cuda" else "OpenACC")}
+        return {"label": model + ", " + ("CUDA" if implementation == "cuda" else "OpenACC") + language_suffix}
     if implementation != "cpu":
         raise ValueError("publication plots accept only CPU, CUDA, and OpenACC")
     backend = record.get("cpu_backend")
@@ -166,7 +169,7 @@ def series_display(
         )
     model = context["cpu_model"]["value"] or "CPU model unknown"
     return {
-        "label": "{0}, {1} ({2})".format(model, BACKEND_LABELS.get(backend, backend), threads),
+        "label": "{0}, {1} ({2}){3}".format(model, BACKEND_LABELS.get(backend, backend), threads, language_suffix),
         "cpu_backend_source": "aggregate-results",
         "cpu_threads": {
             "requested_values": list(requested), "effective_values": list(effective),

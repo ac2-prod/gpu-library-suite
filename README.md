@@ -2,26 +2,31 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
-Portable NVIDIA C/C++ teaching examples, reproducible CPU/CUDA/OpenACC
+Portable NVIDIA C/C++ and Fortran teaching examples, reproducible CPU/CUDA/OpenACC
 benchmarks, strict result tooling, and Pegasus job support for cuFFT, cuBLAS,
 cuSPARSE, cuSOLVER, cuRAND, and Thrust.
 
-The implemented source scope is `nvidia/c-cpp`. AMD, Fortran, and additional
+The source tree includes `nvidia/c-cpp` and the
+[NVIDIA Fortran implementation](nvidia/fortran/README.md). Fortran CPU/CUDA/OpenACC
+builds, real-machine checks and production measurements were completed on Pegasus;
+see the [recorded coverage and limits](docs/VALIDATION_REPORT.md#fortran-production-validation). AMD and additional
 systems are intentionally deferred; the repository does not contain empty
 placeholder implementations for them. The project is maintained under
 `ac2-prod` and is not an official HAIRDESC repository.
 
-This is the source repository for **Library Edition (NVIDIA GPU, C/C++)**
-（ライブラリ編（NVIDIA GPU，C/C++））. You do not need Pegasus access or the
+This is the source repository for the **Library Edition (NVIDIA GPU)**
+C/C++ and Fortran teaching material. You do not need Pegasus access or the
 authors' conversation history to read or build the examples. Running a GPU
 example does require a suitable NVIDIA GPU and the dependencies below.
 
 ## Publication scope
 
-The selected publication scope is the NVIDIA C/C++ teaching and benchmark code,
-its existing common code/tools, configurations and tests, and the documentation
-for understanding, building, running and measuring it. Additional general-purpose
-measurement infrastructure is not a prerequisite for this code publication.
+The publication scope is the NVIDIA C/C++ and Fortran teaching and benchmark
+code, its existing common code/tools, configurations and tests, and the
+documentation for understanding, building, running and measuring it.
+Additional general-purpose measurement infrastructure is not a prerequisite
+for this code publication. Both language editions follow the same code-only
+boundary; completed measurements do not make their saved data part of the checkout.
 
 Saved measurements, raw results, execution logs, metadata and prepared local
 distribution archives are **not included in this publication**. There is no
@@ -31,6 +36,11 @@ is only for readers who separately hold those inputs; the normal route below
 uses the reader's own measurements.
 
 ## Start here
+
+For Fortran, start with the [Fortran source map, build and measurement guide](nvidia/fortran/README.md)
+([日本語](nvidia/fortran/README.ja.md)). The route, source table and build/config
+examples below describe the C/C++ edition; compiler requirements and source-family
+configurations are not interchangeable.
 
 If you know CPU C/C++ but are new to CUDA, follow this route:
 
@@ -66,7 +76,7 @@ If you know CPU C/C++ but are new to CUDA, follow this route:
 
 ## What is implemented
 
-Each library has three direct, single-source teaching examples and three
+Each C/C++ library has three direct, single-source teaching examples and three
 measurement-oriented benchmarks. CMake target names and executable names equal
 their source stems.
 
@@ -278,8 +288,8 @@ distributed with this code publication.
   acceptance criteria.
 - [`docs/DECISIONS.md`](docs/DECISIONS.md): accepted decisions and rationale.
 - [`docs/PORTABILITY.md`](docs/PORTABILITY.md): reuse and dependency boundaries.
-- [`docs/ADDING_A_NEW_VENDOR.md`](docs/ADDING_A_NEW_VENDOR.md) and
-  [`docs/ADDING_FORTRAN.md`](docs/ADDING_FORTRAN.md): deferred extension guides.
+- [`docs/ADDING_A_NEW_VENDOR.md`](docs/ADDING_A_NEW_VENDOR.md): future vendor extension guide.
+- [`docs/ADDING_FORTRAN.md`](docs/ADDING_FORTRAN.md): requirements for the implemented Fortran integration.
 
 ## License
 

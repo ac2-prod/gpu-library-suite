@@ -380,3 +380,287 @@ not newly required work for this code publication. Local tool completion does
 not approve a numerical profile, distribute the saved data or authorize repository
 publication. No additional GPU diagnostic, general-purpose measurement framework
 development or data release is required by the selected code-publication scope.
+
+<a id="fortran-local-validation"></a>
+
+## Fortran source addition: local validation
+
+The following subsections retain the historical local handoff, smoke and
+presurvey states. Current production completion is recorded under
+[Fortran production validation](#fortran-production-validation); later evidence
+does not change what was or was not executed at an earlier stage.
+
+This 2026-09-23 implementation is based on
+`94a8adbc310e158c048a08976a17471331e89d0a`, with uncommitted additions on
+`work/nvidia-fortran`. It adds 18 teaching examples and 18 benchmark entry
+points for six libraries, mathematical helpers, the shared Thrust C++ function,
+optional Fortran CMake targets and language-aware use of the existing tools.
+The [Fortran guide](../nvidia/fortran/README.md) records the extraction pages,
+necessary distribution changes and exact user commands. The reference
+extraction remains unchanged in ignored local inputs; the PPTX was not supplied,
+edited or independently checked. C/C++ computation, existing CPU/GPU build
+settings, stored measurements, teaching figures and LICENSE are unchanged.
+
+The local host has GNU Fortran 16.2.0, Apple Clang 21, CMake 4.4 and Python 3.14.
+It has no NVHPC/CUDA GPU environment or real FFTW3f/oneMKL providers available
+for this check. All new local build/test outputs are under
+`/tmp/gpu-library-suite-local-build`; no provider was installed.
+
+### Executed CPU and tool checks
+
+The CPU-only Fortran build used the following commands, with `gfortran`
+resolving to the installed GNU compiler:
+
+```bash
+cmake -S . -B /tmp/gpu-library-suite-local-build/fortran-cpu \
+  -DGPU_SUITE_SOURCE_LANGUAGE=fortran -DCMAKE_Fortran_COMPILER=gfortran \
+  -DCMAKE_BUILD_TYPE=Release -DGPU_SUITE_BUILD_TESTS=ON \
+  -DGPU_SUITE_BUILD_CUDA=OFF -DGPU_SUITE_BUILD_OPENACC=OFF
+cmake --build /tmp/gpu-library-suite-local-build/fortran-cpu \
+  --target gpu_suite_partial_manifest test_fortran_helpers --parallel 2
+ctest --test-dir /tmp/gpu-library-suite-local-build/fortran-cpu --output-on-failure
+```
+
+Configure and build passed. The intrinsic CPU random/reduction examples and
+benchmarks were enabled; FFTW/oneMKL-dependent targets were disabled with
+provider/interface reasons. No GPU targets were requested. The generated GNU
+Fortran compile flags include `-O3 -fno-fast-math -ffp-contract=off`.
+Both teaching programs were executed at their unchanged 2^24-element defaults
+and reported `verification PASS` with exit 0. Helper tests passed the dense
+known-solution construction, one-based Poisson CSR and boundary cases.
+
+The Fortran CTest profile passed **3/3** gates: helpers, Fortran tools and
+controlled-provider checks. Its default-Python tool run skipped only the
+matplotlib render test; that test was subsequently executed successfully in an
+already existing local plotting environment, without installation. The complete
+Fortran Python suite in that environment passed **11/11**, with no skips:
+
+```bash
+env PYTHONPATH=tools:tests/python \
+  PYTHONPYCACHEPREFIX=/tmp/gpu-library-suite-local-build/fortran-cpu/pycache-reader \
+  MPLCONFIGDIR=/tmp/gpu-library-suite-local-build/fortran-cpu/matplotlib \
+  GPU_SUITE_FORTRAN_BUILD=/tmp/gpu-library-suite-local-build/fortran-cpu \
+  /tmp/gpu-library-suite-local-build/reader-tools-env.iguhdV/bin/python \
+  -m unittest test_fortran -v
+```
+
+The tests exercise intrinsic CPU benchmarks in compute/E2E, JSONL/CSV output,
+warm-up/trial restoration, parameter/backend failures, language-specific
+configuration/manifest/row checks, binary/build hashes, runner failure/skipped
+classification and aggregation. Four external CPU call paths were separately
+compiled and exercised through explicitly synthetic test providers. Their
+matrix/FFT operations test normal results, NaN/+Inf/-Inf propagation, non-square
+DGEMM, one-dimensional Poisson boundaries, solver getrf/getrs info separation,
+FFTW serial/threaded selection and state restoration. Missing-symbol probes,
+unsafe numerical flags and reuse of a different language's build tree are
+negative controls. These fixtures are **not real FFTW/oneMKL ABI or performance
+validation**, and cannot silently replace production backends.
+
+Six synthetic two-panel figures were generated with matplotlib 3.11.2 and all
+six inspected. The CPU/CUDA/OpenACC layout, Fortran labels, intrinsic backend
+names and requested/effective/unknown thread labels were preserved. Deliberately
+equal synthetic series overlap; no speed ranking is inferred. These figures do
+not use saved C/C++ measurements and are not Fortran GPU measurement evidence.
+
+### Existing C/C++ regression
+
+A separate CPU-only default-language tree was configured with
+`CMAKE_Fortran_COMPILER=/nonexistent/fortran-compiler`; configure and build passed
+without enabling Fortran. Its 77 CTest gates initially had 75 passes and two
+failures: a documentation assertion that still forbade all Fortran directories,
+and a runner validation-order regression exposed by an existing duplicate-entry
+test. Both were corrected; their targeted rerun (`python_unittest` and
+`non_git_source_build`) passed 2/2. Thus all 77 gates have passing final results,
+not one original 77/77 run.
+
+The independent existing Python run selected 188 tests, with 182 passes and six
+skips: five Fortran runtime tests require the separate configured Fortran tree
+and were executed there, while one real-`ldd` check requires Linux. Existing
+CPU-provider executable fixtures passed 12/12. The non-Git source-copy build's
+76 internal CTest gates also passed. These checks include the existing strict
+JSON/schema, runner, metadata, aggregation, plot validation and simulated
+PBS/telemetry/failure-collection paths; simulated checks do not constitute site
+execution. Documentation links, Python 3.9 compatibility, shell checks and
+`git diff --check` were included in local validation.
+
+### Not executed; first real-machine gate
+
+This subsection records the local handoff state. The subsequent human-run
+Pegasus evidence and the CPU-engine metadata correction are recorded below;
+they do not turn the earlier static checks into GPU execution evidence.
+
+The NVIDIA 25.11 [Fortran CUDA interfaces](https://docs.nvidia.com/hpc-sdk/archive/25.11/pdf/hpc2511cudaint.pdf),
+[CUDA Fortran guide](https://docs.nvidia.com/hpc-sdk/archive/25.11/compilers/cuda-fortran-prog-guide/index.html)
+and [compiler reference](https://docs.nvidia.com/hpc-sdk/archive/25.11/compilers/hpc-compilers-ref-guide/index.html)
+were checked for library interfaces, typed device-array transfer counts,
+separate-memory build options and numerical flags. This was static documentary
+checking, not NVHPC compile/link or execution. The new Fortran flags do not
+resolve the historical C/C++ FPU-state/numerical-policy limitation above.
+
+Still unexecuted are real FFTW/oneMKL Fortran linkage, NVHPC CPU/CUDA/OpenACC
+compilation, mixed NVCC/Fortran Thrust linkage, all GPU examples/benchmarks,
+compute-sanitizer, rank-local GPU/library identity, MPI propagation, telemetry
+and Pegasus collection for Fortran. The Linux real-`ldd` check also remains
+unexecuted on this Mac. No Fortran performance result or production profile has
+been approved.
+
+The [human-only first validation procedure](PEGASUS_EXECUTION.md#fortran-first-validation)
+uses existing confirmed site configuration and a legitimate GPU allocation:
+new CPU/CUDA and OpenACC trees, 36-entry merged manifest, all 18 teaching
+programs, small cuBLAS CPU/CUDA/OpenACC compute/E2E checks, then a one-node
+six-row PBS smoke with verification and identity/hash/collection checks.
+Only after those checks does the separate small 216-row Fortran pilot provide
+input for the existing six figures. This implementation performs no Pegasus
+connection, scheduler operation, GPU measurement, commit, push or publication.
+
+### Fortran Pegasus evidence and CPU-engine metadata correction
+
+The human-run evidence is retained, unchanged and Git-ignored, under
+`manual-validation/pegasus/fortran.5AhatU/`. Final CPU/CUDA and OpenACC builds
+exited 0; the explicit FFTW prefix resolved the missing CPU FFT targets. The
+final merged manifest contains 36 entries (18 teaching and 18 benchmark).
+All 18 teaching programs passed verification. The separate cuBLAS six-row
+diagnostic passed, and its CUDA/OpenACC memcheck runs both exited 0 with
+`ERROR SUMMARY: 0 errors`. These eight diagnostic rows are not smoke rows.
+
+The one-node job `21154.nqsv` produced 216 Fortran smoke rows: six libraries,
+three cases, two scopes, three implementations and two trials. Every row has
+success status, verification pass and exit code 0. The node runner recorded
+exit 0, and the collector recorded success with no failures. All 21 collected
+artifact sizes and hashes match their saved manifest. The saved config,
+manifest, build/runtime metadata, binary-hash references and source-snapshot
+references agree. Binary files were not rehashed from the Mac. GPU identity and
+CUDA Driver API/runtime records agree with the independent node probe; all GPU
+library versions are recorded in raw rows and agree between CUDA and OpenACC,
+but node metadata does not independently record every library version.
+
+The existing classification was retained. Offline `validate_results.py` passed
+with 216 rows and `aggregate.py` exited 0, saving its outputs in that session's
+`analysis/` directory. The 720 aggregate records contain no failed/skipped
+inputs or exclusions. Of these, 612 report `insufficient_sample_count` because
+their input consists of one block, wave or paired ratio; this is not a
+calculation failure or evidence of production-level statistical coverage.
+
+The original node metadata incorrectly says
+`curand.cpu_engine="std::mt19937_64"`. Its 12 CPU cuRAND raw rows correctly say
+`Fortran random_number`, matching the actual Fortran intrinsic call. The cause
+was a fixed C/C++ engine string in `jobs/pegasus/node_tools.py`, not replacement
+of the Fortran computation by a C++ RNG. The earlier classification and
+validation did not compare this field. Their recorded PASS results and all
+original raw/metadata/artifact/analysis files remain intact, with this
+provenance limitation explicitly attached to their interpretation.
+
+The local correction derives the CPU engine from the validated configuration's
+source language and CPU backend, preserving the C/C++ default and rejecting
+inconsistent language/backend combinations. It does not infer the internal
+algorithm of `random_number` or change the GPU generator. Classification with
+node metadata now rejects CPU cuRAND engine mismatches and missing engine
+identity on successful CPU rows. Failure/skipped rows without a measured
+engine retain their existing classification.
+
+Local regression command:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=tools:tests/python \
+  TMPDIR=/tmp/gpu-library-suite-local-build python3 -B -m unittest \
+  test_pegasus_node_collection test_local_metadata test_pegasus_prepare_render \
+  test_pegasus_runtime_telemetry test_validation test_config -v
+```
+
+Result: 63 tests, 62 passed, one skipped because real Linux `ldd` is unavailable
+on the Mac. Seven added test methods cover C/C++ and Fortran generation and
+matching, mismatch/missing detection, separation from GPU generator identity,
+and preservation of failed/skipped records. An additional local check used
+saved observations as injected inputs, with no hardware probe: the new check
+rejects the unchanged original metadata; metadata generated into a temporary
+directory differs only in the `curand` section and classifies all 216 saved raw
+rows as success/verification pass. This is local producer/checker validation,
+not corrected metadata generated by a new Pegasus job. No teaching, memcheck,
+smoke, GPU build or measurement rerun was performed or required for this fix.
+The documentation checks passed 9/9. A before/after SHA-256 inventory confirmed
+that all 213 files in the saved session, including raw data, metadata, logs and
+the existing validation/aggregation outputs, were unchanged.
+
+Remaining evidence limits are unchanged: scheduler final exit status has not
+been supplied as `scacctreq` evidence and is not inferred from runner or submit
+exit codes; all 216 short trial intervals have zero in-interval telemetry
+samples despite correct timestamp correlation with 45 captured GPU samples;
+and `turbostat` reported that it was unavailable for the running kernel, so
+detailed CPU frequency/power observation is missing. Observed GPU samples show
+no thermal violation, not proof about unsampled trial interiors. The corrected
+producer's actual-job execution remains unverified. Production conditions are
+still a proposal, not an executed Fortran measurement campaign.
+
+### Fortran full-size presurvey evidence
+
+The later human-run job `21639.nqsv`, saved unchanged under the Git-ignored
+`manual-validation/pegasus/fortran-presurvey.tPQsvR/`, completed all 108 rows
+(six libraries, three sizes, CPU/CUDA/OpenACC, two scopes, one trial).
+Every row records success, verification pass and exit code 0. The runner
+recorded exit 0, node status and collector recorded success, and all 21
+collected artifact sizes and hashes match. Config, manifest, runtime and
+run/wave/node/raw identities and all 18 benchmark binary-hash references agree.
+The six CPU cuRAND rows now match the actual-job node metadata's
+`Fortran random_number`; this supersedes the corrected-producer execution
+limit above without changing the earlier smoke originals. Requested CPU
+threads are 48; effective threads remain 48 for FFTW, 1 for the Fortran
+intrinsic baselines and null for unobserved oneMKL values.
+
+The existing classification and collection were reused. Offline validation
+and aggregation both exited 0 into that run's new `analysis/` directory.
+All 720 aggregate records report `insufficient_sample_count`, with no failed
+or skipped inputs: one trial/node/wave does not establish variability.
+The sum of timed intervals is 30.285 seconds; scheduler timestamps span
+138 seconds and its separately reported Elapse is 142 seconds. The final
+scheduler exit code is not saved and is not inferred from submission/runner
+exit codes. There are 129 GPU samples, but 94 of 108 trial intervals contain
+no sample. Observed `tviol` is zero; two nonzero `pviol` samples lie outside
+the recorded trial intervals. Turbostat is unavailable. Independent node
+probes do not cover every library version. Original files were hash-checked
+before and after analysis and preserved. These presurvey rows remain separate
+from production data; five-trial, six-node, two-wave production has not run.
+
+<a id="fortran-production-validation"></a>
+
+### Fortran production validation and figures
+
+The completed Pegasus production campaign measured commit
+`9567d6e9fdd5e2bb9190fb523ca073ca2a68ee1c`. Its retained, non-distributed
+`postprocessing-summary.json` records processing status `pass`, unchanged
+source-snapshot identity and 305 unchanged original files. This summary is
+under the Git-ignored production RUN_DIR, not an input supplied by a checkout.
+The earlier local, teaching-example, memcheck, smoke and presurvey evidence
+above remains separate from this campaign and from CPU CI.
+
+- Each of two waves contains six node blocks and 3240 raw rows: **6480 rows**
+  in total, all `success` and numerical verification `pass`. Each condition
+  has five trials; the campaign contains 12 node/wave blocks on 11 distinct
+  hosts. No smoke, presurvey or C/C++ rows were mixed in.
+- Saved node status, collection, classification and identity/hash checks passed;
+  252 collected artifacts were accounted for. Wave 0 validation was reused,
+  wave 1 and combined validation passed, and aggregation and plotting exited 0.
+- Aggregation produced 2880 records and 108 cross-wave elapsed-time points,
+  without exclusions. The 864 `insufficient_sample_count` records are
+  block-level paired-speedup summaries with one ratio of block medians, not
+  failed timing trials or missing production measurements.
+- Six library figures were generated and visually checked. Their left panel
+  is compute, right panel E2E, and vertical axis elapsed time in milliseconds;
+  values use `elapsed_sec * 1000`, without dividing by repeat again.
+
+The requested CPU thread count was 48. FFTW recorded effective 48, the Fortran
+intrinsic random/sum baselines effective 1, and oneMKL effective counts remain
+null/unobserved. Intrinsic CPU RNG and cuRAND are not equivalent algorithms.
+Independent node probes do not establish every library version; retained raw
+rows record versions and CUDA/OpenACC versions agree within each library.
+
+Both scheduler final exit codes remain unconfirmed; submission/runner status
+is not a substitute. Of 6480 intervals, 5492 contain no telemetry sample.
+There were 79 nonzero GPU `pviol` samples, overlapping 16 trial intervals;
+no rows were removed. No nonzero `tviol` sample was observed, which does not
+prove the state inside unsampled intervals. Turbostat was unavailable in all
+12 blocks, and two waves do not establish broad cross-wave variability.
+
+These are saved real-machine results, not a new GPU run performed for
+publication. Raw data, metadata, logs, analysis outputs and figures are not
+included in this source publication; users follow the existing own-measurement workflow
+to generate their own inputs and figures.

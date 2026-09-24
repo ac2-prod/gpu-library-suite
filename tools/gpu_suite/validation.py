@@ -34,6 +34,8 @@ def _configured_invocations(config: Mapping[str, Any]) -> Dict[Tuple[Any, ...], 
             continue
         for case in definition["cases"]:
             parameters = normalized_parameters(benchmark, case["parameters"])
+            if config.get("source_language", "c-cpp") == "fortran":
+                parameters["source_language"] = "fortran"
             signature = dumps(parameters)
             primary_size, secondary_size = problem_sizes(
                 benchmark, case["parameters"]
@@ -76,6 +78,9 @@ def validate_campaign(
 
     entries = {}
     for entry in manifest["entries"]:
+        language = "fortran" if entry["compiler_language"] == "fortran" else "c-cpp"
+        if language != config.get("source_language", "c-cpp"):
+            raise CampaignValidationError("configuration and manifest source language differ")
         if entry["executable_role"] != "benchmark":
             continue
         key = (entry["library"], entry["implementation"])
