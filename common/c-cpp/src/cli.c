@@ -106,7 +106,9 @@ static const option_definition OPTION_DEFINITIONS[] = {
 
 static const char *const IMPLEMENTATION_ORDERS[] = {
     "cpu,cuda,openacc", "cpu,openacc,cuda", "cuda,cpu,openacc",
-    "cuda,openacc,cpu", "openacc,cpu,cuda", "openacc,cuda,cpu"};
+    "cuda,openacc,cpu", "openacc,cpu,cuda", "openacc,cuda,cpu",
+    "cpu,hip,openmp", "cpu,openmp,hip", "hip,cpu,openmp",
+    "hip,openmp,cpu", "openmp,cpu,hip", "openmp,hip,cpu"};
 
 static void set_error(char *error, size_t error_size, const char *message) {
   if (error != NULL && error_size > 0U) {
@@ -204,20 +206,37 @@ static option_id find_option(const char *name) {
   return OPTION_UNKNOWN;
 }
 
+bool gpu_suite_benchmark_is_amd(gpu_suite_benchmark_kind value) {
+  return value >= GPU_SUITE_BENCHMARK_ROCFFT &&
+         value <= GPU_SUITE_BENCHMARK_ROCTHRUST;
+}
+
 const char *gpu_suite_benchmark_name(gpu_suite_benchmark_kind value) {
   switch (value) {
   case GPU_SUITE_BENCHMARK_CUFFT:
     return "cufft";
+  case GPU_SUITE_BENCHMARK_ROCFFT:
+    return "rocfft";
   case GPU_SUITE_BENCHMARK_CUBLAS:
     return "cublas";
+  case GPU_SUITE_BENCHMARK_ROCBLAS:
+    return "rocblas";
   case GPU_SUITE_BENCHMARK_CUSPARSE:
     return "cusparse";
+  case GPU_SUITE_BENCHMARK_ROCSPARSE:
+    return "rocsparse";
   case GPU_SUITE_BENCHMARK_CUSOLVER:
     return "cusolver";
+  case GPU_SUITE_BENCHMARK_ROCSOLVER:
+    return "rocsolver";
   case GPU_SUITE_BENCHMARK_CURAND:
     return "curand";
+  case GPU_SUITE_BENCHMARK_ROCRAND:
+    return "rocrand";
   case GPU_SUITE_BENCHMARK_THRUST:
     return "thrust";
+  case GPU_SUITE_BENCHMARK_ROCTHRUST:
+    return "rocthrust";
   }
   return "unknown";
 }
@@ -230,6 +249,10 @@ const char *gpu_suite_implementation_name(gpu_suite_implementation value) {
     return "cuda";
   case GPU_SUITE_IMPLEMENTATION_OPENACC:
     return "openacc";
+  case GPU_SUITE_IMPLEMENTATION_HIP:
+    return "hip";
+  case GPU_SUITE_IMPLEMENTATION_OPENMP:
+    return "openmp";
   }
   return "unknown";
 }
@@ -332,7 +355,8 @@ void gpu_suite_options_init(gpu_suite_options *options,
   options->expected_mean = 0.5;
   options->expected_second_central_moment = 1.0 / 12.0;
   (void)snprintf(options->implementation_order,
-                 sizeof(options->implementation_order), "cpu,cuda,openacc");
+                 sizeof(options->implementation_order),
+                 gpu_suite_benchmark_is_amd(benchmark) ? "cpu,hip,openmp" : "cpu,cuda,openacc");
   options->batch = 1U;
   (void)snprintf(options->transform, sizeof(options->transform), "c2c-forward");
   options->alpha = 1.0;
@@ -348,26 +372,32 @@ void gpu_suite_options_init(gpu_suite_options *options,
 
   switch (benchmark) {
   case GPU_SUITE_BENCHMARK_CUFFT:
+  case GPU_SUITE_BENCHMARK_ROCFFT:
     options->abs_tolerance = 1.0e-4;
     options->rel_tolerance = 1.0e-5;
     (void)snprintf(options->cpu_backend, sizeof(options->cpu_backend),
                    "cpu-fftw-threaded");
     break;
   case GPU_SUITE_BENCHMARK_CUBLAS:
+  case GPU_SUITE_BENCHMARK_ROCBLAS:
   case GPU_SUITE_BENCHMARK_CUSPARSE:
+  case GPU_SUITE_BENCHMARK_ROCSPARSE:
     options->beta = 1.0;
     (void)snprintf(options->cpu_backend, sizeof(options->cpu_backend),
                    "cpu-onemkl");
     break;
   case GPU_SUITE_BENCHMARK_CUSOLVER:
+  case GPU_SUITE_BENCHMARK_ROCSOLVER:
     (void)snprintf(options->cpu_backend, sizeof(options->cpu_backend),
                    "cpu-onemkl");
     break;
   case GPU_SUITE_BENCHMARK_CURAND:
+  case GPU_SUITE_BENCHMARK_ROCRAND:
     (void)snprintf(options->cpu_backend, sizeof(options->cpu_backend),
                    "cpu-std-random-serial");
     break;
   case GPU_SUITE_BENCHMARK_THRUST:
+  case GPU_SUITE_BENCHMARK_ROCTHRUST:
     (void)snprintf(options->cpu_backend, sizeof(options->cpu_backend),
                    "cpu-stl-serial");
     break;
@@ -628,6 +658,18 @@ int gpu_suite_options_validate(const gpu_suite_options *options, char *error,
     set_error(error, error_size, "invalid --implementation-order");
     return GPU_SUITE_ERROR_INVALID;
   }
+  if ((gpu_suite_benchmark_is_amd(options->benchmark)) !=
+      (strstr(options->implementation_order, "hip") != NULL) ||
+      (gpu_suite_benchmark_is_amd(options->benchmark) &&
+       options->implementation != GPU_SUITE_IMPLEMENTATION_CPU &&
+       options->implementation != GPU_SUITE_IMPLEMENTATION_HIP &&
+       options->implementation != GPU_SUITE_IMPLEMENTATION_OPENMP) ||
+      (!gpu_suite_benchmark_is_amd(options->benchmark) &&
+       (options->implementation == GPU_SUITE_IMPLEMENTATION_HIP ||
+        options->implementation == GPU_SUITE_IMPLEMENTATION_OPENMP))) {
+    set_error(error, error_size, "benchmark and implementation family differ");
+    return GPU_SUITE_ERROR_INVALID;
+  }
   if (!isfinite(options->abs_tolerance) || options->abs_tolerance < 0.0 ||
       !isfinite(options->rel_tolerance) || options->rel_tolerance < 0.0 ||
       !isfinite(options->sigma_multiplier) ||
@@ -663,6 +705,7 @@ int gpu_suite_options_validate(const gpu_suite_options *options, char *error,
 
   switch (options->benchmark) {
   case GPU_SUITE_BENCHMARK_CUFFT:
+  case GPU_SUITE_BENCHMARK_ROCFFT:
     if (!options->size_set || options->size == 0U || options->batch == 0U ||
         strcmp(options->transform, "c2c-forward") != 0) {
       set_error(error, error_size, "invalid cuFFT options");
@@ -670,6 +713,7 @@ int gpu_suite_options_validate(const gpu_suite_options *options, char *error,
     }
     break;
   case GPU_SUITE_BENCHMARK_CUBLAS:
+  case GPU_SUITE_BENCHMARK_ROCBLAS:
     if (options->size_set &&
         (options->m_set || options->n_set || options->k_set)) {
       set_error(error, error_size,
@@ -679,11 +723,13 @@ int gpu_suite_options_validate(const gpu_suite_options *options, char *error,
     if (!options->size_set &&
         !(options->m_set && options->n_set && options->k_set)) {
       set_error(error, error_size,
-                "cuBLAS requires --size or all of --m, --n, and --k");
+                options->benchmark == GPU_SUITE_BENCHMARK_ROCBLAS
+                    ? "rocBLAS requires --size or all of --m, --n, and --k" : "cuBLAS requires --size or all of --m, --n, and --k");
       return GPU_SUITE_ERROR_INVALID;
     }
     break;
   case GPU_SUITE_BENCHMARK_CUSPARSE:
+  case GPU_SUITE_BENCHMARK_ROCSPARSE:
     if (options->size_set && (options->nx_set || options->ny_set)) {
       set_error(error, error_size,
                 "--size is mutually exclusive with --nx and --ny");
@@ -691,41 +737,50 @@ int gpu_suite_options_validate(const gpu_suite_options *options, char *error,
     }
     if (!options->size_set && !(options->nx_set && options->ny_set)) {
       set_error(error, error_size,
-                "cuSPARSE requires --size or both --nx and --ny");
+                options->benchmark == GPU_SUITE_BENCHMARK_ROCSPARSE
+                    ? "rocSPARSE requires --size or both --nx and --ny" : "cuSPARSE requires --size or both --nx and --ny");
       return GPU_SUITE_ERROR_INVALID;
     }
     if (options->size_set) {
       uint64_t root = integer_square_root(options->size);
       if (root == 0U || root * root != options->size) {
         set_error(error, error_size,
-                  "cuSPARSE --size must be a positive perfect square");
+                  options->benchmark == GPU_SUITE_BENCHMARK_ROCSPARSE
+                    ? "rocSPARSE --size must be a positive perfect square" : "cuSPARSE --size must be a positive perfect square");
         return GPU_SUITE_ERROR_INVALID;
       }
     }
     break;
   case GPU_SUITE_BENCHMARK_CUSOLVER:
+  case GPU_SUITE_BENCHMARK_ROCSOLVER:
     if (!options->size_set || options->size == 0U || options->nrhs == 0U) {
-      set_error(error, error_size, "invalid cuSOLVER dimensions");
+      set_error(error, error_size, options->benchmark == GPU_SUITE_BENCHMARK_ROCSOLVER
+                    ? "invalid rocSOLVER dimensions" : "invalid cuSOLVER dimensions");
       return GPU_SUITE_ERROR_INVALID;
     }
     if (options->repeat != 1) {
-      set_error(error, error_size, "cuSOLVER requires --repeat 1");
+      set_error(error, error_size, options->benchmark == GPU_SUITE_BENCHMARK_ROCSOLVER
+                    ? "rocSOLVER requires --repeat 1" : "cuSOLVER requires --repeat 1");
       return GPU_SUITE_ERROR_INVALID;
     }
     break;
   case GPU_SUITE_BENCHMARK_CURAND:
+  case GPU_SUITE_BENCHMARK_ROCRAND:
     if (!options->size_set || options->size == 0U ||
         strcmp(options->generator, "pseudo-default") != 0 ||
         strcmp(options->distribution, "uniform-double") != 0 ||
         strcmp(options->order, "default") != 0) {
-      set_error(error, error_size, "invalid cuRAND options");
+      set_error(error, error_size, options->benchmark == GPU_SUITE_BENCHMARK_ROCRAND
+                    ? "invalid rocRAND options" : "invalid cuRAND options");
       return GPU_SUITE_ERROR_INVALID;
     }
     break;
   case GPU_SUITE_BENCHMARK_THRUST:
+  case GPU_SUITE_BENCHMARK_ROCTHRUST:
     if (!options->size_set || options->size == 0U ||
         strcmp(options->operation, "transform-reduce-square-sum") != 0) {
-      set_error(error, error_size, "invalid Thrust options");
+      set_error(error, error_size, options->benchmark == GPU_SUITE_BENCHMARK_ROCTHRUST
+                    ? "invalid rocThrust options" : "invalid Thrust options");
       return GPU_SUITE_ERROR_INVALID;
     }
     break;

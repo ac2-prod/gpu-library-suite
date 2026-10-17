@@ -1,5 +1,317 @@
 # Validation report
 
+## AMD rocFFT Sirius baseline
+
+The saved Sirius run `sirius-rocfft-smoke-20261017T062713Z-b29643fc`
+completed as PBS job `45718.pbs`, terminal state `F`, exit status `0`.
+This is an inspection of retained execution evidence, not a new remote run.
+The source snapshot was
+`e3d209963b11f940db580a400aee6cafb2adf6a66f0faabaf4ab7bb4fff000b6`.
+Later edits require their own validation; this evidence does not certify the
+other five AMD libraries or performance at production problem sizes.
+
+All three fresh CPU/HIP/OpenMP builds and teaching examples passed. Four
+separate campaigns (serial and threaded CPU, each in JSONL and CSV) contain
+24 successful verified records each: 96 total, 0 failed or skipped. Across
+formats and campaigns the counts are CPU serial 16, CPU two-thread 16, HIP 32
+and OpenMP 32. Cases used FFT length/batch 32/2 and 256/3, both timing scopes,
+warm-up 1, repeat 2 and trials 2. Maximum reported verification error was zero.
+
+The run used GCC 14.2.1, AOCL 5.1.0 with its OpenMP FFTW provider, ROCm 7.2.0,
+AMD Clang 22 and an allocated MI300A target `gfx942:sramecc+:xnack-`.
+Compiler and module observations belong to that run; portable source does not
+hard-code them. Its recorded operation counts are one SSH, one job submission
+and five job-status queries. No additional remote operation was needed to
+review the mounted logs.
+
+Private local evidence is retained under `runs/<RUN_ID>/` (not published):
+`dispatch-result.json`, `compute/job-summary.json`,
+`compute/source-identity.json`, `compute/profile-status.json`,
+`compute/artifact-sha256.json`, `compute/executables.json`, and each of
+`compute/serial/` and `compute/threaded/` with `raw.jsonl`, `raw.csv`, effective
+configs and validation reports. Historical failed runs remain intact.
+
+The local expansion covers all six AMD teaching and benchmark families.
+Host fixtures check numerical, failure and recording behavior; they are not
+evidence of real ROCm linkage, target offload, or performance. The subsequent
+[complete six-family build](#amd-six-family-build-with-aocl-sparse) establishes
+compile/link evidence at its recorded snapshot. The later
+[focused smoke](#amd-focused-numerical-smoke) provides basic numerical evidence
+for the remaining families. NVIDIA real-machine coexistence and performance
+remain separate gates.
+
+## AMD focused numerical smoke
+
+Retained BLAS run `sirius-blas-smoke-20261017T135452Z-a3697cae`
+(PBS `45771.pbs`, exit 0) passed all three teaching examples and 96 numerical
+records, with zero absolute error. Retained run
+`sirius-amd4-smoke-20261017T141232Z-a3697cae` (PBS `45772.pbs`, state `F`,
+exit 0) passed 12 teaching examples and 384 numerical records: 96 each for
+rocSPARSE, rocSOLVER, rocRAND and rocThrust. CPU, HIP and OpenMP target are
+covered. All recorded teaching/benchmark child exits were zero.
+
+Both jobs used unchanged artifacts from the successful six-family build,
+source snapshot
+`a3697cae2e446a51eec5a6107dedc39caf656fc8158b08e3591c59f0bc1148e6`.
+Sparse and Thrust errors were zero; Solver's maximum relative residual was
+`4.440892098500626e-16` and maximum relative solution error was
+`1.7763568394002505e-15`; RAND passed range and moment checks.
+The private per-run evidence remains under `runs/<RUN_ID>/`, including
+`smoke/summary.json`, child logs, scheduler records and local SSH evidence.
+It is not part of the source commit.
+
+Together with the separate rocFFT baseline, all six AMD families have build
+and basic numerical smoke evidence: 18 teaching examples and 576 numerical
+records across the retained runs. This count combines coverage, not campaigns
+or source provenance. It does not validate later edits or production sizes.
+RAND/Thrust CPU backends are sequential; BLAS/Sparse/Solver effective worker
+counts and complete actual loaded-library identity remain unverified.
+No profiling, additional remote operation or performance measurement is
+implied by this review of saved logs. The current remaining coexistence gate
+is [NVIDIA real-toolchain/GPU validation](#nvidia-coexistence-review-after-amd-addition).
+
+## AMD six-family Sirius build
+
+Retained run `sirius-amd-build-20261017T080308Z-b3d866be` used PBS job
+`45728.pbs`, which finished in state `F` with exit status `1`. Its source
+snapshot was
+`b3d866beae6ae6b1b0e6bf9a9a28d00cb0c2ce5b3c60a0260783203b3a85cc97`.
+The source identity matched at the initial check, before each profile and after
+the build. This was a build-only allocation: no produced teaching or benchmark
+program was run.
+Its recorded operations were one SSH, one submission and 21 status queries.
+Reviewing the retained mounted logs required no additional remote operation.
+
+| Profile | Recorded outcome | Evidence limit |
+| --- | --- | --- |
+| HIP | 12 teaching/benchmark artifacts built and hash-verified | All six families; no execution or numerical verification |
+| OpenMP target | 12 teaching/benchmark artifacts built and hash-verified | Includes the explicit rocThrust HIP wrapper; no offload execution |
+| CPU | Configure succeeded; the BLAS benchmark compile failed | Grouped build stopped before later CPU targets; no CPU partial manifest |
+| CPU Sparse | Two targets disabled for missing production provider | No replacement by a reference provider |
+
+The historical controller summary is retained unchanged: `BUILT=24`,
+`FAILED=10`, `NOT_BUILT_DEPENDENCY=2`. The ten CPU failure labels are coarse
+profile-level results, not ten observed compiler failures. Logs show that
+`blas_cpu` linked, `blas_cpu_bench` failed, and eight subsequent configured CPU
+targets were not reached. The linked teaching binary was not certified by a
+CPU manifest and is not added to the 24 verified artifacts.
+
+Both CPU BLAS targets used strict C17. The benchmark included standard/common
+headers before AOCL's `cblas.h` and failed on `pthread_barrier_t` and
+`pthread_barrierattr_t`; the teaching source and configure probe included the
+provider header first. The project sources and recorded compiler argv supplied
+no early POSIX feature-test define. The installed AOCL header internals
+were not available in the local review.
+AOCL CBLAS/BLIS, LAPACKE/libFLAME and OpenMP FFTW passed their configure API
+link probes. That establishes discovery/link evidence, not ABI, numerical or
+threading correctness. HIP and OpenMP used the recorded GCC 14.2.1/AOCL 5.1.0/
+ROCm 7.2.0 environment, AMD Clang 22 and `gfx942:sramecc+:xnack-`.
+
+Private evidence remains under the run directory: `dispatch-result.json`,
+`amd-build/summary.json`, `amd-build/logs/`, per-profile build metadata and
+manifests, `job.stdout`, `job.stderr`, and `owner-ssh/`. All 24 verified binary
+hashes and all 63 recorded command stdout/stderr hash pairs were checked.
+Local recovery edits made after this run are not covered by that real-build
+evidence. The separately approved follow-up builds are recorded below;
+new-family runtime smoke, final NVIDIA coexistence and performance validation
+remain open.
+
+## AMD CPU recovery and AOCL Sparse follow-up
+
+Retained run `sirius-amd-build-20261017T095316Z-249f96a5` used PBS `45730.pbs`
+and source snapshot
+`249f96a519e58aa8f9d0be8c0d06bfbe91dd67c256a2bb41a99cb3ec7aedcf90`.
+The job finished `F`, exit 1, with **34 BUILT, 2 NOT_BUILT_DEPENDENCY, 0 FAILED**:
+CPU 10, HIP 12 and OpenMP 12. The absent pair was oneMKL Sparse CPU teaching and
+benchmark. CPU BLAS/LAPACKE compiled with the corrected POSIX preambles; later
+independent targets were attempted and separately recorded. The job was build
+only: no generated teaching/benchmark executable or GPU test was run.
+
+All 34 binary hashes, metadata/manifests, 74 controller stdout/stderr pairs and
+25 dispatcher pairs were checked from retained evidence. Source identity and
+Git HEAD were unchanged. The operation counts were one approved SSH, one
+submission and 19 status queries, without retry; SSH exit 2 denotes the
+incomplete 34/36 result, not an authentication failure. The completion marker
+matched this run and remote exit 1. Earlier run logs remain unchanged.
+`amd-build/summary.json` has SHA-256
+`4edd20dbdefcef87f05897245bc77f1eb95e836e10cfb92e8d4ebcd57019bdb4`;
+`dispatch-result.json` has SHA-256
+`510e11a9a68eec37eea69d2d099f87adbe78e70ae81da80282e5e475558da9c3`.
+
+The bounded provider inventory records an AOCL Sparse header and shared/static
+libraries. That supply motivated the subsequent owner-approved **local-only**
+AOCL Sparse backend addition; this inventory alone does not establish that the
+new code compiled or ran on Sirius. Public 5.1 API declarations were reviewed,
+while host fixtures exercise selection, numerical recurrence, lifecycle errors, metadata and
+provenance rejection. Missing dependencies never select a fallback. Explicit
+oneMKL and reference paths remain available. The subsequent build below closes
+the real compile/link gate for its snapshot. Runtime smoke, actual loaded DSO
+identity, worker behavior, final NVIDIA coexistence review and performance
+validation remain open gates.
+
+## AMD six-family build with AOCL Sparse
+
+Retained run `sirius-amd-build-20261017T104351Z-a3697cae` completed as PBS job
+`45731.pbs`, terminal state `F`, exit status `0`, with dispatcher result
+`BUILD_COMPLETE` and SSH exit `0`. Its source snapshot was
+`a3697cae2e446a51eec5a6107dedc39caf656fc8158b08e3591c59f0bc1148e6`.
+The initial source check, each profile's pre-build check and the final check
+all recorded this same hash. This evidence applies to those source bytes;
+later documentation or implementation edits do not change the retained run.
+
+| Profile | Verified artifacts | Coverage |
+| --- | --- | --- |
+| CPU | 12 | Teaching and benchmark artifacts for all six families, including explicit AOCL Sparse |
+| HIP | 12 | Teaching and benchmark artifacts for all six families |
+| OpenMP target | 12 | Teaching and benchmark artifacts for all six families, including the explicit rocThrust HIP wrapper |
+
+All 36 requested slots are `BUILT`, with no failed, unavailable or unattempted
+targets. Saved evidence was checked against all 36 binary hashes, build
+metadata/manifests, 76 controller command stdout/stderr hash pairs and 27
+dispatcher command pairs. The execution used one approved noninteractive SSH,
+one submission and 21 `qstat` calls: one queue query and 20 observations of the
+same job. PBS recorded one execution with reruns disabled. The sole completion
+marker matched this run and exit `0`; the job-body exit was also `0`.
+
+The CPU configuration explicitly selected AOCL Sparse. Its LP64 header/type
+assertions and descriptor/create/hint/optimize/SpMV/destroy/version API
+compile/link probe passed, and both `sparse_cpu` and `sparse_cpu_bench` compiled
+and linked. Their manifests identify `cpu-aocl-sparse` and the `aocl-sparse`
+variant. The configured header and shared-library identities match the earlier
+bounded inventory and are recorded in build metadata. This establishes the
+tested API and LP64 compile/link contract, not loaded-DSO identity or runtime
+ABI behavior. The same allocation used GCC 14.2.1, AOCL 5.1.0, ROCm 7.2.0,
+AMD Clang 22 and the explicit `gfx942:sramecc+:xnack-` target.
+
+Private evidence remains under `runs/<RUN_ID>/`, including
+`amd-build/summary.json`, per-profile manifests and metadata,
+`scheduler-logs/`, `job.stdout`, `job.stderr` and `local-ssh-evidence/review.json`.
+The saved files have these SHA-256 values:
+
+| Evidence | SHA-256 |
+| --- | --- |
+| `amd-build/summary.json` | `efb1c112a1b59856f207d6fba0e6bfb13ed4b0a5069dc4cd5401e6fc35eb3883` |
+| `dispatch-result.json` | `c69ef3918fe023ddf39f926858f5e1625a859cecbf9c0ae3b27da4ab975bf646` |
+| `amd-build/build-cpu/build-metadata.json` | `2a1e0f9eb84c799fd6c45218f4750fc5ec537bfa61f4ca289c96a2098256b01f` |
+| `local-ssh-evidence/review.json` | `47008894ab1ac6b6b86c7f84b61ce496b027de5728ec68ae428db74980c6b1d2` |
+
+This was build-only: produced-program executions and GPU queries were both
+zero. No numerical smoke, loaded-DSO check or CPU worker observation was run.
+The five new families' runtime correctness, current-snapshot all-family smoke,
+final NVIDIA coexistence review and performance evaluation remain unverified.
+The earlier rocFFT 96-case smoke covers its own historical snapshot only.
+Old failed and 34-artifact runs remain intact. This review performed no
+additional SSH, scheduler operation or test execution.
+
+## AMD six-family smoke link evidence failure
+
+Retained run `sirius-amd-smoke-20261017T112314Z-a3697cae` used the preceding
+36 successful build artifacts in PBS job `45734.pbs`. PBS finished in state
+`F`, exit `1`; the dispatcher reported `SMOKE_FAILED` and SSH exit `2`.
+The body exit and both completion markers agree. One noninteractive SSH,
+one submission and four `qstat` calls were used, with no retry.
+
+The controller stopped with `link dependency file must be a regular non-symlink`
+after 13 successful `ldd` commands: the twelve CPU artifacts and the first HIP
+artifact, `blas_gpu_bench`. The native-HIP build retained `link.txt` and its
+successful verbose link command but did not generate `link.d`; the helper
+incorrectly required that depfile for every profile. All twelve HIP targets
+have this evidence shape. CPU and OpenMP depfiles are present. The local fake
+tests had always supplied a depfile and missed this difference.
+
+No teaching or benchmark artifact executed: teaching **0/18**, diagnostic
+rows **0/144**, main smoke rows **0/288**. No GPU program or rebuild ran.
+This is a smoke-harness failure, not an observed numerical failure or an
+authentication error. The preceding compile/link success remains valid at its
+original source identity; runtime correctness remains unverified.
+
+The read-only review checked 49 existing evidence files, command-stream hashes,
+and terminal proof consistency. Original bytes were preserved. Private evidence
+is under the run's `smoke/summary.json`, `dispatch-result.json`,
+`scheduler-logs/` and `local-ssh-evidence/`. The summary SHA-256 is
+`b6ac5603e3052d43f294ac0fefccbf4805ace239a7fb23bd8e8396de63ceb662`;
+the review SHA-256 is
+`f96927d72a226113c03c31e48b9af72d8e377f17ab7fcc8c6abfd72a100162b7`.
+Subsequent local repair must retain this failed run and require a new approval
+before another allocated smoke attempt.
+
+The local repair adds explicit native-HIP command evidence, retaining CPU and
+OpenMP depfile checks and per-child library identity checks. A fresh read-only
+source proof verified all 36 retained artifacts and 265 evidence files:
+24 CPU/OpenMP depfiles and 12 HIP commands bound to their successful target logs.
+This check uses the existing mounted files and the original source snapshot;
+it does not execute a binary or inspect Sirius's live external library files.
+The selected library paths and hashes are rechecked in the allocated job before
+any child command. No new real smoke result is claimed by the local repair.
+
+### AMD OpenMP temporary-object evidence failure
+
+The next approved attempt, `sirius-amd-smoke-20261017T115800Z-a3697cae`,
+submitted job `45744.pbs`. PBS confirmed `F`, `Exit_status=1`, one execution
+and no rerun. The dispatcher returned `SMOKE_FAILED` (SSH exit 2), with one
+SSH process, one submission and five `qstat` calls. The expected completion
+marker uniquely recorded exit 1. No retry occurred.
+
+This attempt stopped in the all-artifact link preflight with `commands=[]`:
+teaching **0/18**, diagnostic **0/144**, main rows **0/288**, no `ldd`, no
+benchmark/GPU artifact execution and no rebuild. OpenMP's successful build
+depfile lists a temporary image-wrapper `.o` that no longer exists. The parser
+incorrectly required every absolute prerequisite to remain present. The saved
+build log still proves successful linking; the failure does not demonstrate an
+AMD numerical defect. The source-only local proof had checked depfile bytes
+and hashes, not the live prerequisites, and did not catch this assumption.
+
+The read-only review verified 32 payload/evidence/log identities. Original
+records remain under that run's `dispatch-result.json`, `smoke/summary.json`,
+`scheduler-logs/` and `local-ssh-evidence/`. The summary SHA-256 is
+`a9c4e9517317238bfd4344aaec520a140a5e2906845fe3eef8f4c271edb33e41`;
+the review SHA-256 is
+`1a2eeb0676a65f2a0acda84a314ea58d072adbb81d40a245e6e3a45b9fbd92d8`.
+
+The local correction separates historical object tokens from current
+library/archive/script evidence, retaining strict configured-library and
+loaded-library hash checks. Local fake files and replayed depfile syntax do
+not establish live external dependencies or actual loader-trace compatibility.
+All six-family numerical results remain pending a new approved allocated run.
+
+### AMD loader-finalization evidence failure
+
+Run `sirius-amd-smoke-20261017T125733Z-a3697cae`, PBS job `45759.pbs`,
+finished in state `F` with exit 1, one execution and reruns disabled. The
+dispatcher reported `SMOKE_FAILED`; SSH exited 2. One SSH process, one
+submission and six `qstat` calls were used without retry. Both completion
+markers agreed with the body and scheduler exit.
+
+All 36 retained artifacts passed link-evidence preflight and `ldd` resolution.
+The first teaching example, CPU BLAS, exited zero and printed maximum error
+zero. Its subsequent trace check failed with
+`incomplete loader lifecycle or object finalization`. The trace contains five
+DSO initialization events but no corresponding finalization events for the
+loader and libc; program initialization, control transfer and main finalization
+are present. Requiring every initialized DSO to emit finalization was an
+incorrect harness assumption. This is not evidence of numerical failure or
+proof that the log was truncated. Upstream glibc has implementations which
+emit finalization messages only when destructor entries exist; the saved log
+does not itself establish Sirius's patched libc source or ELF destructor tags.
+
+Teaching execution was **1/18**, with that example's loader-evidence validation
+incomplete. The remaining 17 examples, diagnostic **0/144** and main **0/288**
+rows were unexecuted; no benchmark or GPU artifact ran and no rebuild occurred.
+The read-only review verified 155 evidence identities and preserved the
+preceding run's 32 recorded identities. Private evidence remains in the run's
+`smoke/`, `scheduler-logs/` and `local-ssh-evidence/` directories. The summary
+SHA-256 is
+`977df6e31292256860a14b62ffb150a895b4d931814c8d17cf57bc5e2694ffa0`;
+the review SHA-256 is
+`4e36edb45d393e3a94fff9e38d1faec0ce0ec456ad313b17fba5341616d6db0b`.
+
+The local correction records unmatched initialization events without inventing
+finalizers or excluding named system libraries. It retains the separate owned
+child exit/timeout gate, numerical gate and exact binary/provider/link checks.
+Local trace replay and fake files cannot establish six-family GPU correctness,
+all future trace grammar or CPU worker counts. No failed run is rewritten and
+the runtime gate remains open.
+
 ## Scope and evidence boundary
 
 This report records local implementation validation performed on 2026-07-14.
@@ -664,3 +976,63 @@ These are saved real-machine results, not a new GPU run performed for
 publication. Raw data, metadata, logs, analysis outputs and figures are not
 included in this source publication; users follow the existing own-measurement workflow
 to generate their own inputs and figures.
+
+### NVIDIA coexistence review after AMD addition
+
+The local review compared the AMD changes with the existing NVIDIA C/C++ and
+Fortran paths: CMake vendor/language selection, common CLI/result handling,
+shared FFT code, configuration, manifests, scheduling, validation, aggregation
+and plot labels. NVIDIA's default profile and metadata format are retained;
+the existing benchmark/implementation enum values used by the Fortran bridge
+are unchanged. The shared FFT retains NVIDIA's original compute timing branch.
+No regression requiring a code fix was found within this review's scope.
+
+Validation was deliberately limited to six existing Python tests: optional and
+strict language configuration, language-separated aggregation, Fortran intrinsic
+RNG identity, six-family Fortran plot labels, deterministic runner dry-run, and
+rejection of mismatched effective CPU thread counts. All six passed. Two fresh
+Mac-local CPU build trees then built only NVIDIA C/C++ `fft_cpu_bench` using
+the existing synthetic FFTW provider and NVIDIA Fortran `rand_cpu_bench` using
+GNU Fortran. FFT serial/compute, FFT threaded/end-to-end and Fortran RNG each
+produced one schema-valid, numerically passing record. Both metadata documents
+retained the NVIDIA schema, and neither compile inventory selected AMD/HIP
+sources. The synthetic FFTW check is not evidence about a real FFTW installation.
+
+No full local suite, CUDA/NVHPC build, GPU execution, SSH, scheduler operation
+or Git publication was performed. CUDA/OpenACC C/C++ and Fortran execution on
+Pegasus remains a separately approved real-machine check; this local review
+does not revalidate those GPU binaries. Existing AMD/Sirius and NVIDIA/Pegasus
+run records were preserved unchanged.
+
+The focused follow-up reused existing regression tests instead of rerunning
+the full suite. Ten Python tests passed for the legacy example manifest,
+JSONL/CSV records and CSV header, exact pilot/benchmark record matrices,
+wave-level aggregation, configured primary CPU pairing, six-family plot series,
+seconds-to-milliseconds rendering, and Thrust version mismatch rejection.
+CTest's selected inventory was checked to contain exactly eight tests before
+execution; all eight passed with no skips: CLI and C++ compatibility, plus the
+six-test oneMKL fixture configure/build/manifest/BLAS/Sparse/Solver chain.
+
+The existing GNU Fortran controlled-provider check also passed. It built the
+six CPU benchmark targets, exercised FFT/BLAS/Sparse/Solver through the shared
+C++ bridge, and retained the existing thread, nonfinite/error and dependency
+checks. These providers are synthetic, not real oneMKL/FFTW performance or
+thread-count evidence. The C/C++ fixture manifest contained all ten expected
+targets (FFTW was deliberately disabled in that fixture); the Fortran manifest
+contained all six expected benchmarks. Both fresh configurations used ordinary
+local compilers without ROCm/AOCL environment hints. Their NVIDIA/Fortran
+production compile commands contained no AMD compiler/library paths or
+AOCL-specific POSIX definition. No compiler was changed within an existing tree.
+
+The unchanged Fortran Thrust sources and CMake path were explicitly reviewed:
+the canonical `thrust_wrapper.cu` remains an input to both GPU teaching and
+benchmark targets, with matching `bind(C)`/`extern "C"` entry points and explicit
+C++ runtime linking. This is source-level evidence only; the NVHPC/NVCC mixed
+link and CUDA/OpenACC GPU smoke still require a separately approved Pegasus
+check. No new regression tests or implementation changes were needed.
+
+The coexistence checks do not resolve the AMD CPU parallelism or loaded-library
+provenance limitations: RAND/Thrust CPU backends remain sequential;
+BLAS/Sparse/Solver effective thread counts and complete actual loaded-library
+identity remain unverified. No diagnostic campaign or performance rerun was
+added, and no additional remote operation was performed.

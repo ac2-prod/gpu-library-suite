@@ -5,6 +5,9 @@
 #if defined(GPU_SUITE_HAVE_CUDA_RUNTIME_METADATA)
 #include "gpu_suite/cuda_metadata.hpp"
 #endif
+#if defined(GPU_SUITE_HAVE_HIP_RUNTIME_METADATA)
+#include "gpu_suite/hip_metadata.hpp"
+#endif
 
 #include <cstdio>
 
@@ -70,7 +73,9 @@ private:
 };
 
 inline bool initialize_result(gpu_suite_result &result,
-                              const gpu_suite_options &options, int trial) {
+                              const gpu_suite_options &options, int trial,
+                              bool measured = true) {
+  (void)measured;
   char error[256] = {0};
   if (gpu_suite_result_init(&result) != GPU_SUITE_OK) {
     std::fprintf(stderr, "could not initialize result: %s\n", error);
@@ -91,6 +96,14 @@ inline bool initialize_result(gpu_suite_result &result,
     return false;
   }
 #endif
+#if defined(GPU_SUITE_HAVE_HIP_RUNTIME_METADATA)
+  if (measured && options.implementation != GPU_SUITE_IMPLEMENTATION_CPU &&
+      !apply_hip_runtime_metadata(result, options.device)) {
+    gpu_suite_result_destroy(&result);
+    std::fprintf(stderr, "could not query HIP device/library metadata\n");
+    return false;
+  }
+#endif
   return true;
 }
 
@@ -100,7 +113,7 @@ inline bool emit_unmeasured(ResultWriter &writer,
                             const char *message) {
   for (int trial = first_trial; trial < options.trials; ++trial) {
     gpu_suite_result result;
-    if (!initialize_result(result, options, trial)) {
+    if (!initialize_result(result, options, trial, false)) {
       return false;
     }
     result.attempted = trial == first_trial ? attempted : false;

@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from .config import BENCHMARKS
+from .config import SUPPORTED_BENCHMARKS
+from .families import AMD_BENCHMARKS, AMD_COUNTERPARTS
+from .fftw_metadata import validate_fftw_threading
 from .hashing import sha256_bytes, sha256_file
 from .manifest import merge_entries, validate_build_metadata
 from .ordering import permutation_index, size_order_index
@@ -19,8 +21,13 @@ from .strict_json import dump_bytes, dumps, load
 
 
 ZERO_SHA256 = "0" * 64
+AOCL_SPARSE_ENVIRONMENT_KEYS = (
+    "AOCLSPARSE_NUM_THREADS", "OMP_NUM_THREADS", "OMP_DYNAMIC",
+    "AOCL_ENABLE_INSTRUCTIONS",
+)
 STEMS = {
     "cufft": "fft",
+    "rocfft": "fft",
     "cublas": "blas",
     "cusparse": "sparse",
     "cusolver": "solver",
@@ -29,6 +36,7 @@ STEMS = {
 }
 CORE_PARAMETER_KEYS = {
     "cufft": ("nfft", "batch", "transform"),
+    "rocfft": ("nfft", "batch", "transform"),
     "cublas": ("m", "n", "k", "alpha", "beta"),
     "cusparse": ("nx", "ny", "alpha", "beta"),
     "cusolver": ("n", "nrhs"),
@@ -37,14 +45,54 @@ CORE_PARAMETER_KEYS = {
 }
 
 
+for _amd, _counterpart in AMD_COUNTERPARTS.items():
+    STEMS[_amd] = STEMS[_counterpart]
+    CORE_PARAMETER_KEYS[_amd] = CORE_PARAMETER_KEYS[_counterpart]
+
+
 class RunnerError(ValueError):
     pass
+
+
+def cpu_threads_effective_matches(
+    record: Mapping[str, Any], series: Mapping[str, Any],
+) -> bool:
+    """An unspecified AMD count permits observation, not fabricated parallelism."""
+    actual = record["cpu_threads_effective"]
+    expected = series["cpu_threads_effective"]
+    if record["benchmark"] not in AMD_BENCHMARKS or record["implementation"] != "cpu":
+        return actual == expected
+    if record["cpu_parallelism"] == "serial" and actual is not None and actual != 1:
+        return False
+    if record["status"] == "success":
+        if record["benchmark"] in {"rocrand", "rocthrust"} and record["cpu_parallelism"] == "serial":
+            if actual != 1:
+                return False
+        if record["benchmark"] == "rocthrust" and record["cpu_backend"] == "cpu-openmp":
+            if actual != record["cpu_threads_requested"]:
+                return False
+    return expected is None or actual == expected
 
 
 def utc_timestamp() -> str:
     now = datetime.now(timezone.utc)
     milliseconds = now.microsecond // 1000
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + "{0:03d}Z".format(milliseconds)
+
+
+def aocl_sparse_environment_overrides(
+    item: Mapping[str, Any], context: Mapping[str, Any],
+) -> Dict[str, str]:
+    """Only the explicitly selected AOCL CPU series owns these launch controls."""
+    if (item["benchmark"] != "rocsparse"
+            or item["series"]["implementation"] != "cpu"
+            or item["series"]["cpu_backend"] != "cpu-aocl-sparse"):
+        return {}
+    threads = context["cpu_threads"]
+    if type(threads) is not int or threads < 1:
+        raise RunnerError("AOCL Sparse requires a positive requested thread count")
+    return {"AOCLSPARSE_NUM_THREADS": str(threads), "OMP_NUM_THREADS": str(threads),
+            "OMP_DYNAMIC": "FALSE"}
 
 
 def validate_sha256(value: str, name: str) -> str:
@@ -99,15 +147,97 @@ def load_build_metadata(paths: Sequence[Path]) -> Dict[str, Dict[str, Any]]:
     return metadata_by_hash
 
 
+def _amd_dependency_names(entry: Mapping[str, Any]) -> set:
+    library = entry["library"]
+    if entry["implementation"] != "cpu":
+        names = {"hip", library}
+        if library == "rocsolver":
+            names.add("rocblas")
+        if library == "rocthrust":
+            names.add("rocprim")
+        return names
+    if library == "rocfft":
+        return {"fftw3f"}
+    if library == "rocblas":
+        return {"cblas"}
+    if library == "rocsolver":
+        return {"lapacke"}
+    if library == "rocsparse" and "cpu-onemkl" in entry["supported_cpu_backends"]:
+        return {"mkl_sparse"}
+    if library == "rocsparse" and "cpu-aocl-sparse" in entry["supported_cpu_backends"]:
+        return {"aocl_sparse", "aocl_sparse_header"}
+    return set()
+
+
+def _validate_amd_dependencies(entry: Mapping[str, Any], metadata: Mapping[str, Any]) -> None:
+    if entry["library"] not in AMD_BENCHMARKS:
+        return
+    dependencies = metadata.get("dependencies")
+    required = _amd_dependency_names(entry)
+    if metadata.get("vendor") != "amd" or not isinstance(dependencies, Mapping) or not required.issubset(dependencies):
+        raise RunnerError("AMD build metadata lacks resolved dependencies")
+    if entry["implementation"] == "cpu" and entry["library"] == "rocfft":
+        try:
+            validate_fftw_threading(metadata, "cpu-fftw-threaded" in entry["supported_cpu_backends"])
+        except ValueError as error:
+            raise RunnerError(str(error)) from error
+    if "aocl_sparse" in required:
+        inputs = metadata.get("amd_build_inputs", {})
+        if not isinstance(inputs, Mapping) or inputs.get("GPU_SUITE_CPU_SPARSE_BACKEND") != "AOCLSPARSE":
+            raise RunnerError("AOCL Sparse metadata backend differs from artifact")
+        include = inputs.get("AOCLSparse_INTERFACE_INCLUDE_DIRECTORIES")
+        header = dependencies["aocl_sparse_header"]
+        if (not isinstance(include, str) or not Path(include).is_absolute()
+                or not isinstance(header, Mapping)
+                or str((Path(include) / "aoclsparse.h").resolve()) != header.get("path")):
+            raise RunnerError("AOCL Sparse selected header identity mismatch")
+        links = inputs.get("AOCLSparse_INTERFACE_LINK_LIBRARIES")
+        if not isinstance(links, str) or not links:
+            raise RunnerError("AOCL Sparse metadata lacks ordered link inputs")
+        paths = links.split(";")
+        if not Path(paths[0]).is_absolute() or any(
+                not Path(path).is_absolute() and path not in {"", "Threads::Threads", "dl", "m"}
+                for path in paths):
+            raise RunnerError("AOCL Sparse metadata contains unresolved provider link inputs")
+        file_inputs = [(index, path) for index, path in enumerate(paths) if Path(path).is_absolute()]
+        expected = {"aocl_sparse" if index == 0 else "aocl_sparse_link_" + str(index)
+                    for index, _ in file_inputs}
+        actual = {name for name in dependencies
+                  if name == "aocl_sparse" or name.startswith("aocl_sparse_link_")}
+        if actual != expected:
+            raise RunnerError("AOCL Sparse ordered link dependency identities differ")
+        for index, path in file_inputs:
+            name = "aocl_sparse" if index == 0 else "aocl_sparse_link_" + str(index)
+            identity = dependencies[name]
+            if (not Path(path).is_absolute() or not isinstance(identity, Mapping)
+                    or str(Path(path).resolve()) != identity.get("path")):
+                raise RunnerError("AOCL Sparse ordered link input mismatch: " + name)
+    for name, identity in dependencies.items():
+        if not isinstance(identity, Mapping) or set(identity) != {"path", "sha256"}:
+            raise RunnerError("invalid resolved dependency identity: " + name)
+        if not isinstance(identity["path"], str) or not isinstance(identity["sha256"], str):
+            raise RunnerError("invalid resolved dependency value: " + name)
+        path = Path(identity["path"])
+        if not path.is_absolute() or not path.is_file() or sha256_file(path) != identity["sha256"]:
+            raise RunnerError("resolved dependency changed since configure: " + name)
+
+
 def validate_manifest_artifacts(
     manifest: Mapping[str, Any], metadata_by_hash: Mapping[str, Mapping[str, Any]],
     run_mode: str, dirty_hash_available: bool,
 ) -> None:
+    amd_gpu_dependencies = {}
     for entry in manifest["entries"]:
         metadata = metadata_by_hash.get(entry["build_metadata_sha256"])
         if metadata is None:
             raise RunnerError("manifest entry has no supplied build metadata")
         validate_build_metadata(entry, metadata)
+        _validate_amd_dependencies(entry, metadata)
+        if entry["library"] in AMD_BENCHMARKS and entry["implementation"] in {"hip", "openmp"}:
+            for name in _amd_dependency_names(entry):
+                identity = metadata["dependencies"][name]
+                if amd_gpu_dependencies.setdefault(name, identity) != identity:
+                    raise RunnerError("HIP/OpenMP resolved dependency identities differ: " + name)
         path = Path(entry["executable_path"])
         if not path.is_file():
             raise RunnerError("manifest executable does not exist: {0}".format(path))
@@ -124,13 +254,13 @@ def validate_manifest_artifacts(
 
 
 def normalized_parameters(benchmark: str, parameters: Mapping[str, Any]) -> Dict[str, Any]:
-    if benchmark == "cufft":
+    if benchmark in {"cufft", "rocfft"}:
         return {
             "nfft": parameters["nfft"],
             "batch": parameters["batch"],
             "transform": parameters["transform"],
         }
-    if benchmark == "cublas":
+    if benchmark in {"cublas", "rocblas"}:
         return {
             "m": parameters["size"],
             "n": parameters["size"],
@@ -138,7 +268,7 @@ def normalized_parameters(benchmark: str, parameters: Mapping[str, Any]) -> Dict
             "alpha": float(parameters["alpha"]),
             "beta": float(parameters["beta"]),
         }
-    if benchmark == "cusparse":
+    if benchmark in {"cusparse", "rocsparse"}:
         side = math.isqrt(parameters["size"])
         return {
             "nx": side,
@@ -146,7 +276,7 @@ def normalized_parameters(benchmark: str, parameters: Mapping[str, Any]) -> Dict
             "alpha": float(parameters["alpha"]),
             "beta": float(parameters["beta"]),
         }
-    if benchmark == "cusolver":
+    if benchmark in {"cusolver", "rocsolver"}:
         return {"n": parameters["size"], "nrhs": parameters["nrhs"]}
     return dict(parameters)
 
@@ -175,13 +305,13 @@ def core_raw_parameters(
 
 
 def problem_sizes(benchmark: str, parameters: Mapping[str, Any]) -> Tuple[int, Optional[int]]:
-    if benchmark == "cufft":
+    if benchmark in {"cufft", "rocfft"}:
         return parameters["nfft"], parameters["batch"]
-    if benchmark == "cusparse":
+    if benchmark in {"cusparse", "rocsparse"}:
         side = math.isqrt(parameters["size"])
         nnz = 5 * parameters["size"] - 4 * side
         return parameters["size"], nnz
-    if benchmark == "cusolver":
+    if benchmark in {"cusolver", "rocsolver"}:
         return parameters["size"], parameters["nrhs"]
     return parameters["size"], None
 
@@ -200,7 +330,7 @@ def build_command(
     context: Mapping[str, Any], verification: Mapping[str, Any], output_format: str,
 ) -> List[str]:
     arguments = [entry["executable_path"]]
-    if benchmark == "cufft":
+    if benchmark in {"cufft", "rocfft"}:
         _option(arguments, "--size", parameters["nfft"])
         _option(arguments, "--batch", parameters["batch"])
         _option(arguments, "--transform", parameters["transform"])
@@ -258,9 +388,25 @@ def build_schedule(
         language = "fortran" if entry["compiler_language"] == "fortran" else "c-cpp"
         if language != config.get("source_language", "c-cpp"):
             raise RunnerError("configuration and executable source language differ")
+    # An unavailable executable still belongs to the campaign's source. Only
+    # use unanimous source evidence from its selected benchmark artifacts;
+    # compiler, binary and build identities remain specific to each artifact.
+    rocfft_source = None
+    if config.get("vendor") == "amd":
+        for (library, _), entry in benchmark_entries.items():
+            if library not in AMD_BENCHMARKS or not config["benchmarks"].get(library, {}).get("enabled"):
+                continue
+            source = {name: entry[name] for name in
+                      ("git_metadata_available", "git_commit", "git_dirty")}
+            if rocfft_source is None:
+                rocfft_source = source
+            elif source != rocfft_source:
+                raise RunnerError("mixed AMD source provenance in manifest")
     order = tuple(context["implementation_order"])
     schedule = []  # type: List[Dict[str, Any]]
-    for benchmark in BENCHMARKS:
+    for benchmark in SUPPORTED_BENCHMARKS:
+        if benchmark not in config["benchmarks"]:
+            continue
         definition = config["benchmarks"][benchmark]
         if not definition["enabled"]:
             continue
@@ -293,21 +439,22 @@ def build_schedule(
                             scope, series, context, definition["verification"],
                             config["output_format"],
                         )
-                    schedule.append(
-                        {
-                            "artifact_id": None if entry is None else entry["artifact_id"],
-                            "argv": command,
-                            "benchmark": benchmark,
-                            "case_index": case_index,
-                            "entry": entry,
-                            "parameters": dict(case["parameters"]),
-                            "prerequisite_failure": reason,
-                            "scope": scope_name,
-                            "scope_settings": dict(scope),
-                            "series": dict(series),
-                            "source_language": config.get("source_language", "c-cpp"),
-                        }
-                    )
+                    item = {
+                        "artifact_id": None if entry is None else entry["artifact_id"],
+                        "argv": command,
+                        "benchmark": benchmark,
+                        "case_index": case_index,
+                        "entry": entry,
+                        "parameters": dict(case["parameters"]),
+                        "prerequisite_failure": reason,
+                        "scope": scope_name,
+                        "scope_settings": dict(scope),
+                        "series": dict(series),
+                        "source_language": config.get("source_language", "c-cpp"),
+                    }
+                    if benchmark in AMD_BENCHMARKS and entry is None and rocfft_source is not None:
+                        item["campaign_source_provenance"] = dict(rocfft_source)
+                    schedule.append(item)
     return schedule
 
 
@@ -333,6 +480,10 @@ def dry_run_document(
                 "series": item["series"],
             }
         )
+        overrides = aocl_sparse_environment_overrides(item, context)
+        if overrides:
+            commands[-1]["environment_overrides"] = overrides
+            commands[-1]["inherited_aocl_enable_instructions"] = os.environ.get("AOCL_ENABLE_INSTRUCTIONS")
     return {
         "commands": commands,
         "config": config,
@@ -382,9 +533,10 @@ def synthetic_result(
             "global_configure_flags": "",
         }
         binary_sha256 = ZERO_SHA256
-        git_metadata_available = False
-        git_commit = None
-        git_dirty = None
+        source = item.get("campaign_source_provenance") or {}
+        git_metadata_available = source.get("git_metadata_available", False)
+        git_commit = source.get("git_commit")
+        git_dirty = source.get("git_dirty")
     else:
         compiler = _metadata_for_entry(entry, metadata_by_hash)
         binary_sha256 = entry["binary_sha256"]
@@ -462,6 +614,13 @@ def synthetic_result(
         "status": "failure" if attempted else "skipped",
         "message": message,
     }
+    if benchmark in AMD_BENCHMARKS and entry is not None:
+        record["parameters"]["runtime"] = {"build_metadata_sha256": entry["build_metadata_sha256"]}
+        if "aocl_sparse_environment" in item:
+            # The child was launched with these controls even if it produced no
+            # usable records. Prelaunch prerequisite items have no such evidence.
+            record["parameters"]["runtime"]["aocl_sparse_environment"] = dict(
+                item["aocl_sparse_environment"])
     if item.get("source_language", "c-cpp") == "fortran":
         record["parameters"]["source_language"] = "fortran"
     return validate_raw_result(record)
@@ -476,7 +635,7 @@ def expected_raw_parameters(
     expected = normalized_parameters(benchmark, parameters)
     if source_language == "fortran":
         expected["source_language"] = "fortran"
-    if benchmark == "curand":
+    if benchmark in {"curand", "rocrand"}:
         expected = dict(expected)
         expected["verification_sample_count"] = expected["size"]
         if implementation == "cpu":
@@ -484,7 +643,7 @@ def expected_raw_parameters(
                                       else "std::mt19937_64")
             expected["distribution_interval"] = "[0,1)"
         else:
-            expected["generator_algorithm"] = "CURAND_RNG_PSEUDO_DEFAULT"
+            expected["generator_algorithm"] = "ROCRAND_RNG_PSEUDO_DEFAULT" if benchmark == "rocrand" else "CURAND_RNG_PSEUDO_DEFAULT"
             expected["distribution_interval"] = "(0,1]"
     return expected
 
@@ -508,7 +667,7 @@ def _expected_verification(
     verification = context["config"]["benchmarks"][benchmark]["verification"]
     repeat = item["scope_settings"]["repeat"]
     updates = repeat if item["scope"] == "compute" else 1
-    if benchmark == "cufft":
+    if benchmark in {"cufft", "rocfft"}:
         return (
             {
                 "dc_relative_error": {
@@ -523,7 +682,7 @@ def _expected_verification(
             ("dc_relative_error", "non_dc_max_abs_error"),
             "non_dc_max_abs_error",
         )
-    if benchmark == "cublas":
+    if benchmark in {"cublas", "rocblas"}:
         expected = 1.0
         for _ in range(updates):
             expected = (
@@ -535,7 +694,7 @@ def _expected_verification(
             ("max_abs_error",),
             "max_abs_error",
         )
-    if benchmark == "cusparse":
+    if benchmark in {"cusparse", "rocsparse"}:
         def neighbor_contributions(length: int) -> Tuple[int, ...]:
             if length == 1:
                 return (0,)
@@ -568,7 +727,7 @@ def _expected_verification(
             ("max_abs_error",),
             "max_abs_error",
         )
-    if benchmark == "cusolver":
+    if benchmark in {"cusolver", "rocsolver"}:
         threshold = _absolute_plus_relative(1.0, verification)
         return (
             {
@@ -578,7 +737,7 @@ def _expected_verification(
             ("solution_relative_error", "relative_residual"),
             "relative_residual",
         )
-    if benchmark == "curand":
+    if benchmark in {"curand", "rocrand"}:
         count = float(parameters["size"])
         sigma = verification["sigma_multiplier"]
         interval = (
@@ -615,7 +774,7 @@ def _expected_verification(
             ),
             "sample_mean",
         )
-    if benchmark == "thrust":
+    if benchmark in {"thrust", "rocthrust"}:
         return (
             {
                 "absolute_error": _absolute_plus_relative(
@@ -664,27 +823,27 @@ def _validate_exact_config_threshold_operands(
     actual = validated["verification_thresholds"]
     verification = context["config"]["benchmarks"][benchmark]["verification"]
     operands = []  # type: List[Tuple[str, str, Any]]
-    if benchmark == "cufft":
+    if benchmark in {"cufft", "rocfft"}:
         operands.extend((
             ("dc_relative_error", "upper_bound",
              verification["rel_tolerance"]),
             ("non_dc_max_abs_error", "upper_bound",
              verification["abs_tolerance"]),
         ))
-    elif benchmark in {"cublas", "cusparse"}:
+    elif benchmark in {"cublas", "cusparse", "rocblas", "rocsparse"}:
         operands.extend((
             ("max_abs_error", "abs_tolerance",
              verification["abs_tolerance"]),
             ("max_abs_error", "rel_tolerance",
              verification["rel_tolerance"]),
         ))
-    elif benchmark == "cusolver":
+    elif benchmark in {"cusolver", "rocsolver"}:
         for metric in ("solution_relative_error", "relative_residual"):
             operands.extend((
                 (metric, "abs_tolerance", verification["abs_tolerance"]),
                 (metric, "rel_tolerance", verification["rel_tolerance"]),
             ))
-    elif benchmark == "curand":
+    elif benchmark in {"curand", "rocrand"}:
         operands.extend((
             ("observed_range", "lower_bound", 0.0),
             ("observed_range", "upper_bound", 1.0),
@@ -697,7 +856,7 @@ def _validate_exact_config_threshold_operands(
             ("second_central_moment_about_half", "sigma_multiplier",
              verification["sigma_multiplier"]),
         ))
-    elif benchmark == "thrust":
+    elif benchmark in {"thrust", "rocthrust"}:
         operands.extend((
             ("absolute_error", "abs_tolerance",
              verification["abs_tolerance"]),
@@ -807,9 +966,29 @@ def validate_subprocess_record(
         "source_snapshot_sha256": expected_source_snapshot,
     }
     for name, expected in expected_values.items():
+        if name == "cpu_threads_effective":
+            if not cpu_threads_effective_matches(validated, series):
+                raise RunnerError("subprocess record mismatch for cpu_threads_effective")
+            continue
+        if benchmark in AMD_BENCHMARKS and name == "parameters":
+            actual = dict(validated[name])
+            runtime = actual.pop("runtime", None)
+            if actual != expected or not isinstance(runtime, dict) or runtime.get("build_metadata_sha256") != entry["build_metadata_sha256"]:
+                raise RunnerError("rocFFT parameters or build provenance mismatch")
+            continue
         if validated[name] != expected:
             raise RunnerError("subprocess record mismatch for {0}".format(name))
     _validate_verification(validated, item, context)
+    overrides = aocl_sparse_environment_overrides(item, context)
+    if overrides and validated["attempted"]:
+        environment = item.get("aocl_sparse_environment")
+        if environment is None:
+            environment = {key: value for key, value in os.environ.items()}
+            environment.update(overrides)
+            environment = {key: environment.get(key) for key in AOCL_SPARSE_ENVIRONMENT_KEYS}
+        actual = validated["parameters"]["runtime"].get("aocl_sparse_environment")
+        if actual != environment:
+            raise RunnerError("AOCL Sparse startup environment differs from launch controls")
     return validated
 
 
@@ -830,8 +1009,9 @@ def execute_schedule(
         for item in schedule:
             trials = item["scope_settings"]["trials"]
             if stop_remaining or item["prerequisite_failure"] is not None:
-                message = "prior suite failure" if stop_remaining else item["prerequisite_failure"]
-                origin = "prior-failure" if stop_remaining else "prerequisite"
+                missing_prerequisite = item["prerequisite_failure"] is not None
+                message = item["prerequisite_failure"] if missing_prerequisite else "prior suite failure"
+                origin = "prerequisite" if missing_prerequisite else "prior-failure"
                 for trial in range(trials):
                     writer.write(
                         synthetic_result(
@@ -846,7 +1026,28 @@ def execute_schedule(
                 continue
 
             entry = item["entry"]
+            if entry["library"] in AMD_BENCHMARKS:
+                try:
+                    _validate_amd_dependencies(entry, metadata_by_hash[entry["build_metadata_sha256"]])
+                    if sha256_file(entry["executable_path"]) != entry["binary_sha256"]:
+                        raise RunnerError("binary changed before rocFFT invocation")
+                except (OSError, ValueError) as error:
+                    for trial in range(trials):
+                        writer.write(synthetic_result(
+                            item, context, config_sha256, runtime_environment_sha256,
+                            metadata_by_hash, trial, False, "prerequisite", str(error),
+                            None, git_diff_sha256, source_snapshot_sha256))
+                    any_failure = True
+                    stop_remaining = True
+                    continue
             environment = os.environ.copy()
+            overrides = aocl_sparse_environment_overrides(item, context)
+            environment.update(overrides)
+            if overrides:
+                # Bind the actual child startup environment, including inherited ISA
+                # selection, without mutating the process-wide parent environment.
+                item = dict(item, aocl_sparse_environment={
+                    key: environment.get(key) for key in AOCL_SPARSE_ENVIRONMENT_KEYS})
             environment.update(
                 {
                     "GPU_SUITE_BINARY_SHA256": entry["binary_sha256"],

@@ -150,8 +150,8 @@ each expected index exactly once. Raw files are never overwritten.
 | `scheduler` | string/null | yes | Scheduler name or null. |
 | `scheduler_job_id` | string/null | yes | Scheduler job identifier or null. |
 | `implementation_order` | array | yes | Assigned three-implementation order. CSV stores deterministic JSON text. |
-| `benchmark` | string | yes | `cufft`, `cublas`, `cusparse`, `cusolver`, `curand`, or `thrust`. |
-| `implementation` | string | yes | `cpu`, `cuda`, or `openacc`. |
+| `benchmark` | string | yes | `cufft`, `cublas`, `cusparse`, `cusolver`, `curand`, `thrust`; or AMD `rocfft`, `rocblas`, `rocsparse`, `rocsolver`, `rocrand`, `rocthrust`. |
+| `implementation` | string | yes | `cpu`, `cuda`, or `openacc` for NVIDIA; `cpu`, `hip`, or `openmp` for AMD. |
 | `scope` | string | yes | `compute` or `end-to-end`. |
 | `problem_size` | integer/null | yes | Positive primary x-axis value; null only where the benchmark definition permits it, such as non-square DGEMM. |
 | `secondary_size` | integer/null | yes | Positive library-specific secondary size or null. |
@@ -176,9 +176,9 @@ each expected index exactly once. Raw files are never overwritten.
 | `verification_thresholds` | object | yes | Metric name to complete condition; always an object. |
 | `verification_primary_metric` | string/null | yes | Representative metric name or null. |
 | `verification_status` | string | yes | `pass`, `failure`, `skipped`, or `nonfinite`. |
-| `getrf_info` | integer/null | yes | cuSOLVER factorization info, otherwise null. |
-| `getrs_info` | integer/null | yes | cuSOLVER solve info, otherwise null. |
-| `device_id` | integer/null | yes | Non-negative CUDA device index for GPU, otherwise null. |
+| `getrf_info` | integer/null | yes | cuSOLVER/rocSOLVER factorization info when observed, otherwise null. |
+| `getrs_info` | integer/null | yes | LAPACKE/cuSOLVER solve info; rocSOLVER GPU API-and-completion success is 0, unconfirmed/not-run is null; otherwise null. |
+| `device_id` | integer/null | yes | Non-negative CUDA index for NVIDIA GPU, HIP index for AMD GPU, otherwise null; not an OpenMP ordinal or proof of cross-runtime physical identity. |
 | `gpu_name` | string/null | yes | Reported GPU name or null. |
 | `gpu_uuid` | string/null | yes | Reported GPU UUID or null. |
 | `cuda_driver_version` | string/null | yes | CUDA Driver API version returned by `cudaDriverGetVersion`, or null when not applicable/unavailable. |
@@ -470,18 +470,18 @@ least:
 | --- | --- |
 | `artifact_id` | SHA-256 identity defined below. |
 | `target_name` | Canonical CMake target and executable stem. |
-| `build_profile` | `cpu-cuda` or `openacc`. |
+| `build_profile` | NVIDIA `cpu-cuda` or `openacc`; AMD `cpu`, `hip` or `openmp`. |
 | `backend_variant` | Compiled provider/capability variant. |
 | `supported_cpu_backends` | Stable CPU backend names supported by this binary, or an empty array for non-CPU targets. |
 | `executable_path` | Configured executable path. |
 | `library` | Library identifier. |
-| `implementation` | CPU, CUDA, or OpenACC. |
+| `implementation` | Vendor-specific CPU/CUDA/OpenACC or CPU/HIP/OpenMP. |
 | `executable_role` | `example` or `benchmark`. |
 | `build_type` | Recorded build configuration. |
 | `binary_sha256` | SHA-256 of the exact executable bytes. |
 | `build_metadata_sha256` | SHA-256 of deterministic generated build metadata. |
 | `compiler` | Compiler identity. |
-| `compiler_language` | `c`, `cxx`, `cuda`, or `fortran`; mixed C/C++ and Fortran source families cannot be merged. |
+| `compiler_language` | `c`, `cxx`, `cuda`, `hip`, or `fortran`; mixed C/C++ and Fortran source families cannot be merged. |
 | `compiler_version` | Compiler version. |
 | `global_configure_flags` | Language-level global configure flags associated with the selected compiler. |
 | `git_metadata_available` | Whether commit and worktree state were obtained from Git. |
@@ -841,3 +841,209 @@ Verification failure, nonfinite verification, process failure, and absence of
 the configured production CPU backend exclude that record from performance
 statistics. Preserve all raw rows and record counts/reasons. Never substitute a
 reference backend for the speedup denominator.
+
+<a id="rocfft-additive-representation-and-campaign-identity"></a>
+
+## AMD additive representation and campaign identity
+
+The AMD inventory contains `rocfft`, `rocblas`, `rocsparse`, `rocsolver`,
+`rocrand` and `rocthrust`, with implementation family `cpu`/`hip`/`openmp`.
+These are additive values without changing raw schema version 1 or the existing
+CSV column list. Each library keeps its own benchmark/artifact identity while
+normalizing the mathematical parameter fields of its NVIDIA counterpart:
+
+| AMD benchmark | Mathematical parameters in raw `parameters` |
+| --- | --- |
+| `rocfft` | `nfft`, `batch`, `transform=c2c-forward` |
+| `rocblas` | `m`, `n`, `k`, `alpha`, `beta` |
+| `rocsparse` | `nx`, `ny`, `alpha`, `beta` |
+| `rocsolver` | `n`, `nrhs` |
+| `rocrand` | `size`, `generator`, `distribution`, `seed`, `offset`, `order` |
+| `rocthrust` | `size`, `operation` |
+
+`parameters.runtime` separately stores implementation runtime evidence.
+For HIP/OpenMP that object records integer HIP API values
+`hip_runtime_version` and `hip_driver_version`, plus the exact
+`build_metadata_sha256` linking the artifact's build evidence. Runtime evidence
+is not part of the mathematical workload key. AMD
+records never place HIP/ROCm values in `cuda_driver_version` or
+`cuda_runtime_version`; those fields are null. Unobserved values remain null,
+not a guessed CUDA value, device identity, installation root or ROCm release.
+Shared-library versions come from the actual linked library API. rocThrust's
+version comes from its compiled header version; it is not a fictitious runtime
+DSO version. rocRAND additionally records `cpu_engine` or `generator_algorithm`,
+`distribution_interval` and `verification_sample_count`. CPU/GPU RNG algorithm
+and interval evidence remains visible even though it is not a common
+cross-implementation mathematical grouping key.
+
+For rocSOLVER, `getrf_info` is the observed factorization result. Its GPU getrs
+API has no info pointer, so `getrs_info=0` records successful API return and
+completion, not an independently returned LAPACK integer. CPU LAPACKE records
+its actual getrs info value. If getrs did not run,
+failed, or completion was not confirmed, `getrs_info` is null. Nonzero getrf
+info prevents getrs. A success row additionally requires numerical verification
+when verification is enabled; zero status alone is not numerical proof.
+
+An AMD effective configuration explicitly declares `vendor: "amd"` and the
+selected AMD benchmark entries with CPU/HIP/OpenMP series. Absent `vendor`
+retains historical
+NVIDIA configuration semantics, exact-byte hashes and six-library inventory.
+Ordering uses the same six balanced permutations within the selected vendor
+family. No config mixes CPU/CUDA/OpenACC with CPU/HIP/OpenMP.
+
+AMD manifests use build profiles `cpu`, `hip`, `openmp`; HIP compiler language
+is `hip`. Target/source stems remain canonical and are disambiguated by library,
+implementation, profile and artifact identity. AMD build metadata retains
+compiler identities and flags, HIP architecture, OpenMP target conditions,
+selected ROCm root, and resolved dependency paths/content hashes. Actual
+compile-and-link probes, not header existence, enable optional targets.
+
+New AMD metadata additionally records `fftw_threading` with exactly:
+
+| Field | Meaning |
+| --- | --- |
+| `requested` | `AUTO`, `PTHREAD`, `OPENMP`, `COMBINED`, or `NONE`. |
+| `backend` | Verified selection: `none`, `pthread`, `openmp`, or `combined`. |
+| `compile_options`, `link_options` | Arrays of the selected host threading runtime's build options. |
+| `dependency_names` | Names of the selected FFTW and concrete runtime entries in `dependencies`. |
+
+The selected base is `fftw3f`; separate providers add either `fftw3f_threads`
+or `fftw3f_omp`. Combined mode uses the base without a fictitious extra library.
+Concrete OpenMP runtime libraries discovered by CMake are recorded as
+`fftw_openmp_runtime_0`, `fftw_openmp_runtime_1`, etc., each with real path and
+SHA-256 like other dependencies. When Threads supplies concrete runtime paths,
+pthread/combined mode likewise records `fftw_pthread_runtime_0`, etc. Flags also record platform threading support
+where the compiler/system supplies it without a separate library path. Actual
+loaded DSOs are additionally bound by runtime-environment evidence. Empty
+dependency lists apply only when FFTW itself is unavailable. A `none` backend
+may still have the serial base dependency. The runner rejects a threaded
+artifact labelled `none`, inconsistent selections/dependency names, and any
+changed dependency content. Metadata changes alter `build_metadata_sha256`;
+they never disappear through mathematical-key normalization.
+
+Previously saved AMD metadata without `fftw_threading` remains readable with
+the historical serial or separate-pthread interpretation. Threaded legacy
+artifacts must still provide `fftw3f_threads` evidence. Do not rewrite saved
+metadata to assign it a new provider. NVIDIA metadata serialization and raw/CSV
+schema versions remain unchanged by this additive AMD evidence.
+
+The same campaign must preserve its effective configuration, complete source
+provenance, immutable manifest and runtime-environment hash. Each row must
+match its artifact's compiler/build identity and binary hash. The approved
+artifact mapping permits CPU/HIP/OpenMP to use their different prescribed
+compilers; it does not permit later replacement of any artifact. Reject changed
+ROCm/runtime evidence, resolved library identity/version/hash, compiler or
+translation-unit conditions, binary, manifest, config or source provenance,
+even when mathematical workload keys match. Never combine waves across differing
+runtime-environment hashes. Keeping runtime evidence outside numerical keys
+does not weaken these gates or authorize reinterpretation of saved NVIDIA comparisons.
+
+The scheduler-independent Sirius smoke saves actual compiler versions, full
+CMake caches/build metadata/compile commands, resolved dynamic-library output,
+source snapshot hash, manifest, raw data and common-validator report. It rejects
+actual dynamic-library resolution that differs from configured dependency paths
+or hashes. For all AMD families the runner rechecks configured dependency
+hashes before invocation. CPU/HIP/OpenMP artifacts have separate prescribed
+compiler/build identities; require matching shared HIP dependency identity
+across all GPU artifacts and matching library identity wherever that library
+is shared between profiles/benchmarks. For example rocSOLVER also binds rocBLAS.
+Different per-library compiler or binary hashes are legitimate only as the
+fixed manifest mapping, never as replacement evidence within a campaign.
+Smoke normalizes only ASLR addresses from canonical runtime
+identity while retaining raw resolution logs. Static dependencies remain bound
+by the build dependency hash and executable content. These are smoke evidence,
+not production campaign/node metadata or blanket
+GPU-support claims. Actual loaded-library validation is established by the
+rocFFT smoke helper; equivalent runtime resolution evidence for other families
+remains a required real-execution gate, not something a local fixture proves.
+
+rocFFT compute rows use the sum of individually timed FFT/completion intervals,
+with input/output restoration outside each interval as required by the rocFFT
+API's input-mutation contract. `elapsed_sec=elapsed_total_sec/repeat`; wall
+start/end timestamps span the entire trial, including restoration gaps. This
+library-specific rule does not reinterpret saved NVIDIA rows.
+
+
+### AMD dependencies, mixed translation units and linker inputs
+
+`dependencies` binds resolved absolute paths and SHA-256 content identities.
+GPU artifacts require HIP and their own library; rocSOLVER additionally requires
+rocBLAS. CPU providers remain explicit (FFTW, CBLAS, LAPACKE, oneMKL Sparse or AOCL Sparse as
+applicable), rather than inferred from a library name or unexecuted fallback.
+Missing dependencies yield explicit unavailability, not invented runtime data.
+
+For CBLAS, LAPACKE, oneMKL Sparse and AOCL Sparse, the primary file retains the
+dependency name `cblas`, `lapacke`, `mkl_sparse` or `aocl_sparse`. Additional absolute file inputs in the
+provider's link interface are recorded as `<name>_link_<index>`, where the
+zero-based index is their position in that complete interface (the primary
+file is index 0). Every such file has its resolved path and SHA-256 recorded.
+The corresponding `amd_build_inputs` value, for example
+`CBLAS_INTERFACE_LINK_LIBRARIES`, preserves the complete ordered interface,
+including platform support entries that are CMake targets or linker names.
+Changing an explicit extra dependency invalidates the saved metadata at runner
+validation just as changing the primary file does. These are configured link
+inputs; runtime-loaded dependency resolution remains separate evidence.
+
+AOCL Sparse also records `aocl_sparse_header` for the resolved `aoclsparse.h`
+path/hash, the explicit `AOCLSPARSE` selection, include directory and ordered
+`AOCLSparse_INTERFACE_LINK_LIBRARIES` in `amd_build_inputs`. The header identity
+does not claim to hash the complete include tree. Source, compiler conditions,
+metadata and binary hashes remain required. The supported header ABI is
+32-bit `aoclsparse_int`; compile/link checks do not prove runtime ABI correctness.
+The `aocl-sparse` artifact variant supports only `cpu-aocl-sparse`, distinct from
+oneMKL and reference artifacts. Missing or changed header/library/extra inputs,
+wrong link order or backend selection are rejected before invocation.
+
+An AOCL Sparse benchmark row records the API-reported `library_version` when
+available and
+`parameters.runtime.aocl_sparse_environment`: `AOCLSPARSE_NUM_THREADS`,
+`OMP_NUM_THREADS`, `OMP_DYNAMIC`, and `AOCL_ENABLE_INSTRUCTIONS`, each a string
+or null. The first three are the invocation's effective controls; requested
+threads remain separate from unobserved workers (`cpu_threads_effective=null`).
+Runner prerequisite failures retain artifact/configuration provenance without
+inventing an observed library version or environment. Runner-generated failures
+after missing/invalid child output retain the known launch controls but keep
+an unobserved API version null. Successful rows require both version and controls.
+These runtime fields do
+not enter the mathematical workload key. Campaign validation still rejects
+changes in these fields, compiler/binary/config/source, or prescribed library
+identities even when that key agrees. Existing NVIDIA representation is unchanged.
+
+Configured input hashes plus an API version do not establish the identity of a
+loaded DSO: another file can report the same version. AOCL Sparse loaded-DSO
+path/hash binding, numerical and threading behavior remain explicit gates for
+a separately approved real smoke; local fixtures do not satisfy those gates.
+
+Header-only rocThrust and rocPRIM are recorded using the resolved
+`thrust/version.h` and `rocprim/rocprim.hpp` identity files, respectively, alongside
+HIP. These files identify the selected headers; they are not fictitious loaded
+libraries and do not claim to hash an entire installation. The immutable binary,
+source snapshot and captured build conditions remain part of artifact identity.
+
+For an enabled rocThrust OpenMP artifact, `rocthrust_interop` binds the canonical
+`amd/c-cpp/rocthrust/examples/rocthrust_wrapper.hip` source path and SHA-256,
+HIP compiler path/language/flags, OpenMP caller language/flags, explicit CXX
+final-link language/driver path (`linker_language`/`linker_path`), and link flags.
+The wrapper is an explicit HIP object input to the OpenMP executable. Capture
+actual compile commands/effective flags during real builds; global configure
+flags alone must not be advertised as a complete translation-unit command.
+Changing either translation unit, its compiler/options or linked object changes
+build/artifact provenance and cannot be hidden by an unchanged workload key.
+
+A configured `.so` input may be a GNU linker script rather than the loaded
+ELF object. The historical rocFFT runtime evidence includes
+`linker_input_bindings`, keyed by build profile and dependency name, containing
+`script_path`, `script_sha256`, `parsed_inputs`, each input's reference/path/hash/
+kind, and optional `link_dependency_file` evidence. Keep the configured script
+identity and the resolved DSO identity separately. Bounded recognized script
+syntax may bind explicit loaded ELF inputs; a `-l` static input additionally
+requires one unambiguous recorded archive from link-dependency evidence.
+Unsupported syntax, ambiguous resolution, changed content or a mismatched
+loaded DSO is rejection, not a general exemption for files ending in `.so`.
+
+The completed Sirius rocFFT smoke established its particular build/runtime
+mapping and 96 successful raw records. The other five families currently have
+local implementation/fixture evidence only. Their real build, loaded-runtime
+binding, GPU validation and any performance campaign remain separately gated.
+NVIDIA coexistence review follows AMD family completion; no saved NVIDIA schema
+or artifact is silently migrated to AMD values.

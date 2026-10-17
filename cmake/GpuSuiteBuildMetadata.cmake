@@ -60,7 +60,9 @@ function(gpu_suite_generate_build_metadata)
     set(_build_type "unknown")
   endif()
 
-  if(GPU_SUITE_BUILD_OPENACC)
+  if(GPU_SUITE_VENDOR STREQUAL "amd")
+    set(_build_profile "${GPU_SUITE_AMD_BUILD_PROFILE}")
+  elseif(GPU_SUITE_BUILD_OPENACC)
     set(_build_profile "openacc")
   else()
     set(_build_profile "cpu-cuda")
@@ -191,8 +193,14 @@ function(gpu_suite_generate_build_metadata)
 
   set(_generated_dir "${CMAKE_BINARY_DIR}/generated/include/gpu_suite")
   file(MAKE_DIRECTORY "${_generated_dir}")
+  set(_metadata_template gpu_suite_build_metadata.json.in)
+  if(GPU_SUITE_VENDOR STREQUAL "amd")
+    include(GpuSuiteAmdMetadata)
+    gpu_suite_prepare_amd_metadata()
+    set(_metadata_template gpu_suite_amd_build_metadata.json.in)
+  endif()
   configure_file(
-    "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/gpu_suite_build_metadata.json.in"
+    "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/${_metadata_template}"
     "${CMAKE_BINARY_DIR}/build-metadata.json"
     @ONLY)
   file(SHA256 "${CMAKE_BINARY_DIR}/build-metadata.json"

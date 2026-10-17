@@ -2,18 +2,33 @@
 
 ## Scope gate
 
-This is an extension guide, not authorization to create another vendor tree.
-The implemented scope remains NVIDIA C/C++. Obtain explicit project-owner
-approval before adding a vendor, then update the authority documents before
-writing source. Do not create an empty vendor directory, dummy target, or
-TODO-only example.
+This is an extension guide, not open-ended authorization to create vendor trees.
+The implemented source scope includes NVIDIA C/C++, the approved NVIDIA Fortran
+addition, and AMD C/C++ CPU/HIP/OpenMP forms for rocFFT, rocBLAS, rocSPARSE,
+rocSOLVER, rocRAND and rocThrust. Current owner direction is to complete the AMD
+families using the successful rocFFT implementation as the baseline, then finish
+NVIDIA coexistence review, and then perform separately approved performance
+evaluation. AMD Fortran remains outside this increment.
+
+Implementation is not the same as real-device validation: Sirius rocFFT has
+completed an allocated build/basic smoke with 96 successful records. The later
+six-family allocated recovery verified 34 build artifacts, with the two
+oneMKL Sparse CPU targets unavailable. The subsequent explicit AOCL Sparse
+addition has local fixture evidence and still needs its own real build/smoke.
+Other-family runtime and performance work require separate execution approval.
+See the [stage gates](IMPLEMENTATION_PLAN.md#amd-cc-and-sirius-development-stages).
+For any additional scope, obtain applicable owner approval and update authority
+documents before writing vendor source. Do not create an empty vendor directory,
+dummy target or TODO-only example.
 
 The hierarchy and canonical filenames belong to
 [`PROJECT_SPECIFICATION.md`](PROJECT_SPECIFICATION.md). CLI/timing behavior,
 machine-readable formats, and system operations belong respectively to
 [`BENCHMARK_PROTOCOL.md`](BENCHMARK_PROTOCOL.md),
-[`RESULT_SCHEMA.md`](RESULT_SCHEMA.md), and a system document parallel to
-[`PEGASUS_EXECUTION.md`](PEGASUS_EXECUTION.md).
+[`RESULT_SCHEMA.md`](RESULT_SCHEMA.md), and the registered system owner document:
+[`PEGASUS_EXECUTION.md`](PEGASUS_EXECUTION.md) for Pegasus or
+[`jobs/sirius/README.md`](../jobs/sirius/README.md) for Sirius. Do not duplicate an
+operating contract in another document.
 
 ## Required design work
 
@@ -34,12 +49,17 @@ machine-readable formats, and system operations belong respectively to
    that cannot collide with NVIDIA artifacts. Compiler and runtime detection
    must use real compile-and-link probes.
 6. Add system support only under `jobs/<system>` and only for a system actually
-   in scope. Submission remains a human action.
+   in scope. Follow its registered execution/approval owner; Pegasus retains
+   human submission, while current Sirius execution follows its separate owner
+   document and the latest explicit user approval.
 
 ## Implementation rules
 
 - Add complete examples and benchmarks together; every teaching example must
-  compile independently and expose the vendor-library call flow directly.
+  compile independently with its explicit inputs and expose the vendor-library
+  call flow directly. The sole C/C++ teaching exception to single-source form
+  is rocThrust OpenMP's caller plus `rocthrust_wrapper.hip`, as specified in
+  [`PROJECT_SPECIFICATION.md`](PROJECT_SPECIFICATION.md#approved-amd-filename-and-teaching-exception).
 - Keep source-stem, CMake target, executable, and documented name identical.
 - Never select a smaller workload, alternate algorithm, lower precision, or
   numerical mode after inspecting hardware.
@@ -50,6 +70,65 @@ machine-readable formats, and system operations belong respectively to
   specific reason.
 - Preserve all completed trials and distinguish attempted failure from
   unattempted skip.
+
+## AMD/Sirius preparation history and current implementation
+
+Stage 1 established the scope/decision/plan documents, bounded Sirius probe
+helper and mock/fake tests, and reproducible CTest/Python validation entry. That
+historical approval did not include AMD source or remote execution; later
+explicit approvals expanded the scope without deleting the original stop gates
+or failed authentication evidence.
+
+Stage 2 completed with owner-authenticated interactive SSH. The first Stage 3
+increment implemented rocFFT CPU/HIP/OpenMP and common integration. Subsequent
+separately approved Sirius runs established compiler/module dependencies,
+serial/threaded AOCL FFTW, HIP/OpenMP builds and basic numerical correctness.
+The final allocated rocFFT smoke rebuilt all three profiles from one source
+snapshot and passed all 96 serial/threaded CPU, HIP and OpenMP records. This
+is neither a performance campaign nor evidence for another AMD library.
+
+The local expansion implements the remaining five CPU/HIP/OpenMP
+families, including complete teaching and benchmark sources, optional API/link
+discovery, manifest/config/result integration and failure/verification fixtures.
+The mathematical tasks follow the corresponding NVIDIA families under the
+[specification owner](PROJECT_SPECIFICATION.md); rocRAND explicitly compares
+different CPU/GPU RNG algorithms. Finish AMD source coverage and local gates
+first. Comprehensive NVIDIA coexistence/regression review is a later acceptance
+step, and performance evaluation follows implementation and real basic smoke.
+Do not silently change saved NVIDIA formats or results while deferring that
+review.
+
+The owner-approved AOCL Sparse increment adds an independent, explicit CPU
+production choice for AMD rocSPARSE while retaining oneMKL and reference
+behavior. The backend, threading and ordered-link contract belongs to
+[BENCHMARK_PROTOCOL](BENCHMARK_PROTOCOL.md#cpu-backends-and-parallelism), and
+header/library/runtime identity belongs to [RESULT_SCHEMA](RESULT_SCHEMA.md).
+Configured input hashes do not certify which shared object was actually loaded;
+that check remains part of the real-smoke gate.
+
+`rocthrust_wrapper.hip` is the owner-selected canonical wrapper name across
+teaching source, distribution, CMake, tests and documentation. Its HIP object
+and the OpenMP caller are explicit separate compile/link inputs, with both
+translation units' conditions captured in provenance. Manual teaching builds
+may use `hipcc`; native CMake HIP uses supported Clang rather than fixing
+`hipcc` as `CMAKE_HIP_COMPILER`. Compiler paths, ROCm versions and GPU targets
+must come from confirmed environment evidence.
+
+Source access through the existing SSHFS mount does not authorize an SSH,
+scheduler or GPU call. Future execution uses local Shell tools under the
+current approval, not Computer Use of an integrated terminal. System-specific
+operation limits, scheduler requirements, logs and stopping rules belong only
+to [Sirius operations](../jobs/sirius/README.md). Preserve historical
+authentication state and unused transports; do not resume transport development.
+
+Separate runtime evidence from mathematical comparison keys only while keeping
+strict campaign provenance. Bind every library/implementation to its approved
+artifact, compiler/build conditions and binary, require coherent shared HIP and
+per-library dependencies, and reject later source/config/runtime/library changes.
+Header-only dependencies and the rocThrust HIP wrapper still have content/build
+identity; neither may disappear from provenance because no standalone DSO exists.
+The [result schema](RESULT_SCHEMA.md#amd-additive-representation-and-campaign-identity)
+owns those representations and the implementation plan owns their acceptance gates.
 
 ## Acceptance before declaring support
 

@@ -76,7 +76,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "device": arguments.device,
             "hostname": arguments.hostname,
             "implementation_order": implementation_order(
-                arguments.node_index, arguments.wave
+                arguments.node_index, arguments.wave, config.get("vendor", "nvidia")
             ),
             "node_index": arguments.node_index,
             "run_id": arguments.run_id,

@@ -15,8 +15,18 @@ LIBRARIES = {
 }
 
 
+def source_text(path):
+    """Follow only the two explicit shared FFT implementation inputs."""
+    text = path.read_text(encoding="utf-8")
+    for header in ("fftw_bench_impl.h", "fft_bench_result.hpp"):
+        if '#include "gpu_suite/' + header + '"' in text:
+            text += "\n" + (ROOT / "common/c-cpp/include/gpu_suite" / header).read_text(
+                encoding="utf-8")
+    return text
+
+
 def read(relative):
-    return (ROOT / relative).read_text(encoding="utf-8")
+    return source_text(ROOT / relative)
 
 
 class ReviewSourcePolicyTests(unittest.TestCase):
@@ -36,7 +46,7 @@ class ReviewSourcePolicyTests(unittest.TestCase):
         paths = self.benchmark_paths()
         self.assertEqual(len(paths), 18)
         for path in paths:
-            text = path.read_text(encoding="utf-8")
+            text = source_text(path)
             with self.subTest(path=path.relative_to(ROOT)):
                 self.assertIn("gpu_suite_measurement_start", text)
                 self.assertIn("gpu_suite_measurement_end", text)
@@ -59,7 +69,7 @@ class ReviewSourcePolicyTests(unittest.TestCase):
         paths = self.benchmark_paths()
         self.assertEqual(len(paths), 18)
         for path in paths:
-            text = path.read_text(encoding="utf-8")
+            text = source_text(path)
             with self.subTest(path=path.relative_to(ROOT)):
                 self.assertIn("gpu_suite_checked_bytes", text)
                 self.assertNotRegex(text, r"malloc\([^)]*\*\s*sizeof")
@@ -72,13 +82,13 @@ class ReviewSourcePolicyTests(unittest.TestCase):
                 if path.parent.parent.name == library:
                     with self.subTest(api_integer=path.relative_to(ROOT)):
                         self.assertIn("gpu_suite_checked_u64_to_int",
-                                      path.read_text(encoding="utf-8"))
+                                      source_text(path))
         for path in paths:
             if path.parent.parent.name == "cusparse":
                 with self.subTest(csr=path.relative_to(ROOT)):
                     self.assertIn(
                         "gpu_suite_checked_poisson2d_dimensions",
-                        path.read_text(encoding="utf-8"),
+                        source_text(path),
                     )
 
     def test_end_to_end_warmup_uses_temporary_scope_pipeline(self):
@@ -88,7 +98,7 @@ class ReviewSourcePolicyTests(unittest.TestCase):
             r"(?:warmup|warm|w|iteration)\s*<\s*(?:options|o)[.]warmup"
         )
         for path in paths:
-            text = path.read_text(encoding="utf-8")
+            text = source_text(path)
             with self.subTest(warmup_count=path.relative_to(ROOT)):
                 self.assertRegex(text, warmup_loop)
 
@@ -97,7 +107,7 @@ class ReviewSourcePolicyTests(unittest.TestCase):
         ]
         self.assertEqual(len(direct_cuda), 6)
         for path in direct_cuda:
-            text = path.read_text(encoding="utf-8")
+            text = source_text(path)
             with self.subTest(path=path.relative_to(ROOT)):
                 self.assertRegex(text, r"run_end_to_end_(?:pipeline|trial)")
                 if "warmup_end_to_end" in text:
@@ -204,10 +214,10 @@ class ReviewSourcePolicyTests(unittest.TestCase):
                 self.assertRegex(text, r"workspace_(?:count|bytes)\s*(?:>=|!=|<)")
 
         benchmark_text = "\n".join(
-            path.read_text(encoding="utf-8") for path in self.benchmark_paths()
+            source_text(path) for path in self.benchmark_paths()
         )
         helper_text = "\n".join(
-            path.read_text(encoding="utf-8")
+            source_text(path)
             for path in (ROOT / "nvidia" / "c-cpp").glob(
                 "*/benchmarks/*_bench_common.hpp"
             )
@@ -250,7 +260,7 @@ class ReviewSourcePolicyTests(unittest.TestCase):
             r"^\s*cudaDeviceSynchronize\s*\(\s*\)\s*;", re.MULTILINE
         )
         for path in gpu_paths:
-            text = path.read_text(encoding="utf-8")
+            text = source_text(path)
             with self.subTest(path=path.relative_to(ROOT)):
                 self.assertIn("warmup", text.lower())
                 self.assertIn("cudaGetErrorString", text)
@@ -356,7 +366,7 @@ class ReviewSourcePolicyTests(unittest.TestCase):
             with self.subTest(runtime_metadata=path.relative_to(ROOT)):
                 self.assertIn(
                     '#include "gpu_suite/benchmark.hpp"',
-                    path.read_text(encoding="utf-8"),
+                    source_text(path),
                 )
 
     def test_thrust_targets_resolve_external_toolkit_cccl_before_probing(self):
@@ -436,7 +446,7 @@ class ReviewSourcePolicyTests(unittest.TestCase):
         )
         occurrences = 0
         for path in cmake_paths:
-            text = path.read_text(encoding="utf-8")
+            text = source_text(path)
             for match in env_command.finditer(text):
                 occurrences += 1
                 statement_end = text.find(")", match.end())

@@ -9,15 +9,47 @@ cuSPARSE, cuSOLVER, cuRAND, and Thrust.
 The source tree includes `nvidia/c-cpp` and the
 [NVIDIA Fortran implementation](nvidia/fortran/README.md). Fortran CPU/CUDA/OpenACC
 builds, real-machine checks and production measurements were completed on Pegasus;
-see the [recorded coverage and limits](docs/VALIDATION_REPORT.md#fortran-production-validation). AMD and additional
-systems are intentionally deferred; the repository does not contain empty
-placeholder implementations for them. The project is maintained under
-`ac2-prod` and is not an official HAIRDESC repository.
+see the [recorded coverage and limits](docs/VALIDATION_REPORT.md#fortran-production-validation).
+The AMD C/C++ family covers rocFFT, rocBLAS, rocSPARSE, rocSOLVER, rocRAND,
+and rocThrust. The [rocFFT baseline](amd/c-cpp/rocfft/README.md) completed
+Sirius CPU serial/threaded, HIP and OpenMP builds and a 96-record basic smoke.
+The [validation report](docs/VALIDATION_REPORT.md#amd-rocfft-sirius-baseline)
+binds this evidence to its source snapshot. The later six-family allocated
+recovery verified 34 build artifacts, with two oneMKL Sparse CPU targets
+unavailable. An explicit [AOCL Sparse CPU backend](amd/c-cpp/rocsparse/README.md)
+has since been added and locally tested; its real build and the other families'
+runtime smoke remain unverified. GPU success and performance are not inferred
+from compilation or rocFFT. AMD completion precedes final NVIDIA coexistence review
+and separately approved performance evaluation. The project is maintained
+under `ac2-prod` and is not an official HAIRDESC repository.
 
 This is the source repository for the **Library Edition (NVIDIA GPU)**
 C/C++ and Fortran teaching material. You do not need Pegasus access or the
 authors' conversation history to read or build the examples. Running a GPU
 example does require a suitable NVIDIA GPU and the dependencies below.
+
+## AMD C/C++ development
+
+| Family | Sources and dependencies |
+| --- | --- |
+| rocFFT | [CPU / HIP / OpenMP](amd/c-cpp/rocfft/README.md) |
+| rocBLAS | [CPU / HIP / OpenMP](amd/c-cpp/rocblas/README.md) |
+| rocSPARSE | [CPU / HIP / OpenMP](amd/c-cpp/rocsparse/README.md) |
+| rocSOLVER | [CPU / HIP / OpenMP](amd/c-cpp/rocsolver/README.md) |
+| rocRAND | [CPU / HIP / OpenMP](amd/c-cpp/rocrand/README.md) |
+| rocThrust | [CPU / HIP / OpenMP and explicit HIP wrapper](amd/c-cpp/rocthrust/README.md) |
+
+Select `GPU_SUITE_VENDOR=amd` in a separate build tree. The default
+`GPU_SUITE_AMD_LIBRARIES` selects all six; an explicit semicolon-separated subset
+such as `-DGPU_SUITE_AMD_LIBRARIES=rocfft` limits both discovery and targets.
+Keep CPU, HIP and OpenMP in separate trees. Native HIP uses Clang with an
+explicit architecture; manual teaching builds may use `hipcc`. Missing optional
+providers disable their affected targets with a reason. The small
+[AMD smoke configuration](configs/amd/smoke.json) specifies workloads and CPU
+backends; it does not grant execution permission or silently replace providers.
+The rocThrust OpenMP caller explicitly links `rocthrust_wrapper.hip`, compiled
+as its own HIP translation unit. Sirius execution follows the
+[site-specific approval and scheduler rules](jobs/sirius/README.md).
 
 ## Publication scope
 

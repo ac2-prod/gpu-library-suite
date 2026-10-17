@@ -8,6 +8,7 @@ from .config import BENCHMARKS
 from .ordering import permutation_index, size_order_index
 from .runner import core_raw_parameters
 from .strict_json import dumps
+from .validation import validate_rocfft_provenance
 
 
 def statistical_summary(values: Sequence[float]) -> Dict[str, Any]:
@@ -144,6 +145,7 @@ def _performance_values(records: Sequence[Mapping[str, Any]]) -> List[float]:
 
 
 def block_records(raw_records: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    validate_rocfft_provenance(raw_records)
     groups = defaultdict(list)  # type: DefaultDict[Tuple[Any, ...], List[Mapping[str, Any]]]
     for record in raw_records:
         groups[_raw_identity(record)].append(record)
@@ -202,7 +204,7 @@ def add_block_speedups(
         )
         lookup[key] = record
     for gpu in blocks:
-        if gpu["implementation"] not in {"cuda", "openacc"} or gpu["series_role"] != "primary":
+        if gpu["implementation"] not in {"cuda", "openacc", "hip", "openmp"} or gpu["series_role"] != "primary":
             continue
         backend = config["benchmarks"][gpu["benchmark"]]["default_speedup_cpu_backend"]
         cpu_key = (

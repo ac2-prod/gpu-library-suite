@@ -4,11 +4,17 @@
 
 cuFFT、cuBLAS、cuSPARSE、cuSOLVER、cuRAND、Thrustを対象とした、移植可能なNVIDIA C/C++・Fortran教材サンプル、再現可能なCPU/CUDA/OpenACCベンチマーク、厳密な結果処理ツール、Pegasus用ジョブ支援です。
 
-ソース範囲は`nvidia/c-cpp`と[NVIDIA Fortran実装](nvidia/fortran/README.ja.md)です。FortranのCPU/CUDA/OpenACCビルド、実機確認、本測定はPegasus上で完了しており、[確認範囲と留保（英語）](docs/VALIDATION_REPORT.md#fortran-production-validation)を記録しています。AMDとその他のシステムへの対応は今後の対象とし、空の仮実装は置いていません。本プロジェクトは`ac2-prod`で管理しており、HAIRDESCの公式リポジトリではありません。
+ソース範囲はNVIDIA C/C++・FortranとAMD C/C++です。AMDではrocFFTのCPU単スレッド・多スレッド・HIP・OpenMPのSirius実機buildと96件の基本smokeが成功しました。[検証記録](docs/VALIDATION_REPORT.md#amd-rocfft-sirius-baseline)に対象source snapshotと限界を記録しています。残るrocBLAS・rocSPARSE・rocSOLVER・rocRAND・rocThrustはローカル実装・検証中です。AMD一式を揃えてからNVIDIAとの共存を最終確認し、その後、別途承認された性能評価へ進みます。過去の成功を後続の変更や他ライブラリの実機成功とは扱いません。NVIDIA Fortranの実機検証・本測定については[既存記録](docs/VALIDATION_REPORT.md#fortran-production-validation)を参照してください。本プロジェクトは`ac2-prod`で管理し、HAIRDESCの公式リポジトリではありません。
 
 本リポジトリは**Library Edition (NVIDIA GPU)**（ライブラリ編（NVIDIA GPU））のC/C++版・Fortran版教材のソースリポジトリです。サンプルを読んだりビルドしたりするために、Pegasusへのアクセスや著者との会話履歴は必要ありません。GPUサンプルの実行には、対応するNVIDIA GPUと以下の依存環境が必要です。
 
 <a id="publication-scope"></a>
+
+## AMD C/C++の開発状況
+
+[rocFFT](amd/c-cpp/rocfft/README.ja.md)、[rocBLAS](amd/c-cpp/rocblas/README.ja.md)、[rocSPARSE](amd/c-cpp/rocsparse/README.ja.md)、[rocSOLVER](amd/c-cpp/rocsolver/README.ja.md)、[rocRAND](amd/c-cpp/rocrand/README.ja.md)、[rocThrust](amd/c-cpp/rocthrust/README.ja.md)にCPU／HIP／OpenMPの教材・benchmarkを配置しています。6分野の実機buildでは34成果物を確認し、oneMKL Sparse CPUの2成果物が依存不足で未構築でした。その後、AOCL Sparse CPU backendを明示選択できるよう追加し、ローカル検証しています。この新backendの実機buildと、rocFFT以外のGPU・数値動作は未検証です。
+
+別build treeで`GPU_SUITE_VENDOR=amd`を指定します。`GPU_SUITE_AMD_LIBRARIES`の既定値は6分野すべてで、`-DGPU_SUITE_AMD_LIBRARIES=rocfft`のように対象を限定できます。CPU、HIP、OpenMPは別treeとし、native HIPは明示したarchitectureとClangを使います。教材の手動buildでは`hipcc`を使えます。任意依存がなければ該当targetだけを理由付きで無効化します。[AMD smoke設定](configs/amd/smoke.json)のCPU backendを暗黙に代替しません。rocThrustのOpenMP版だけは、別HIP翻訳単位の`rocthrust_wrapper.hip`を明示的にリンクします。実機操作には[Sirius運用規則](jobs/sirius/README.md)の承認とschedulerを用います。
 
 ## 公開範囲
 

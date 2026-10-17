@@ -7,6 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, DefaultDict, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from .families import AMD_BENCHMARKS, AMD_COUNTERPARTS
 from gpu_suite.plot_display import build_display_context, series_display
 
 
@@ -19,21 +20,26 @@ PUBLICATION_BENCHMARKS = (
     "cufft", "cublas", "cusparse", "cusolver", "curand", "thrust",
 )
 REQUIRED_PUBLICATION_BENCHMARKS = PUBLICATION_BENCHMARKS[:-1]
+SUPPORTED_PUBLICATION_BENCHMARKS = PUBLICATION_BENCHMARKS + AMD_BENCHMARKS
 PUBLICATION_SCOPES = ("compute", "end-to-end")
 PUBLICATION_IMPLEMENTATIONS = ("cpu", "cuda", "openacc")
 
 FIGURE_FILENAMES = {
     benchmark: "{0}-elapsed-time.png".format(benchmark)
-    for benchmark in PUBLICATION_BENCHMARKS
+    for benchmark in SUPPORTED_PUBLICATION_BENCHMARKS
 }
 X_LABELS = {
     "cufft": "1-D FFT length (nfft)",
+    "rocfft": "1-D FFT length (nfft)",
     "cublas": "Matrix order (N)",
     "cusparse": "Matrix rows (N)",
     "cusolver": "Matrix order (N)",
     "curand": "Output elements (N)",
     "thrust": "Input elements (N)",
 }
+for _amd, _counterpart in AMD_COUNTERPARTS.items():
+    X_LABELS[_amd] = X_LABELS[_counterpart]
+
 PANEL_TITLES = {
     "compute": "Library kernel execution time",
     "end-to-end": "End-to-end execution time",
@@ -86,7 +92,7 @@ def primary_plot_series(
             record.get("summary_level") != "cross-wave"
             or record.get("series_role") != "primary"
             or record.get("median") is None
-            or record.get("implementation") not in PUBLICATION_IMPLEMENTATIONS
+            or record.get("implementation") not in (PUBLICATION_IMPLEMENTATIONS + ("hip", "openmp"))
         ):
             continue
         if record.get("scope") not in PUBLICATION_SCOPES:
@@ -162,18 +168,21 @@ def primary_plot_series(
 
 def _validate_series_contract(series: Sequence[Mapping[str, Any]]) -> Tuple[str, ...]:
     available = {str(item["benchmark"]) for item in series}
-    unexpected = available.difference(PUBLICATION_BENCHMARKS)
+    unexpected = available.difference(SUPPORTED_PUBLICATION_BENCHMARKS)
     if unexpected:
         raise PlotError(
             "unexpected publication benchmark: {0}".format(sorted(unexpected))
         )
-    missing = set(REQUIRED_PUBLICATION_BENCHMARKS).difference(available)
+    if available.intersection(AMD_BENCHMARKS) and not available.issubset(AMD_BENCHMARKS):
+        raise PlotError("AMD and NVIDIA require separate figures")
+    required = available if available.intersection(AMD_BENCHMARKS) else set(REQUIRED_PUBLICATION_BENCHMARKS)
+    missing = required.difference(available)
     if missing:
         raise PlotError(
             "missing publication benchmark: {0}".format(sorted(missing))
         )
     benchmarks = tuple(
-        benchmark for benchmark in PUBLICATION_BENCHMARKS
+        benchmark for benchmark in SUPPORTED_PUBLICATION_BENCHMARKS
         if benchmark in available
     )
     for benchmark in benchmarks:
@@ -192,13 +201,13 @@ def _validate_series_contract(series: Sequence[Mapping[str, Any]]) -> Tuple[str,
             implementations = {
                 str(item["implementation"]) for item in scope_series
             }
-            if implementations != set(PUBLICATION_IMPLEMENTATIONS):
+            family = ("cpu", "hip", "openmp") if benchmark in AMD_BENCHMARKS else PUBLICATION_IMPLEMENTATIONS
+            if implementations != set(family):
                 raise PlotError(
-                    "{0}/{1} requires CPU, CUDA, and OpenACC series".format(
-                        benchmark, scope
-                    )
+                    ("{0}/{1} requires CPU, HIP, and OpenMP target series" if benchmark in AMD_BENCHMARKS
+                     else "{0}/{1} requires CPU, CUDA, and OpenACC series").format(benchmark, scope)
                 )
-            if len(scope_series) != len(PUBLICATION_IMPLEMENTATIONS):
+            if len(scope_series) != len(family):
                 raise PlotError("duplicate publication implementation series")
             point_sets = {
                 tuple(
@@ -214,7 +223,7 @@ def _validate_series_contract(series: Sequence[Mapping[str, Any]]) -> Tuple[str,
             if len(point_sets) != 1:
                 raise PlotError("publication series have mismatched problem cases")
             only_points = next(iter(point_sets))
-            if len(only_points) != 3:
+            if benchmark not in AMD_BENCHMARKS and len(only_points) != 3:
                 raise PlotError("publication series require exactly three cases")
     return benchmarks
 
@@ -223,44 +232,50 @@ def _validate_thrust_versions(
     benchmarks: Sequence[str], raw_records: Optional[Sequence[Mapping[str, Any]]],
     provenance: Tuple[Any, Any],
 ) -> None:
-    if "thrust" not in benchmarks:
-        return
-    if raw_records is None:
-        raise PlotError(
-            "Thrust publication figure requires raw-result library_version evidence"
-        )
-    raw_provenance = {
-        (record.get("run_id"), record.get("runtime_environment_sha256"))
-        for record in raw_records
-    }
-    if raw_provenance != {provenance}:
-        raise PlotError("raw-result and aggregate provenance differ")
-    versions = {"cuda": set(), "openacc": set()}
-    for record in raw_records:
-        implementation = record.get("implementation")
-        if (
-            record.get("benchmark") == "thrust"
-            and implementation in versions
-            and record.get("status") == "success"
-        ):
-            version = record.get("library_version")
-            if isinstance(version, str) and version:
-                versions[str(implementation)].add(version)
-    for implementation in ("cuda", "openacc"):
-        if len(versions[implementation]) != 1:
+    for benchmark, implementations, label in (
+        ("thrust", ("cuda", "openacc"), "Thrust"),
+        ("rocthrust", ("hip", "openmp"), "rocThrust"),
+    ):
+        if benchmark not in benchmarks:
+            continue
+        if raw_records is None:
             raise PlotError(
-                "Thrust {0} requires exactly one successful library_version: {1}".format(
-                    implementation, sorted(versions[implementation])
+                label + " publication figure requires raw-result library_version evidence"
+            )
+        raw_provenance = {
+            (record.get("run_id"), record.get("runtime_environment_sha256"))
+            for record in raw_records
+        }
+        if raw_provenance != {provenance}:
+            raise PlotError("raw-result and aggregate provenance differ")
+        versions = {implementation: set() for implementation in implementations}
+        for record in raw_records:
+            implementation = record.get("implementation")
+            if (
+                record.get("benchmark") == benchmark
+                and implementation in versions
+                and record.get("status") == "success"
+            ):
+                version = record.get("library_version")
+                if isinstance(version, str) and version:
+                    versions[str(implementation)].add(version)
+        for implementation in implementations:
+            if len(versions[implementation]) != 1:
+                raise PlotError(
+                    "{0} {1} requires exactly one successful library_version: {2}".format(
+                        label, implementation, sorted(versions[implementation])
+                    )
+                )
+        first, second = implementations
+        first_version = next(iter(versions[first]))
+        second_version = next(iter(versions[second]))
+        if first_version != second_version:
+            names = {"cuda": "CUDA", "openacc": "OpenACC", "hip": "HIP", "openmp": "OpenMP"}
+            raise PlotError(
+                "{0} {1}/{2} library_version mismatch: {1}={3}, {2}={4}".format(
+                    label, names[first], names[second], first_version, second_version
                 )
             )
-    cuda_version = next(iter(versions["cuda"]))
-    openacc_version = next(iter(versions["openacc"]))
-    if cuda_version != openacc_version:
-        raise PlotError(
-            "Thrust CUDA/OpenACC library_version mismatch: CUDA={0}, OpenACC={1}".format(
-                cuda_version, openacc_version
-            )
-        )
 
 
 def build_plot_metadata(
@@ -287,7 +302,7 @@ def build_plot_metadata(
     benchmarks = _validate_series_contract(series)
     _validate_thrust_versions(benchmarks, raw_records, provenance[0])
     run_id, runtime_hash = provenance[0]
-    return {
+    metadata = {
         "curand_comparison_note": CURAND_COMPARISON_NOTE,
         "display": display,
         "generated_files": [],
@@ -299,6 +314,9 @@ def build_plot_metadata(
         "series": series,
         "source_aggregate_sha256": source_sha256,
     }
+    if "rocrand" in benchmarks:
+        metadata["rocrand_comparison_note"] = CURAND_COMPARISON_NOTE
+    return metadata
 
 
 def render_plots(
@@ -332,7 +350,7 @@ def render_plots(
         "version": str(matplotlib.__version__),
     }
     implementation_order = {
-        name: index for index, name in enumerate(PUBLICATION_IMPLEMENTATIONS)
+        name: index for index, name in enumerate(PUBLICATION_IMPLEMENTATIONS + ("hip", "openmp"))
     }
     for benchmark in benchmarks:
         figure, axes = pyplot.subplots(1, 2, figsize=(12.0, 4.8))
@@ -352,7 +370,7 @@ def render_plots(
                 ]
                 axis.plot(x_values, y_values, marker="o", label=item["label"])
             axis.set_xscale("log", base=2)
-            if benchmark == "cusolver":
+            if benchmark in {"cusolver", "rocsolver"}:
                 axis.set_xticks([point["problem_size"] for point in selected[0]["points"]])
             axis.xaxis.set_major_formatter(
                 ticker.FuncFormatter(_binary_tick_label)

@@ -275,6 +275,21 @@ bool gpu_suite_json_is_object(const gpu_suite_json_value *value) {
   return value != NULL && value->type == JSON_OBJECT;
 }
 
+gpu_suite_json_value *gpu_suite_json_object_get_object(
+    gpu_suite_json_value *object, const char *key) {
+  size_t index;
+  if (!gpu_suite_json_is_object(object) || key == NULL) {
+    return NULL;
+  }
+  for (index = 0U; index < object->data.object.count; ++index) {
+    if (strcmp(object->data.object.members[index].key, key) == 0) {
+      gpu_suite_json_value *member = object->data.object.members[index].value;
+      return gpu_suite_json_is_object(member) ? member : NULL;
+    }
+  }
+  return NULL;
+}
+
 bool gpu_suite_json_object_has(const gpu_suite_json_value *object,
                                const char *key) {
   size_t index;

@@ -5,6 +5,7 @@ import re
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 from .scheduler import validate_scheduler_identity
+from .families import AMD_BENCHMARKS
 
 
 class SchemaError(ValueError):
@@ -79,8 +80,8 @@ RAW_FIELDS = (
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-BENCHMARKS = {"cufft", "cublas", "cusparse", "cusolver", "curand", "thrust"}
-IMPLEMENTATIONS = {"cpu", "cuda", "openacc"}
+BENCHMARKS = {"cufft", "cublas", "cusparse", "cusolver", "curand", "thrust", *AMD_BENCHMARKS}
+IMPLEMENTATIONS = {"cpu", "cuda", "openacc", "hip", "openmp"}
 SCOPES = {"compute", "end-to-end"}
 ORDERS = {
     ("cpu", "cuda", "openacc"),
@@ -90,6 +91,7 @@ ORDERS = {
     ("openacc", "cpu", "cuda"),
     ("openacc", "cuda", "cpu"),
 }
+AMD_ORDERS = {tuple({"cpu": "cpu", "cuda": "hip", "openacc": "openmp"}[x] for x in order) for order in ORDERS}
 FAILURE_ORIGINS = {
     "benchmark",
     "verification",
@@ -199,11 +201,18 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
     except ValueError as error:
         raise SchemaError("invalid scheduler identity: {0}".format(error)) from error
     order = record["implementation_order"]
-    _require(isinstance(order, list) and tuple(order) in ORDERS,
+    _require(isinstance(order, list) and tuple(order) in (AMD_ORDERS if record["benchmark"] in AMD_BENCHMARKS else ORDERS),
              "invalid implementation_order")
     _require(record["benchmark"] in BENCHMARKS, "invalid benchmark")
     _require(record["implementation"] in IMPLEMENTATIONS,
              "invalid implementation")
+    family = {"cpu", "hip", "openmp"} if record["benchmark"] in AMD_BENCHMARKS else {"cpu", "cuda", "openacc"}
+    _require(record["implementation"] in family, "benchmark and implementation family differ")
+    if record["benchmark"] in AMD_BENCHMARKS:
+        _require(record["cuda_driver_version"] is None and record["cuda_runtime_version"] is None,
+                 "AMD results cannot contain CUDA runtime metadata")
+        _require(record["precision"] == ("fp32" if record["benchmark"] == "rocfft" else "fp64"),
+                 "invalid AMD precision")
     _require(record["scope"] in SCOPES, "invalid scope")
     for name in ("problem_size", "secondary_size"):
         value = record[name]
@@ -211,6 +220,55 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
                  "invalid {0}".format(name))
     _require(isinstance(record["parameters"], dict), "parameters must be an object")
     _require_finite_json_numbers(record["parameters"], "parameters")
+    if record["benchmark"] in AMD_BENCHMARKS:
+        runtime = record["parameters"].get("runtime")
+        if runtime is not None:
+            _require(isinstance(runtime, dict), "AMD runtime must be an object")
+            _require(set(runtime).issubset({"build_metadata_sha256", "hip_runtime_version", "hip_driver_version",
+                                           "aocl_sparse_environment"}),
+                     "unknown AMD runtime field")
+            _require(isinstance(runtime.get("build_metadata_sha256"), str) and
+                     SHA256_RE.fullmatch(runtime["build_metadata_sha256"]) is not None,
+                     "AMD runtime requires build metadata hash")
+            for key in ("hip_runtime_version", "hip_driver_version"):
+                value = runtime.get(key)
+                _require(value is None or (_is_integer(value) and value > 0), "invalid " + key)
+            if "aocl_sparse_environment" in runtime:
+                _require(record["benchmark"] == "rocsparse" and record["implementation"] == "cpu"
+                         and record["cpu_backend"] == "cpu-aocl-sparse",
+                         "AOCL Sparse environment requires its explicit CPU backend")
+                environment = runtime["aocl_sparse_environment"]
+                _require(isinstance(environment, dict) and set(environment) == {
+                    "AOCLSPARSE_NUM_THREADS", "OMP_NUM_THREADS", "OMP_DYNAMIC",
+                    "AOCL_ENABLE_INSTRUCTIONS"}, "invalid AOCL Sparse environment fields")
+                _require(all(value is None or isinstance(value, str)
+                             for value in environment.values()),
+                         "invalid AOCL Sparse environment values")
+        if record["status"] == "success":
+            _require(runtime is not None, "AMD success requires runtime provenance")
+            if record["implementation"] != "cpu":
+                _require(isinstance(record["gpu_name"], str) and bool(record["gpu_name"]),
+                         "AMD GPU success requires device name")
+                _require(isinstance(record["library_version"], str) and bool(record["library_version"]),
+                         "AMD GPU success requires library version")
+                _require(all(_is_integer(runtime.get(key)) and runtime[key] > 0
+                             for key in ("hip_runtime_version", "hip_driver_version")),
+                         "AMD GPU success requires HIP runtime versions")
+    if record["cpu_backend"] == "cpu-aocl-sparse":
+        _require(record["benchmark"] == "rocsparse" and record["implementation"] == "cpu"
+                 and record["cpu_backend_role"] == "production",
+                 "AOCL Sparse requires an explicit AMD CPU production series")
+        _require(record["cpu_threads_effective"] is None,
+                 "AOCL Sparse worker count must remain unobserved")
+        if record["status"] == "success":
+            _require(isinstance(record["library_version"], str) and bool(record["library_version"]),
+                     "AOCL Sparse success requires the runtime library version")
+            environment = record["parameters"]["runtime"].get("aocl_sparse_environment")
+            _require(isinstance(environment, dict), "AOCL Sparse success requires startup environment")
+            _require(environment["AOCLSPARSE_NUM_THREADS"] == str(record["cpu_threads_requested"])
+                     and environment["OMP_NUM_THREADS"] == str(record["cpu_threads_requested"])
+                     and environment["OMP_DYNAMIC"] == "FALSE",
+                     "AOCL Sparse startup controls differ from requested threads")
     if "source_language" in record["parameters"]:
         _require(record["parameters"]["source_language"] == "fortran",
                  "source_language extension must identify Fortran")
@@ -246,7 +304,7 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
                  record["cpu_threads_effective"] is None and
                  record["cpu_parallelism"] is None,
                  "GPU row contains CPU metadata")
-        if record["status"] == "success":
+        if record["status"] == "success" and record["implementation"] in {"cuda", "openacc"}:
             for name in (
                 "gpu_name", "gpu_uuid", "cuda_driver_version",
                 "cuda_runtime_version", "library_version",
@@ -344,8 +402,8 @@ def validate_raw_result(record: Mapping[str, Any]) -> Dict[str, Any]:
                  origin == "verification" and
                  record["verification_status"] in {"failure", "nonfinite"},
                  "inconsistent verification failure state")
-    if record["benchmark"] == "cusolver":
-        _require(record["repeat"] == 1, "cuSOLVER repeat must be one")
+    if record["benchmark"] in {"cusolver", "rocsolver"}:
+        _require(record["repeat"] == 1, "solver repeat must be one")
     return dict(record)
 
 

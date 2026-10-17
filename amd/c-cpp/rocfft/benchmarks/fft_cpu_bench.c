@@ -1,0 +1,4 @@
+#define GPU_SUITE_FFT_BENCHMARK GPU_SUITE_BENCHMARK_ROCFFT
+#define GPU_SUITE_FFT_LABEL "rocFFT"
+#define GPU_SUITE_FFT_SEGMENTED_COMPUTE 1
+#include "gpu_suite/fftw_bench_impl.h"

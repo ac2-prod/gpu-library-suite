@@ -67,9 +67,12 @@ class CufftSourcePolicyTests(unittest.TestCase):
                 self.assertNotIn("cudaMalloc", source)
 
     def test_primary_and_auxiliary_backend_names_are_explicit(self):
-        source = (CUFFT / "benchmarks" / "fft_cpu_bench.c").read_text(
+        source = (ROOT / "common/c-cpp/include/gpu_suite/fftw_bench_impl.h").read_text(
             encoding="utf-8"
         )
+        wrapper = (CUFFT / "benchmarks/fft_cpu_bench.c").read_text(encoding="utf-8")
+        self.assertIn("GPU_SUITE_BENCHMARK_CUFFT", wrapper)
+        self.assertIn("gpu_suite/fftw_bench_impl.h", wrapper)
         self.assertIn("cpu-fftw-threaded", source)
         self.assertIn("cpu-fftw-serial", source)
         self.assertIn("threaded FFTW backend is unavailable", source)

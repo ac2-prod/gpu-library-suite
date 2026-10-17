@@ -50,7 +50,7 @@ Every benchmark supports:
 | `--verify true\|false` | Enable or disable verification explicitly. |
 | `--output <path>\|-` | Exclusive result path, or machine-readable stdout. |
 | `--format csv\|jsonl` | Output serialization; the effective configuration or CLI must select it. |
-| `--device` | Non-negative CUDA device index. |
+| `--device` | Non-negative CUDA index for NVIDIA; HIP index for AMD GPU series. OpenMP placement is supplied separately by `OMP_DEFAULT_DEVICE`. |
 | `--run-id` | Measurement campaign identifier. |
 | `--system-label` | User-provided portable system label. |
 | `--node-index` | MPI rank supplied by the runner. |
@@ -68,7 +68,8 @@ Every benchmark supports:
 
 `--verify` accepts only lowercase `true` or `false`. `--format` accepts only
 `csv` or `jsonl`. `--implementation-order` accepts one of the six exact
-comma-separated CPU/CUDA/OpenACC permutations defined below.
+comma-separated CPU/CUDA/OpenACC permutations defined below, or for AMD the
+corresponding CPU/HIP/OpenMP permutations. Vendor families cannot be mixed.
 
 `--node-index`, `--wave`, and `--implementation-order` are execution-context
 options. During suite execution, only `run_suite.py` sets them; it rejects a
@@ -307,6 +308,67 @@ FFTW serial and threaded series use distinct names, for example
 `cpu-fftw-serial` and `cpu-fftw-threaded`. oneMKL and OpenBLAS series also use
 implementation-specific names such as `cpu-onemkl` and `cpu-openblas`.
 `cpu-reference-csr` is a reference backend.
+
+`GENERIC_CBLAS` and `GENERIC_LAPACKE` are explicit API-based build selections,
+reported as `cpu-generic-cblas` and `cpu-generic-lapacke`. Their default discovery
+still searches `cblas.h`/`libcblas` and `lapacke.h`/`liblapacke`, respectively.
+An owner-selected provider with another library filename may instead be supplied
+through `GPU_SUITE_GENERIC_CBLAS_LIBRARY` or
+`GPU_SUITE_GENERIC_LAPACKE_LIBRARY`, together with the matching
+`GPU_SUITE_GENERIC_CBLAS_INCLUDE_DIR` or
+`GPU_SUITE_GENERIC_LAPACKE_INCLUDE_DIR`. Library inputs must be existing absolute
+files; a filename alone never proves API or ABI compatibility.
+
+`GPU_SUITE_GENERIC_CBLAS_EXTRA_LIBRARIES` and
+`GPU_SUITE_GENERIC_LAPACKE_EXTRA_LIBRARIES` are ordered, semicolon-separated
+lists of additional absolute library files. The primary library is linked
+first, then these files in the supplied order, then normal platform support
+libraries. Raw linker flags and relative, missing or directory inputs are
+rejected. The complete selection must compile and link the required
+`cblas_dgemm` or `LAPACKE_dgesv`/`LAPACKE_dgetrf`/`LAPACKE_dgetrs` APIs; the
+configure check does not execute a numerical test or establish effective
+parallelism. Failure disables the affected targets without selecting another
+provider. ONEMKL and OPENBLAS retain their existing provider checks. This
+interface does not assert that any particular site's AOCL installation supplies
+these APIs, and does not make AOCL Sparse compatible with oneMKL Sparse.
+
+AMD rocSPARSE additionally supports the explicitly selected
+`GPU_SUITE_CPU_SPARSE_BACKEND=AOCLSPARSE`, reported as the production backend
+`cpu-aocl-sparse`. ONEMKL remains the default; REFERENCE remains an explicitly
+auxiliary/reference choice. AOCL Sparse is an independent API implementation,
+not a oneMKL-compatible library or a missing-provider fallback. This choice
+does not change the NVIDIA sparse teaching implementation.
+
+`GPU_SUITE_AOCL_SPARSE_INCLUDE_DIR`, `GPU_SUITE_AOCL_SPARSE_LIBRARY` and
+`GPU_SUITE_AOCL_SPARSE_EXTRA_LIBRARIES` select the header directory, primary
+library and ordered additional absolute library files. Configure requires a
+32-bit `aoclsparse_int` compatible with C `int`, rejects explicit/resolved ILP64
+paths, and compiles/links the descriptor, CSR, hint/optimize, SpMV, destruction
+and version APIs. This proves the header/API link contract, not the ABI or
+runtime behavior of an arbitrarily renamed library. Missing APIs disable only
+the affected targets. Static providers require all extra link inputs explicitly;
+the finder does not guess an OpenMP runtime or another provider.
+
+The FP64 zero-based general CSR uses `aoclsparse_create_dcsr`,
+`aoclsparse_set_mv_hint`, `aoclsparse_optimize` and `aoclsparse_dmv`.
+Compute retains setup/analysis outside timing and restores y after warm-up and
+before each trial. End-to-end includes this setup per repeat, with canonical
+restoration and explicit cleanup outside timing. Errors, including destruction
+errors, fail the result. The benchmark obtains `library_version` from
+`aoclsparse_get_version()`; a filename or SONAME never supplies that value.
+
+Before the first AOCL API, the benchmark and runner set
+`AOCLSPARSE_NUM_THREADS` and `OMP_NUM_THREADS` to the requested count and
+`OMP_DYNAMIC=FALSE`. The parent environment is unchanged. The backend reports
+threaded capability and `cpu_threads_effective=null`; configuration does not
+prove observed worker use. `AOCL_ENABLE_INSTRUCTIONS` is inherited and recorded,
+never silently adjusted. Actual per-invocation controls are retained under
+`parameters.runtime.aocl_sparse_environment`; version/environment and artifact
+provenance must agree within the campaign as specified by
+[RESULT_SCHEMA](RESULT_SCHEMA.md#amd-dependencies-mixed-translation-units-and-linker-inputs).
+The API contract was checked against the
+[AOCL Sparse 5.1 headers](https://github.com/amd/aocl-sparse/tree/5.1/library/include)
+and [5.1 threading guidance](https://docs.amd.com/r/en-US/63859-AOCL-performance-tuning-guide/AOCL-Sparse).
 
 On Pegasus, the canonical publication configuration contains only
 `cpu-fftw-threaded` for cuFFT. A separately invoked `cpu-fftw-serial` executable
@@ -870,3 +932,179 @@ and are excluded from numerical aggregation, not erased as inconvenient data.
 
 For the exact configuration edit locations and the executable command sequence,
 use [the reader workflow](PORTABILITY.md#measuring-on-your-own-system).
+
+## AMD C/C++ six-family contract
+
+The AMD C/C++ implementation family contains `rocfft`, `rocblas`, `rocsparse`,
+`rocsolver`, `rocrand` and `rocthrust`, each with `cpu`, `hip` and `openmp`
+series. The counterpart mapping preserves mathematical tasks and shared CLI,
+verification, result ownership and timing rules; it does not alias vendor
+artifact identities or imply identical library algorithms.
+
+| AMD benchmark | Existing mathematical counterpart | CPU backend / numerical contract |
+| --- | --- | --- |
+| `rocfft` | `cufft` | FFTW3f serial or explicitly selected threaded backend; batched FP32 C2C-forward. |
+| `rocblas` | `cublas` | Configured CBLAS provider; FP64 column-major DGEMM. |
+| `rocsparse` | `cusparse` | Explicit oneMKL Sparse or AOCL Sparse production backend, or explicitly selected auxiliary/reference CSR; FP64 five-point Poisson SpMV. |
+| `rocsolver` | `cusolver` | Configured LAPACKE provider; FP64 dense LU factorization and solve with multiple right-hand sides. |
+| `rocrand` | `curand` | Serial C++ `std::mt19937_64` CPU task versus rocRAND GPU uniform generation; different algorithms. |
+| `rocthrust` | `thrust` | C++ `std::transform_reduce`, or an explicitly selected CPU OpenMP backend; FP64 sum of squares. |
+
+Canonical teaching inputs, filenames and the sole two-translation-unit teaching
+exception belong to [PROJECT_SPECIFICATION](PROJECT_SPECIFICATION.md). CPU
+backend selection never silently substitutes a reference implementation for
+production. Requested and effective CPU thread counts remain explicit; a GPU
+OpenMP target implementation is distinct from a threaded CPU library/backend.
+The default STL rocThrust CPU series is serial; a separately selected
+`cpu-openmp` artifact and its effective thread evidence define a different CPU
+series/campaign.
+
+For rocBLAS/rocSPARSE compute scope, keep context/descriptors, device arrays and
+required workspace/preprocessing outside timing. Restore C/y after warm-up and
+before each raw trial, then time the requested successive updates and completion;
+verification includes that recurrence. End-to-end restores canonical C/y before
+each repeat outside timing, and includes setup, allocation/mapping, transfers,
+operation, completion and retrieval, followed by untimed explicit cleanup.
+rocSPARSE uses the generic CSR-adaptive SpMV API; workspace size query and
+preprocess are setup, not repeated compute work. No algorithm is changed after
+hardware discovery.
+
+rocSOLVER requires `repeat=1` in both scopes, using trials for repeated samples.
+Restore A, B, pivots and info after warm-up and before every solve. Benchmarks
+use separate `getrf` and `getrs` stages; a failed factorization never enters
+getrs. Compute keeps the rocBLAS handle, explicitly queried/allocated workspace
+and arrays/mappings alive. Its timed operation includes factorization, the
+required device-to-host factorization-info check, solve and completion.
+End-to-end additionally includes creation and transfers; host canonical
+restoration, verification and explicit cleanup remain untimed. rocSOLVER getrs
+has no LAPACK info output: raw `getrs_info=0` means its API return and completion
+both succeeded, and null means no successful completed solve was confirmed.
+Numerical solution/residual verification is still independently required.
+
+rocRAND compares uniform FP64 output tasks, **not algorithm-equivalent or
+bit-identical CPU/GPU streams**. CPU output has interval `[0,1)` and GPU output
+`(0,1]`; record the actual engine/generator selector and interval. Seed, offset,
+ordering and statistical verification thresholds are explicit. Compute retains
+the generator/output, resets and initializes state after warm-up and before each
+trial, then times successive generations and completion; repeats advance that
+trial's stream. Verify range and moments of the retrieved final sample. End-to-end
+includes generator creation/initialization and retrieval per repeat, with
+explicit destruction outside timing. Neither algorithm names nor CPU/GPU
+interval differences may be concealed by comparison-key normalization.
+
+rocThrust compute retains immutable device input and times repeated synchronous
+transform-reductions, each with identity zero. End-to-end includes input
+allocation/mapping and transfer plus the scalar-producing reduction; explicit
+release is untimed. The HIP wrapper never owns, retains or frees OpenMP's mapped
+input. Compile `rocthrust_wrapper.hip` as a HIP translation unit and the caller
+as an OpenMP translation unit, and link both explicitly with matching runtime
+inputs. Record both compilation conditions; an OpenMP caller flag cannot stand
+in for the HIP object's build conditions.
+
+For all AMD OpenMP series, `--device` selects the HIP device and
+`OMP_DEFAULT_DEVICE` selects OpenMP placement. Prove real target execution and
+validate the actual mapped pointer's HIP memory type/device; equal integer
+ordinals are insufficient. Reject host fallback and use
+`OMP_TARGET_OFFLOAD=MANDATORY` for real execution. HIP must not free
+OpenMP-owned mappings. Input preparation and numerical verification stay outside
+measurement, and warm-up follows the selected scope's complete lifecycle.
+The more specific rocFFT restoration/workspace rules below remain in force.
+
+Current development priority is to complete and locally validate all AMD
+families, then finish NVIDIA coexistence/regression review, then perform
+separately approved performance evaluation. Local fixtures and source checks
+are not GPU or performance evidence. Historical Sirius rocFFT build/basic smoke
+passed 96 records across serial/threaded CPU, HIP and OpenMP; that evidence does
+not establish real-device support for the five additional families. Execution
+approvals and scheduler restrictions belong to [Sirius operations](../jobs/sirius/README.md).
+
+## rocFFT CPU/HIP/OpenMP contract
+
+rocFFT extends the same CLI, monotonic wall clock, warm-up/trial/repeat rules,
+raw writer and validation contracts to implementation values `cpu`, `hip` and
+`openmp`. The benchmark identifier is `rocfft`; normalized mathematical
+parameters are `nfft`, `batch`, and `transform=c2c-forward`. The mathematical
+workload, precision and verification are the cuFFT batched FP32 C2C-forward
+contract, with separate DC relative-error and non-DC maximum-absolute-error
+metrics over **every batch and every output component**. Detect NaN/Inf before
+reductions, validate every size/product before allocation or library conversion,
+and reject oversize instead of silently resizing. Default tolerances remain
+absolute `1e-4` and relative `1e-5`; effective configuration owns overrides.
+
+CPU uses FFTW3f `fftwf_plan_many_dft`; `cpu-fftw-serial` and
+`cpu-fftw-threaded` reuse the existing CPU backend contract. Serial effective
+threads is one. Threaded initialization and requested thread count precede plan
+creation; a missing threads interface never falls back to serial under the
+threaded name. Sirius thread counts are explicit allocation-dependent inputs,
+not the login-node CPU count or Pegasus's publication count.
+
+The FFTW threaded interface may be supplied by a separate pthread library
+(`fftw3f_threads`), a separate OpenMP library (`fftw3f_omp`), or pthread support
+combined into `fftw3f`. CMake's `FFTW3f_THREADING` selects `AUTO`, `PTHREAD`,
+`OPENMP`, `COMBINED`, or `NONE`. For a base library that links on its own,
+`AUTO` tries pthread, OpenMP, then combined in that order. If the base itself
+requires pthread linkage, `AUTO`/`COMBINED` may enable it only after the complete
+combined API check succeeds; `AUTO` then selects combined directly, without
+mixing in a separate threading provider. An explicit mode never falls back to
+another mode. A successful
+executable compile-and-link check must cover all three thread APIs
+(`fftwf_init_threads`, `fftwf_plan_with_nthreads`, `fftwf_cleanup_threads`) and
+the FFT plan/execute/destroy APIs. No configure-time probe executes a transform.
+Thread support being unavailable disables only that backend, not a usable
+serial backend. Both variants use `fftw3.h`; no separate `fftw3f.h` is required.
+
+These provider choices retain the `cpu-fftw-threaded` numerical backend name,
+but are distinct build/runtime provenance under
+[RESULT_SCHEMA](RESULT_SCHEMA.md#rocfft-additive-representation-and-campaign-identity).
+Do not mix them in one campaign. An OpenMP FFTW provider also requires its host
+compiler's OpenMP flags/runtime; it is separate from the AMD OpenMP target
+implementation. Thread counts apply before planning, and cleanup occurs after
+plan destruction. A threaded smoke uses its own effective configuration and
+one production CPU series; it does not silently replace a serial campaign.
+
+rocFFT's [API contract](https://raw.githubusercontent.com/ROCm/rocFFT/rocm-7.2.0/library/include/rocfft/rocfft.h)
+permits out-of-place transforms to overwrite input. The rocFFT benchmark family
+therefore has an explicit compute-scope restoration rule shared by CPU, HIP and
+OpenMP: restore canonical input/output outside timing **before each repeat**,
+then time one FFT and completion. `elapsed_total_sec` is the sum of these
+individually timed intervals; `elapsed_sec` divides that sum by repeat. Wall
+start/end timestamps bracket all segments and may also span untimed restoration.
+This preserves identical inputs and comparable scope without changing historical
+NVIDIA timing or hashes. Warm-up also restores before every execute and performs
+exactly the requested number of transforms.
+
+For HIP/OpenMP `compute`, plan, execution-info creation, work-buffer size
+query/allocation/binding and array allocation/map are persistent and prepared
+before timing. Input transfer/restoration and pre-timing synchronization remain
+outside each measured segment. Reuse an explicitly allocated rocFFT work buffer
+(zero-size needs no allocation), avoiding implicit `rocfft_execute` allocation/free
+inside measured intervals. Retrieve output after the final timed segment.
+`rocfft_setup`/`rocfft_cleanup` are once-per-program lifecycle operations outside
+both scopes, in accordance with the library API.
+
+For `end-to-end`, each repeat times plan/execution-info creation, workspace and
+array allocation, input transfer, FFT, completion, and result retrieval.
+Host input generation/restoration and verification stay outside timing; explicit
+plan/info/workspace/array cleanup follows the timed interval. OpenMP data-region
+entry and exit, including `map(to:)` and completed `map(from:)`, belong inside
+the interval. Its runtime owns mapped arrays: HIP must not double-allocate or
+free them. Warm-up uses the selected scope's complete lifetime path; no
+compute-only persistent resources survive end-to-end warm-up. Trials begin with
+canonical input and pre-timing completion, matching existing restoration rules.
+
+Before measurement, OpenMP requires real target execution (`omp_is_initial_device`
+false) and exposes `use_device_ptr` within its data region. Validate the mapped
+pointers with HIP pointer attributes against the requested HIP device. Equal
+HIP and OpenMP integer ordinals alone are never proof of physical identity.
+Failure of device visibility, target execution, pointer compatibility or library
+operations is failure, not successful host fallback. Future smoke must also set
+`OMP_TARGET_OFFLOAD=MANDATORY`. This implementation does not assume unified
+shared memory or replace the data-region model with stream interoperation.
+
+Runtime information may be outside mathematical comparison keys, but campaign
+identity still fixes configuration, source, manifest, per-artifact compiler and
+build conditions, binaries, resolved libraries and ROCm/HIP runtime environment.
+Reject mismatches even when FFT dimensions match. Existing NVIDIA configuration, raw fields, hashes, aggregation and figure
+meaning must remain compatible; the final cross-vendor coexistence review is
+a separate acceptance step after AMD family completion.
+See the result-schema owner for the AMD representation and provenance gates.

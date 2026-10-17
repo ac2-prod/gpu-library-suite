@@ -12,6 +12,43 @@ telemetry、build/run手順だけを所有する。portableなCLIと測定規約
 個人名、個人用絶対path、特定login hostは保存せず、共有pathは
 `/work/<project>/<user>/...`のようなplaceholderで表す。
 
+## Git経由の検証版反映
+
+SiriusとPegasusのcheckoutは別のGit worktreeである。同じ絶対pathでも
+内容は共有されない。AMD追加後のNVIDIA共存確認には、レビュー済み変更を
+commitし、Git remote経由でPegasusへ取得した同一commitを使用する。
+ソースの直接コピーやarchive展開を、この検証版の反映手段にしない。
+
+1. Sirius側の変更一覧と差分を確認し、実装・設定例・文書・関連テストだけを
+   commit候補にする。`runs/`、build、保存済み測定結果、個別の
+   `jobs/pegasus/pegasus.json`、認証記録、`.fuse_hidden*`を含めない。
+   commit対象は明示的なpath一覧で固定し、無差別な一括追加をしない。
+2. 所有者がcommitを承認した後で検証用commitを作り、完全なcommit IDと
+   cleanなworktreeを確認する。pushは別途承認を受ける。実機確認前の
+   検証用branchへのpushは、mainへのmergeや性能測定の承認を意味しない。
+3. ローカルShellから、マウント済みPegasus checkoutのGit root、origin、
+   現在のHEAD、worktree/indexの変更を確認する。Git反映の承認後は、その
+   マウント先を`git -C`で指定して反映でき、追加のSSHコマンドは不要である。
+   マウントを利用しない場合の非対話SSHは別途承認を受ける。
+   変更や未解決の競合があれば停止し、stash、reset、cleanや個別設定の
+   上書きで解決しない。
+4. 承認されたbranchだけをoriginからfetchし、取得したcommit IDが
+   承認値と一致することを確認してから、そのcommitを検証用にcheckoutする。
+   ignoredな個別設定・ログも上書きしない設定を使用し、path衝突時は停止する。
+   Sirius側とPegasus側のHEAD一致およびcleanな状態を記録する。
+5. ソース反映後は停止する。別途承認するbuild/smokeは、新しい
+   `runs/<RUN_ID>/`にcommit ID、個別設定のhash、build条件とログを記録する。
+   build前後にもsourceのHEADとclean状態を確認する。過去のdirty snapshotの
+   成功記録を、新しいcommitの実機検証として扱わない。
+
+buildとsmokeは別jobとし、計算処理はscheduler allocation内だけで行う。
+NVIDIA C/C++・FortranのCPU/CUDAとOpenACCを別build treeに保ち、
+Fortran Thrustの明示的なwrapper compile/linkも確認する。この共存確認を
+性能測定一式の再実行へ広げない。job投入の人間承認・実行規則は変更しない。
+現在の証跡と残項目は
+[`VALIDATION_REPORT.md`](VALIDATION_REPORT.md#nvidia-coexistence-review-after-amd-addition)
+を参照する。
+
 ## Pegasus profile
 
 - scheduler: NEC NQSV

@@ -27,11 +27,15 @@ const char *gpu_suite_build_metadata_sha256(void) {
 }
 
 const char *gpu_suite_build_compiler(gpu_suite_implementation implementation) {
+  if (implementation == GPU_SUITE_IMPLEMENTATION_HIP) {
+    return GPU_SUITE_BUILD_HIP_COMPILER;
+  }
   if (implementation == GPU_SUITE_IMPLEMENTATION_CUDA &&
       GPU_SUITE_BUILD_CUDA_COMPILER[0] != '\0') {
     return GPU_SUITE_BUILD_CUDA_COMPILER;
   }
-  if (implementation == GPU_SUITE_IMPLEMENTATION_OPENACC) {
+  if ((implementation == GPU_SUITE_IMPLEMENTATION_OPENACC ||
+       implementation == GPU_SUITE_IMPLEMENTATION_OPENMP)) {
     return GPU_SUITE_BUILD_CXX_COMPILER;
   }
   return GPU_SUITE_BUILD_C_COMPILER;
@@ -39,11 +43,15 @@ const char *gpu_suite_build_compiler(gpu_suite_implementation implementation) {
 
 const char *
 gpu_suite_build_compiler_version(gpu_suite_implementation implementation) {
+  if (implementation == GPU_SUITE_IMPLEMENTATION_HIP) {
+    return GPU_SUITE_BUILD_HIP_COMPILER_VERSION;
+  }
   if (implementation == GPU_SUITE_IMPLEMENTATION_CUDA &&
       GPU_SUITE_BUILD_CUDA_COMPILER_VERSION[0] != '\0') {
     return GPU_SUITE_BUILD_CUDA_COMPILER_VERSION;
   }
-  if (implementation == GPU_SUITE_IMPLEMENTATION_OPENACC) {
+  if ((implementation == GPU_SUITE_IMPLEMENTATION_OPENACC ||
+       implementation == GPU_SUITE_IMPLEMENTATION_OPENMP)) {
     return GPU_SUITE_BUILD_CXX_COMPILER_VERSION;
   }
   return GPU_SUITE_BUILD_C_COMPILER_VERSION;
@@ -52,10 +60,14 @@ gpu_suite_build_compiler_version(gpu_suite_implementation implementation) {
 const char *
 gpu_suite_build_global_configure_flags(
     gpu_suite_implementation implementation) {
+  if (implementation == GPU_SUITE_IMPLEMENTATION_HIP) {
+    return GPU_SUITE_BUILD_HIP_FLAGS;
+  }
   if (implementation == GPU_SUITE_IMPLEMENTATION_CUDA) {
     return GPU_SUITE_BUILD_CUDA_FLAGS;
   }
-  if (implementation == GPU_SUITE_IMPLEMENTATION_OPENACC) {
+  if ((implementation == GPU_SUITE_IMPLEMENTATION_OPENACC ||
+       implementation == GPU_SUITE_IMPLEMENTATION_OPENMP)) {
     return GPU_SUITE_BUILD_CXX_FLAGS;
   }
   return GPU_SUITE_BUILD_C_FLAGS;
@@ -63,7 +75,8 @@ gpu_suite_build_global_configure_flags(
 
 static bool cpu_benchmark_uses_cxx(const char *benchmark) {
   return benchmark != NULL &&
-         (strcmp(benchmark, "curand") == 0 || strcmp(benchmark, "thrust") == 0);
+         (strcmp(benchmark, "curand") == 0 || strcmp(benchmark, "thrust") == 0 ||
+          strcmp(benchmark, "rocrand") == 0 || strcmp(benchmark, "rocthrust") == 0);
 }
 
 const char *gpu_suite_build_benchmark_compiler(

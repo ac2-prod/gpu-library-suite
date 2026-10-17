@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
+from .families import AMD_BENCHMARKS
 from .hashing import deterministic_json_sha256
 
 
@@ -53,16 +54,18 @@ def validate_entry(entry: Mapping[str, Any]) -> Dict[str, Any]:
     missing = REQUIRED_FIELDS.difference(entry.keys())
     if missing:
         raise ManifestError("missing manifest fields: {0}".format(sorted(missing)))
-    if entry["build_profile"] not in {"cpu-cuda", "openacc"}:
-        raise ManifestError("invalid build_profile")
-    if entry["implementation"] not in {"cpu", "cuda", "openacc"}:
-        raise ManifestError("invalid implementation")
-    expected_profile = "openacc" if entry["implementation"] == "openacc" else "cpu-cuda"
+    family = {"cpu", "hip", "openmp"} if entry["library"] in AMD_BENCHMARKS else {"cpu", "cuda", "openacc"}
+    if entry["implementation"] not in family:
+        raise ManifestError("invalid implementation for library")
+    if entry["library"] in AMD_BENCHMARKS:
+        expected_profile = entry["implementation"]
+    else:
+        expected_profile = "openacc" if entry["implementation"] == "openacc" else "cpu-cuda"
     if entry["build_profile"] != expected_profile:
         raise ManifestError("implementation and build_profile conflict")
     if entry["executable_role"] not in {"example", "benchmark"}:
         raise ManifestError("invalid executable_role")
-    if entry["compiler_language"] not in {"c", "cxx", "cuda", "fortran"}:
+    if entry["compiler_language"] not in {"c", "cxx", "cuda", "fortran", "hip"}:
         raise ManifestError("invalid compiler_language")
     if Path(entry["executable_path"]).name != entry["target_name"]:
         raise ManifestError("target_name and executable filename differ")
@@ -93,6 +96,11 @@ def validate_entry(entry: Mapping[str, Any]) -> Dict[str, Any]:
         raise ManifestError("invalid supported_cpu_backends")
     if entry["implementation"] != "cpu" and supported:
         raise ManifestError("GPU artifacts cannot advertise CPU backends")
+    if "cpu-aocl-sparse" in supported or entry["backend_variant"] == "aocl-sparse":
+        if (entry["library"] != "rocsparse" or entry["implementation"] != "cpu"
+                or supported != ["cpu-aocl-sparse"]
+                or entry["backend_variant"] != "aocl-sparse"):
+            raise ManifestError("AOCL Sparse artifact/backend identity mismatch")
     if not isinstance(entry["global_configure_flags"], str):
         raise ManifestError("global_configure_flags must be a string")
     for name in REQUIRED_FIELDS.difference({

@@ -15,13 +15,21 @@ typedef enum {
   GPU_SUITE_BENCHMARK_CUSPARSE,
   GPU_SUITE_BENCHMARK_CUSOLVER,
   GPU_SUITE_BENCHMARK_CURAND,
-  GPU_SUITE_BENCHMARK_THRUST
+  GPU_SUITE_BENCHMARK_THRUST,
+  GPU_SUITE_BENCHMARK_ROCFFT,
+  GPU_SUITE_BENCHMARK_ROCBLAS,
+  GPU_SUITE_BENCHMARK_ROCSPARSE,
+  GPU_SUITE_BENCHMARK_ROCSOLVER,
+  GPU_SUITE_BENCHMARK_ROCRAND,
+  GPU_SUITE_BENCHMARK_ROCTHRUST
 } gpu_suite_benchmark_kind;
 
 typedef enum {
   GPU_SUITE_IMPLEMENTATION_CPU,
   GPU_SUITE_IMPLEMENTATION_CUDA,
-  GPU_SUITE_IMPLEMENTATION_OPENACC
+  GPU_SUITE_IMPLEMENTATION_OPENACC,
+  GPU_SUITE_IMPLEMENTATION_HIP,
+  GPU_SUITE_IMPLEMENTATION_OPENMP
 } gpu_suite_implementation;
 
 typedef enum {
@@ -105,6 +113,7 @@ void gpu_suite_options_usage(FILE *stream, const char *program,
                              gpu_suite_benchmark_kind benchmark);
 
 const char *gpu_suite_benchmark_name(gpu_suite_benchmark_kind value);
+bool gpu_suite_benchmark_is_amd(gpu_suite_benchmark_kind value);
 const char *gpu_suite_implementation_name(gpu_suite_implementation value);
 const char *gpu_suite_scope_name(gpu_suite_scope value);
 const char *gpu_suite_format_name(gpu_suite_output_format value);

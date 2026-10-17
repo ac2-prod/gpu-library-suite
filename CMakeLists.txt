@@ -20,6 +20,18 @@ option(GPU_SUITE_BUILD_CPU "Build CPU implementations" ON)
 option(GPU_SUITE_BUILD_CUDA "Build direct CUDA implementations" OFF)
 option(GPU_SUITE_BUILD_OPENACC "Build OpenACC implementations" OFF)
 option(GPU_SUITE_BUILD_TESTS "Build and register local tests" ON)
+set(GPU_SUITE_VENDOR "nvidia" CACHE STRING "Vendor family: nvidia or amd (separate build trees)")
+set_property(CACHE GPU_SUITE_VENDOR PROPERTY STRINGS nvidia amd)
+option(GPU_SUITE_BUILD_HIP "Build AMD native HIP implementations" OFF)
+option(GPU_SUITE_BUILD_OPENMP "Build AMD OpenMP target implementations" OFF)
+if(NOT GPU_SUITE_VENDOR MATCHES "^(nvidia|amd)$")
+  message(FATAL_ERROR "GPU_SUITE_VENDOR must be nvidia or amd")
+endif()
+if(DEFINED GPU_SUITE_CONFIGURED_VENDOR AND
+   NOT GPU_SUITE_CONFIGURED_VENDOR STREQUAL GPU_SUITE_VENDOR)
+  message(FATAL_ERROR "Use a new build tree when changing vendor")
+endif()
+set(GPU_SUITE_CONFIGURED_VENDOR "${GPU_SUITE_VENDOR}" CACHE INTERNAL "Build-tree vendor")
 set(GPU_SUITE_SOURCE_LANGUAGE "c-cpp" CACHE STRING "Source family: c-cpp or fortran (separate build trees)")
 set_property(CACHE GPU_SUITE_SOURCE_LANGUAGE PROPERTY STRINGS c-cpp fortran)
 if(NOT GPU_SUITE_SOURCE_LANGUAGE MATCHES "^(c-cpp|fortran)$")
@@ -30,6 +42,45 @@ if(DEFINED GPU_SUITE_CONFIGURED_SOURCE_LANGUAGE AND
   message(FATAL_ERROR "Use a new build tree when changing source language")
 endif()
 set(GPU_SUITE_CONFIGURED_SOURCE_LANGUAGE "${GPU_SUITE_SOURCE_LANGUAGE}" CACHE INTERNAL "Build-tree language")
+
+if(GPU_SUITE_VENDOR STREQUAL "amd")
+  set(GPU_SUITE_AMD_LIBRARIES "rocfft;rocblas;rocsparse;rocsolver;rocrand;rocthrust"
+      CACHE STRING "AMD library subset (semicolon separated)")
+  set(_amd_known_libraries rocfft rocblas rocsparse rocsolver rocrand rocthrust)
+  set(_amd_seen_libraries "")
+  if(NOT GPU_SUITE_AMD_LIBRARIES)
+    message(FATAL_ERROR "GPU_SUITE_AMD_LIBRARIES must be nonempty")
+  endif()
+  foreach(_library IN LISTS GPU_SUITE_AMD_LIBRARIES)
+    if(NOT _library IN_LIST _amd_known_libraries OR _library IN_LIST _amd_seen_libraries)
+      message(FATAL_ERROR "GPU_SUITE_AMD_LIBRARIES contains an unknown or duplicate library: ${_library}")
+    endif()
+    list(APPEND _amd_seen_libraries "${_library}")
+  endforeach()
+  if(NOT GPU_SUITE_SOURCE_LANGUAGE STREQUAL "c-cpp" OR
+     GPU_SUITE_BUILD_CUDA OR GPU_SUITE_BUILD_OPENACC)
+    message(FATAL_ERROR "AMD currently supports C/C++ CPU, HIP or OpenMP profiles only")
+  endif()
+  if((GPU_SUITE_BUILD_CPU AND (GPU_SUITE_BUILD_HIP OR GPU_SUITE_BUILD_OPENMP)) OR
+     (GPU_SUITE_BUILD_HIP AND GPU_SUITE_BUILD_OPENMP))
+    message(FATAL_ERROR "Use separate CPU, HIP and OpenMP build trees for AMD")
+  endif()
+  if(GPU_SUITE_BUILD_HIP)
+    set(GPU_SUITE_AMD_BUILD_PROFILE hip)
+  elseif(GPU_SUITE_BUILD_OPENMP)
+    set(GPU_SUITE_AMD_BUILD_PROFILE openmp)
+  else()
+    set(GPU_SUITE_AMD_BUILD_PROFILE cpu)
+  endif()
+  if(DEFINED GPU_SUITE_CONFIGURED_AMD_PROFILE AND
+     NOT GPU_SUITE_CONFIGURED_AMD_PROFILE STREQUAL GPU_SUITE_AMD_BUILD_PROFILE)
+    message(FATAL_ERROR "Use a new build tree when changing AMD profile")
+  endif()
+  set(GPU_SUITE_CONFIGURED_AMD_PROFILE "${GPU_SUITE_AMD_BUILD_PROFILE}"
+      CACHE INTERNAL "AMD build-tree profile")
+elseif(GPU_SUITE_BUILD_HIP OR GPU_SUITE_BUILD_OPENMP)
+  message(FATAL_ERROR "HIP and OpenMP target profiles require GPU_SUITE_VENDOR=amd")
+endif()
 
 if(GPU_SUITE_BUILD_OPENACC AND
    (GPU_SUITE_BUILD_CPU OR GPU_SUITE_BUILD_CUDA))
@@ -42,9 +93,9 @@ set(GPU_SUITE_CPU_BLAS_BACKEND "ONEMKL" CACHE STRING
 set_property(CACHE GPU_SUITE_CPU_BLAS_BACKEND PROPERTY STRINGS
              ONEMKL OPENBLAS GENERIC_CBLAS)
 set(GPU_SUITE_CPU_SPARSE_BACKEND "ONEMKL" CACHE STRING
-    "CPU sparse provider: ONEMKL or REFERENCE")
+    "CPU sparse provider: ONEMKL, AOCLSPARSE (AMD), or REFERENCE")
 set_property(CACHE GPU_SUITE_CPU_SPARSE_BACKEND PROPERTY STRINGS
-             ONEMKL REFERENCE)
+             ONEMKL AOCLSPARSE REFERENCE)
 set(GPU_SUITE_CPU_LAPACK_BACKEND "ONEMKL" CACHE STRING
     "CPU LAPACKE provider: ONEMKL, OPENBLAS, or GENERIC_LAPACKE")
 set_property(CACHE GPU_SUITE_CPU_LAPACK_BACKEND PROPERTY STRINGS
@@ -155,6 +206,10 @@ if(GPU_SUITE_BUILD_OPENACC AND GPU_SUITE_SOURCE_LANGUAGE STREQUAL "c-cpp")
   endif()
 endif()
 
+if(GPU_SUITE_VENDOR STREQUAL "amd")
+  include(GpuSuiteAmd)
+endif()
+
 if(GPU_SUITE_SOURCE_LANGUAGE STREQUAL "fortran")
   include(GpuSuiteFortran)
   gpu_suite_enable_fortran()
@@ -166,7 +221,11 @@ endif()
 
 add_subdirectory(common/c-cpp)
 
-if(GPU_SUITE_SOURCE_LANGUAGE STREQUAL "fortran")
+if(GPU_SUITE_VENDOR STREQUAL "amd")
+  foreach(_amd_library IN LISTS GPU_SUITE_AMD_LIBRARIES)
+    add_subdirectory(amd/c-cpp/${_amd_library})
+  endforeach()
+elseif(GPU_SUITE_SOURCE_LANGUAGE STREQUAL "fortran")
   add_subdirectory(nvidia/fortran)
 else()
 foreach(_gpu_suite_library cufft cublas cusparse cusolver curand thrust)

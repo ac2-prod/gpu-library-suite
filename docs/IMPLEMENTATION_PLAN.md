@@ -5,12 +5,13 @@
 This document owns implementation phases, deliverables, dependencies,
 acceptance criteria, validation activities, risks, and unresolved decisions. It
 does not redefine command-line behavior, mathematical problems, result schemas,
-or Pegasus operating procedures. Those specifications are authoritative in:
+or system operating procedures. Those specifications are authoritative in:
 
 - [`PROJECT_SPECIFICATION.md`](PROJECT_SPECIFICATION.md)
 - [`BENCHMARK_PROTOCOL.md`](BENCHMARK_PROTOCOL.md)
 - [`RESULT_SCHEMA.md`](RESULT_SCHEMA.md)
 - [`PEGASUS_EXECUTION.md`](PEGASUS_EXECUTION.md)
+- [`jobs/sirius/README.md`](../jobs/sirius/README.md)
 
 The decision-complete details below are implementation requirements and inputs
 to the Phase 1 specification-delta gate. Once synchronized, each owning
@@ -22,6 +23,15 @@ completed implementation and documentation. The phase criteria below describe
 implementation and measurement validation; they do not require publication of
 private measurement artifacts or additional general-purpose measurement
 infrastructure before this code publication.
+
+The original NVIDIA Phases 1–6 below retain their historical scope. The later
+[AMD C/C++ and Sirius stages](#amd-cc-and-sirius-development-stages) have separate
+approval gates. The recorded rocFFT build/basic-smoke milestone and the later
+36-artifact six-family build are complete at their respective source snapshots.
+The later focused jobs completed basic numerical smoke for the five remaining
+families. NVIDIA local/fixture coexistence checks passed; the real Pegasus
+build/smoke and performance evaluation remain open. Further real execution
+requires separate approval.
 
 ## Planning baseline and cross-phase constraints
 
@@ -43,8 +53,14 @@ Implementation and validation stay inside the repository, except for small
 artifacts under `/tmp/gpu-library-suite-local-build`. They do not use remote
 access, scheduler/accounting commands, network access, package installation, or
 Git-writing commands. They do not access Pegasus filesystems from the local
-host. Job submission and site inspection remain human actions, and all
-unavailable tests are reported rather than inferred successful.
+host. Pegasus submission remains a human action. Sirius follows the latest local Shell
+and separately approved noninteractive SSH/scheduler policy in its owning
+operations document. Unavailable tests are reported rather than inferred successful.
+The current AMD/Sirius implementation permits necessary source reads and
+writes over the existing SSHFS mount, with local validation on a copied tree.
+The completed rocFFT baseline is separate from future real execution, which needs
+explicit approval under [Sirius operations](../jobs/sirius/README.md); neither
+this plan nor a local test pass grants remote permission.
 
 ### Language enablement and CMake compatibility
 
@@ -1145,6 +1161,276 @@ covers real NVHPC/CPU-provider/GPU execution, 6480 verified rows across six node
 per wave and two waves, aggregation and six figures. This evidence is separate
 from source completion and CPU CI; its recorded limits and private-data boundary remain.
 
+## AMD C/C++ and Sirius development stages
+
+AMD C/C++ and Sirius are approved development targets. Stages 1 and 2 and the
+first rocFFT build/basic-smoke milestone are complete for the recorded source
+snapshot in [VALIDATION_REPORT](VALIDATION_REPORT.md#amd-rocfft-sirius-baseline).
+The expansion to rocBLAS, rocSPARSE, rocSOLVER, rocRAND and rocThrust includes
+CPU/HIP/OpenMP teaching sources, benchmarks, CMake integration, strict
+provenance and local tests. The separately approved AOCL Sparse follow-up
+verified all 36 real build artifacts at its recorded snapshot. Subsequent
+focused jobs passed the remaining five families' basic numerical smoke; see
+[the recorded results](VALIDATION_REPORT.md#amd-focused-numerical-smoke).
+NVIDIA local/fixture coexistence checks passed, while the real Pegasus
+build/smoke remains open. Prepare a reviewed Git commit for that check using
+[the Git handoff procedure](PEGASUS_EXECUTION.md#git経由の検証版反映).
+Performance evaluation follows coexistence acceptance and separate
+resource/execution approval. CPU worker-count and complete loaded-library
+evidence limitations remain open, independently of numerical smoke.
+The teaching inventory belongs to PROJECT_SPECIFICATION; Sirius operations
+belong to jobs/sirius/README.md.
+
+### Stage boundaries and approvals
+
+| Stage | Deliverable | Permission and stopping gate |
+| --- | --- | --- |
+| 0 — Investigation | Repository facts, safe existing local-test evidence, and revised development plan. | Read-only investigation does not authorize implementation or remote access. |
+| 1 — Local preparation | The documents, Sirius helper/probe, mock/fake tests, and fixed safe-validation entry listed below. | Completed historical local stage; its real SSH and scheduler counts remain zero. |
+| 2 — Environment probe | One approved lightweight probe and a report of observed environment facts. | Completed via one approved owner-authenticated interactive SSH in the integrated terminal; Codex reviewed saved output. Historical failed transport records remain unchanged. |
+| 3 — AMD implementation and validation | Complete all six CPU/HIP/OpenMP teaching/benchmark families; reconcile docs, CMake, result tooling and local checks; then final NVIDIA coexistence review. | All six families have recorded Sirius build/basic numerical smoke evidence. NVIDIA local/fixture checks passed; a Git-fixed Pegasus build/smoke remains open. CPU worker-count and complete loaded-library evidence limitations remain. Further real execution requires separate approval. |
+| 4 — Pilot | Verification, runtime/memory observations, and proposed production parameters. | Separately approve resources, sizes, submission count, and observation budget; analyze captured failures before another run. |
+| 5 — Fixed version and production | A reviewed fixed source revision, clean rebuild, immutable provenance, and raw measurements. | Obtain measurement-version commit approval and separate execution approval. Do not modify the measured source/configuration or mix provenance. |
+| 6 — Results and publication | Validated raw results, aggregation, six figures, and usage guidance. | Slide integration and push/PR/merge require their own authorization. Preserve private operational and measurement artifacts. |
+
+No stage automatically grants permission for the next. The current task does
+not authorize branch creation, commit or publication, or additional SSH,
+scheduler/accounting, remote builds or GPU execution. Preserve Pegasus rules,
+old runs and authentication state. A successful rocFFT baseline is not proof of
+other libraries or of later source snapshots.
+
+Expansion acceptance requires complete canonical source inventory, optional
+per-library compile/link gates, CPU-only builds without ROCm, independent
+CPU/HIP/OpenMP artifacts, real failure/nonfinite checks in fixtures, correct
+restoration/timing, and campaign-wide provenance rejection. Explicitly report
+unexecuted GPU/build checks. Do not start performance measurement until the
+full AMD implementation and final coexistence review have been accepted.
+
+The first six-family **allocated build-only** job requested 36 teaching/benchmark
+artifacts in three independent CPU/HIP/OpenMP trees. It verified 24 HIP/OpenMP
+artifacts; the CPU BLAS benchmark failed in an AOCL header and stopped the old
+grouped CPU build. Two CPU Sparse targets lacked their production dependency.
+The full evidence and incomplete CPU outcomes are recorded in
+[VALIDATION_REPORT](VALIDATION_REPORT.md#amd-six-family-sirius-build).
+The recovery aligns AMD CBLAS/LAPACKE feature-test preambles and
+their configure probes, attempts independent targets separately, and records
+unattempted targets and shared-dependency failures without retrying them.
+Successful subsets require complete manifest/provenance checks; no binary is
+accepted merely because a file exists. Profile and overall deadlines remain
+shared, and fixture tests cover continuation and partial-result integrity.
+The subsequent approved run verified 34 artifacts with no failed targets;
+only the two selected oneMKL Sparse CPU targets lacked their dependency.
+This confirms the recovery at its recorded source snapshot, not later edits.
+The owner-approved local follow-up adds explicit AOCL Sparse selection,
+teaching/benchmark API use, discovery/link validation, header/library and runtime
+provenance, and fixture regressions. It retains oneMKL and no-fallback rules.
+Sirius smoke inputs select the new provider explicitly and preserve all six
+CPU/HIP/OpenMP families. The separately approved run
+`sirius-amd-build-20261017T104351Z-a3697cae` (PBS `45731.pbs`) completed with
+36 verified artifacts: 12 each for CPU, HIP and OpenMP. The AOCL Sparse LP64/API
+compile/link check and both CPU Sparse artifacts passed. PBS and SSH exits
+were zero. Its source snapshot was
+`a3697cae2e446a51eec5a6107dedc39caf656fc8158b08e3591c59f0bc1148e6`;
+see [the retained build evidence](VALIDATION_REPORT.md#amd-six-family-build-with-aocl-sparse).
+Its operating contract belongs to
+[Sirius operations](../jobs/sirius/README.md#prepared-six-family-allocated-build).
+An unavailable CPU provider, disabled GPU target or failed compile/link is an
+explicit incomplete result; a zero configure exit alone cannot close this
+gate. The job gathers the remaining bounded CPU-provider inventory in the same
+allocation and applies the explicitly reviewed AOCL candidate-selection rule
+from the Sirius operating contract. CMake must verify the selected API link
+inputs; missing or ambiguous candidates remain disabled. It does not run the
+artifacts or replace a missing production CPU Sparse backend with a reference.
+The successful build closes the compile/link gate for that snapshot; it ran
+no generated programs. The later focused smoke closed the basic numerical
+gate for the five new families without resolving complete runtime-library
+bindings or effective worker counts. NVIDIA coexistence review is now the
+next gate before performance work. Build preparation itself grants no
+execution permission.
+
+The prebuilt six-family diagnostic smoke harness is implemented locally.
+It verifies the entire original source snapshot and all 36 retained artifacts
+before using the frozen runner/config/validator. Launcher identity is recorded
+separately from binary source provenance. The intended acceptance is 18 teaching
+example completions plus four distinct 72-row campaigns (serial/threaded CPU
+requests × JSONL/CSV), with every numerical metric checked against the owning
+protocol. Two preliminary JSONL campaigns supply runtime-library evidence and
+are excluded from the 288 main rows. Artifact-specific link/loader checks must
+not mistake headers or static inputs for DSOs. Loader diagnostics do not prove
+worker counts or GPU code-object identity and cannot be used as performance
+measurements. See the [Sirius diagnostic-smoke operating contract](../jobs/sirius/README.md#retained-six-family-diagnostic-smoke).
+Local fake validation is preparation only. The historical diagnostic attempts
+did not close their complete evidence gate; the later focused jobs established
+basic numerical operation separately, as recorded in VALIDATION_REPORT.
+The first approved attempt stopped before numerical execution on a missing
+native-HIP `link.d`; see the
+[retained failure](VALIDATION_REPORT.md#amd-six-family-smoke-link-evidence-failure).
+Recovery uses an explicit HIP link-command proof from the successful target's
+hash-verified verbose log and matching `link.txt`, preserving CPU/OpenMP depfile
+checks and actual loader observations. Every artifact's evidence must pass
+before any child command, including `ldd`. Local regression coverage includes
+HIP without a depfile, wrong target/compiler, changed or ambiguous logs, and
+failure on the last of 36 artifacts without launching an earlier one. Reusing
+the binaries preserves their original source identity; it does not authorize
+a new smoke job or close the runtime gate.
+
+The second allocated attempt exposed an additional depfile assumption: the
+OpenMP compiler's temporary image-wrapper object was treated as a persistent
+dependency. Recovery records object prerequisites as historical link inputs
+and continues to verify persistent libraries/archives/scripts and loaded DSO
+identities. Local acceptance must exercise the production parser on missing
+temporary objects, reject missing persistent dependencies, and cover the
+complete 36-artifact preflight without launching a child. Replaying saved
+depfile syntax with local fake files must be distinguished from checking live
+Sirius dependencies. No previous failed run is rewritten; another allocated
+smoke still requires separate approval.
+
+The third allocated attempt passed all 36 link and `ldd` checks and ran the
+first CPU BLAS example successfully, then exposed an invalid loader-parser
+assumption: initialization messages were required to have matching DSO
+finalization messages. The local recovery separates observed initialization
+identity from destructor events and from the owned child's exit/timeout proof.
+Acceptance includes replay of the saved trace without remote filesystem access,
+sanitized trace fixtures with missing DSO finalizers, strict PID/program/event
+validation, unchanged binary/provider/link binding and production-controller
+integration with successful, failed and timed-out fake children. Missing selected
+provider initialization remains a failure. Do not infer a complete trace or
+effective worker count from accepted initialization events. Preserve all failed
+run records. The later focused jobs verified basic numerical operation without
+closing this diagnostic harness's complete runtime-evidence gate.
+
+Local AOCL acceptance covers teaching and benchmark recurrence in both scopes,
+warm-up restoration including zero warm-up, API/cleanup failure handling,
+requested-versus-observed threads, version and environment recording, explicit
+LP64 header validation and ILP64 rejection, ordered static link inputs, missing
+dependency isolation, oneMKL/reference preservation, and campaign mismatch
+rejection. Those local fixtures establish neither real numerical correctness,
+loaded-DSO identity nor worker behavior. The later focused smoke supplies basic
+numerical evidence; complete loaded-library identity and effective worker
+counts remain unverified.
+
+### Stage 1 deliverables
+
+Document changes are limited to `AGENTS.md`, `PROJECT_SPECIFICATION.md`, this
+plan, `DECISIONS.md`, and `ADDING_A_NEW_VENDOR.md`. They establish development
+scope, ownership, the canonical `rocthrust_wrapper.hip` filename, the sole
+rocThrust OpenMP two-translation-unit exception, and the approval gates.
+Neither `RESULT_SCHEMA.md` nor `BENCHMARK_PROTOCOL.md` changes in this stage.
+
+The Sirius files are `jobs/sirius/README.md`, `jobs/sirius/remote.py`, and
+`jobs/sirius/probe.sh`, with `tests/python/test_sirius_remote.py`. The helper is
+limited to an approved probe, not arbitrary remote commands. All helper tests
+use mock/fake process boundaries. Their required coverage includes dry-run,
+script hashing, process-wide serialization, persistent approval/execution
+budgets, crashes/restarts, unknown execution outcomes, authentication/host-key/
+connection-limit failures, log separation, and absence of unrelated connection
+termination. Exact operating behavior is defined by the Sirius owner document.
+
+Reproducible local validation uses the existing CTest/Python frameworks and
+only these entry/profile files:
+
+- `tests/python/run_safe_local_validation.py`: a fixed CPU-only configure/build,
+  selected CTest, Python compatibility/unit, and suite-runner dry-run entry.
+- `tests/python/run_profiled_unittests.py`: a safe independent profile and
+  structured results, retaining existing profiles.
+- `tests/python/test_safe_local_validation.py`: selection, output boundaries,
+  classification, and missing/unclassified-test checks.
+
+Run against a bounded local source copy under
+`/tmp/gpu-library-suite-local-build`, with dedicated build, fixture, log, and
+cache paths. Do not build on the mounted source workspace or reconstruct the
+selection with ad hoc `python3 -c`. The fixed entry owns the exact selected test
+IDs and exclusion reasons. Unknown or disappeared tests require review rather
+than silent execution or omission. Reports distinguish `PASS`, `FAIL`, `SKIP`,
+`POLICY_EXCLUDED`, and `NOT_RUN_DEPENDENCY`, with test IDs, reasons, commands,
+tool versions, exit values, and stdout/stderr evidence. A prior test count is
+not a substitute for complete selected-test accounting.
+
+### Stage 1 acceptance and handoff
+
+Every condition below is required before Stage 1 is reported complete:
+
+- Actual SSH calls: zero. Actual scheduler/accounting operations: zero.
+- Every required remote-helper mock/fake test has executed and passed; a skip
+  or unexecuted required case does not satisfy the gate.
+- Existing safe local tests have run through the fixed entry, with classified
+  results and explicit reasons for every exclusion or unavailable dependency.
+- Changed files, `git diff`, `git diff --check`, and `git status --short` are
+  available for review, with unrelated edits preserved and no Git writes.
+- The full proposed Stage 2 `probe.sh` and its actual SHA-256 are presented,
+  together with target requirements, timeouts, connection budget, and the
+  requirements for the persistent local state location. Never invent the hash
+  before the final script exists.
+- The handoff explicitly stops before Stage 2; neither state registration nor
+  mock validation constitutes remote-execution approval.
+
+The initial Stage 2 limits are proposed in the
+[Sirius operating document](../jobs/sirius/README.md). Target identifiers,
+compiler paths, ROCm versions, scheduler details, queues/accounts, and GPU
+targets are not guessed during Stage 1. No actual probe or GPU validation is
+claimed until the separately approved action has run and its evidence exists.
+
+### First Stage 3 increment: rocFFT local acceptance
+
+The approved six source paths and workload belong to the project specification.
+Implement CPU FFTW serial/threaded, direct HIP/rocFFT, and OpenMP target/rocFFT
+through existing common CLI/timing/verification/result facilities. Integrate
+vendor-specific CMake profiles, real API compile/link detection, manifest,
+runner, validators, aggregation and display without changing NVIDIA meanings.
+
+Acceptance covers CPU-only build and positive/negative dependency fixtures,
+full-batch FFT/nonfinite/overflow validation, timing boundaries, both raw
+formats, runtime and artifact provenance, old NVIDIA compatibility, Python 3.9,
+shell syntax and whitespace. Fixtures cannot certify HIP compilation, device
+execution or OpenMP interoperation. Run related checks during development and
+one final fixed local validation; apply only reviewed verified bytes to the
+editing source after checking its baseline, then compare bytes without
+repeating full tests. Preserve all prior user changes, state and logs.
+
+Prepare `jobs/sirius/rocfft_build_smoke.sh` for a separately allocated compute
+node: three build trees, compiler/header/library resolution evidence, mandatory
+actual-device interoperation, small multiple-batch runs in both scopes, common
+validation, and retained per-step logs/exit values. Scheduler/account/queue,
+allocation command, selected GPU architecture, library roots, compiler choice,
+CPU threads and device mappings remain owner/site inputs. Never run that body
+on a login node or infer allocation settings from the login-node CPU count.
+Stop after local implementation, self-review, source application and report.
+
+### Stage 3 build and provenance gates
+
+Manual teaching builds may use `hipcc`. Native CMake HIP uses a supported Clang
+compiler, not the `hipcc` wrapper fixed as `CMAKE_HIP_COMPILER`. Determine
+compiler paths, ROCm versions, GPU targets, and conditional CMake requirements
+from the confirmed environment, retaining CPU-only configure without ROCm.
+Use the same `rocthrust_wrapper.hip` name in teaching/distribution, CMake, tests,
+and documentation; record both translation units' compile conditions and
+explicit link inputs. No AMD source or CMake target is part of Stage 1.
+
+Before implementing AMD result handling, update the owning
+[`RESULT_SCHEMA.md`](RESULT_SCHEMA.md) and
+[`BENCHMARK_PROTOCOL.md`](BENCHMARK_PROTOCOL.md) contracts. Separating runtime
+metadata from mathematical comparison keys must not allow different provenance
+inside one campaign. Preserve the approved mapping of each artifact to its
+compiler/build settings and binary, together with source, manifest, config,
+ROCm, resolved libraries, and runtime-environment identity across waves.
+
+Stage 3 regression tests must reject each of the following mismatches even
+when mathematical comparison keys match:
+
+- ROCm/runtime version or runtime-environment hash;
+- resolved-library identity, version, or hash;
+- compiler or either translation unit's build conditions;
+- binary hash inconsistent with the manifest's artifact mapping;
+- executable manifest, configuration, or source provenance.
+
+Also retain existing NVIDIA config/result interpretation, hash calculation,
+validation, and aggregation compatibility. Artifact-specific compiler/binary
+differences prescribed by a single approved manifest are not cross-campaign
+mixing; a result must match that artifact's fixed provenance. A production
+measurement requires a clean fixed revision and fresh build. Permission to
+commit that revision is separate from permission to push, create a PR, merge,
+or publish private data.
+
 ## External inputs and intentionally deferred scope
 
 The implementation plan is decision-complete without guessing external site
@@ -1155,12 +1441,16 @@ left to the implementer:
   library installation path, NVHPC CUDA selection, and shared output path.
 - Actual GPU/CPU performance, production-calibrated sizes/repeats after pilot,
   and anomaly/exclusion policy.
-- Future AMD C/C++/Fortran, Miyabi, TSUBAME4.0,
-  and Sirius implementation. Furo remains outside the approved job scope.
+- AMD teaching inputs and Sirius site evidence needed for the later approved
+  development stages above; approval of Stage 1 does not supply these facts or
+  authorize later execution.
+- Future AMD Fortran, Miyabi, and TSUBAME4.0 implementation. Furo remains outside
+  the approved job scope.
 
 The owner has approved MIT and the copyright-holder attribution described in
 the [README](../README.md#license), together with publication operations for the
-selected [code scope](../README.md#publication-scope).
+selected historical [code scope](../README.md#publication-scope). That approval
+does not authorize AMD/Sirius Git writes or publication.
 
 No empty directory, dummy target, or placeholder implementation is created for
 deferred source areas. Configuration examples use explicit placeholders for
