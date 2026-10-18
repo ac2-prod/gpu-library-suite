@@ -175,6 +175,27 @@ def environment_controls(environment):
     return controls
 
 
+def check_runtime_environment(environment, expected, diagnostic_path=None):
+    """Keep exact equality and persist differences before MPI can stop peers."""
+    observed = environment_controls(environment)
+    if observed == expected:
+        return
+    differences = {
+        key: dict(expected=expected.get(key), observed=observed.get(key),
+                  expected_present=key in expected, observed_present=key in observed)
+        for key in sorted(set(expected) | set(observed))
+        if expected.get(key) != observed.get(key) or (key in expected) != (key in observed)
+    }
+    record = dict(status="MISMATCH", timestamp=runner.utc_timestamp(),
+                  hostname=socket.gethostname(), scheduler_job_id=environment.get("PBS_JOBID"),
+                  rank=environment.get("OMPI_COMM_WORLD_RANK"),
+                  differences=differences)
+    if diagnostic_path is not None:
+        save(diagnostic_path, record)
+    # Only compared runtime controls are included, never the full environment.
+    raise ValueError("Runtime environment changed: " + dump_bytes(record).decode("utf-8").strip())
+
+
 def inputs(plan):
     config, manifest, metadata = artifact_inputs(plan)
     runtime = checked_json(plan["runtime"])
@@ -337,14 +358,14 @@ def bind_worker(plan):
     require(set(os.sched_getaffinity(0)) == cpus, "Could not bind the requested 24 CPUs")
 
 
-def observe(plan, runtime, environment=None):
+def observe(plan, runtime, environment=None, diagnostic_path=None):
     env = os.environ if environment is None else environment
     rank, size, local = (int(env.get(key, "-1")) for key in
                          ("OMPI_COMM_WORLD_RANK", "OMPI_COMM_WORLD_SIZE", "OMPI_COMM_WORLD_LOCAL_RANK"))
     require(size == NODES and rank in range(NODES) and local == 0, "MPI rank/size/local rank mismatch")
     effective = worker_environment(env, Path("/unused-node-path"))
-    controls = environment_controls(effective)
-    require(controls == runtime["sirius_execution_checks"]["environment"], "Runtime environment changed")
+    check_runtime_environment(effective, runtime["sirius_execution_checks"]["environment"],
+                              diagnostic_path)
     for item in runtime["sirius_execution_checks"]["files"]:
         checked_file(item)
     unique_libraries = {}
@@ -503,7 +524,9 @@ def run_worker(run_root, plan, wave_hash):
     wave = load(wave_root / "wave-metadata.json")
     require(wave["launch_plan_sha256"] == digest(plan), "Wave/launch plan mismatch")
     config, manifest, metadata, runtime = inputs(plan)
-    observation = observe(plan, runtime)
+    diagnostic = (run_root / "launch" / str(plan["wave"]) / "observations" /
+                  (os.environ.get("OMPI_COMM_WORLD_RANK", "-1") + "-worker-runtime-mismatch.json"))
+    observation = observe(plan, runtime, diagnostic_path=diagnostic)
     rank = observation["rank"]
     require(observation == wave["preflight_observations"][rank], "Worker changed since preflight")
     binding = wave["rank_host_mapping"][rank]
@@ -736,7 +759,9 @@ def main(argv=None):
         bind_worker(plan)
         if args.action == "observe":
             _, _, _, runtime = inputs(plan)
-            record = observe(plan, runtime)
+            diagnostic = (run_root / "launch" / str(plan["wave"]) / "observations" /
+                          (os.environ["OMPI_COMM_WORLD_RANK"] + "-preflight-runtime-mismatch.json"))
+            record = observe(plan, runtime, diagnostic_path=diagnostic)
             save(run_root / "launch" / str(plan["wave"]) / "observations" / (str(record["rank"]) + ".json"), record)
             return 0
         require(args.wave_sha256 is not None, "Worker requires the master wave hash")

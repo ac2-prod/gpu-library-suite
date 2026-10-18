@@ -351,6 +351,18 @@ explicit tool/document/test path list. See the provenance rule in
 [`RESULT_SCHEMA.md`](../../docs/RESULT_SCHEMA.md). Do not reuse the historical
 dirty pilot binaries or overwrite earlier build/run paths.
 
+Runtime environment mismatches retain the same exact comparison after duplicate
+search-path entries are removed. Before stopping, the launcher writes the
+differing control names, expected/observed values, hostname, rank and job ID to
+`launch/<wave>/observations/<rank>-preflight-runtime-mismatch.json` (or
+`<rank>-worker-runtime-mismatch.json` during measurement startup). The initial
+job-master check writes `preparation/runtime-mismatch.json`. These files are
+created exclusively and flushed before the error is raised; the same diagnostic
+is included in stderr. Only compared runtime controls are recorded, not the full
+environment. A mismatch still blocks measurement and never updates the approved
+runtime input. Per-run PBS dispatchers must join tab-prefixed `qstat` continuation
+lines before parsing attributes; actual duplicate attributes remain errors.
+
 #### Clean build with a minimal CPU/APU correspondence check
 
 The following describes the clean-build preparation, now executed as recorded

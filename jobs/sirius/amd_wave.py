@@ -60,8 +60,8 @@ def run(request, output):
     try:
         production.clean_source(processes, manifest, request["source_revision"])
         environment = production.worker_environment(os.environ, output)
-        production.require(production.environment_controls(environment) ==
-                           runtime["sirius_execution_checks"]["environment"], "Runtime environment changed")
+        production.check_runtime_environment(environment, runtime["sirius_execution_checks"]["environment"],
+                                             output / "runtime-mismatch.json")
         nodefile = Path(os.environ.get("PBS_NODEFILE", ""))
         production.require(nodefile.is_absolute() and nodefile.is_file(), "Missing PBS nodefile")
         frozen_nodefile = output / "pbs-nodefile.txt"

@@ -198,9 +198,35 @@ class SiriusProductionTests(unittest.TestCase):
                    OMPI_COMM_WORLD_LOCAL_RANK="0", ROCR_VISIBLE_DEVICES="0")
         with mock.patch.object(production.socket, "gethostname", return_value="node0"), \
                 mock.patch.object(production.os, "sched_getaffinity", return_value=set(range(48, 72)), create=True):
-            self.assertEqual(production.observe(self.plan, self.runtime, env), self.observations()[0])
+            diagnostic = self.work / "runtime-mismatch.json"
+            before = dump_bytes(self.runtime)
+            self.assertEqual(production.observe(self.plan, self.runtime, env,
+                                                diagnostic_path=diagnostic), self.observations()[0])
+            self.assertFalse(diagnostic.exists())
+            changed = dict(env, HSA_XNACK="1", LD_LIBRARY_PATH="/different/lib",
+                           PRIVATE_TOKEN="must-not-be-recorded")
+            with self.assertRaisesRegex(ValueError, "Runtime environment") as caught:
+                production.observe(self.plan, self.runtime, changed, diagnostic_path=diagnostic)
+            record = load(diagnostic)
+            self.assertEqual(record["status"], "MISMATCH")
+            self.assertEqual((record["hostname"], record["rank"], record["scheduler_job_id"]),
+                             ("node0", "0", "42.fixture"))
+            self.assertEqual(record["differences"], {
+                "HSA_XNACK": dict(expected=None, observed="1", expected_present=True, observed_present=True),
+                "LD_LIBRARY_PATH": dict(expected=None, observed="/different/lib",
+                                        expected_present=True, observed_present=True)})
+            self.assertIn('"observed":"1"', str(caught.exception))
+            self.assertNotIn("PRIVATE_TOKEN", diagnostic.read_text())
+            self.assertNotIn("must-not-be-recorded", str(caught.exception))
+            self.assertEqual(dump_bytes(self.runtime), before)
+            saved = diagnostic.read_bytes()
+            with self.assertRaises(FileExistsError):
+                production.observe(self.plan, self.runtime, changed, diagnostic_path=diagnostic)
+            self.assertEqual(diagnostic.read_bytes(), saved)
+            expected = dict(self.runtime["sirius_execution_checks"]["environment"],
+                            PATH="/first/bin:/second/bin")
             with self.assertRaisesRegex(ValueError, "Runtime environment"):
-                production.observe(self.plan, self.runtime, dict(env, HSA_XNACK="1"))
+                production.check_runtime_environment(dict(env, PATH="/second/bin:/first/bin"), expected)
             with self.assertRaisesRegex(ValueError, "visibility"):
                 production.observe(self.plan, self.runtime, dict(env, ROCR_VISIBLE_DEVICES="1"))
 
