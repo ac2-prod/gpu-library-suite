@@ -27,7 +27,7 @@ CPU_FIXTURE_TEST_IDS = frozenset({
 # Audited IDs, not counts. Update a digest only after reviewing every new/removed
 # case. Checked before unittest discovery imports any test modules.
 AUDITED_MODULE_IDS = {'test_sirius_amd_prepare': 'ac683d636a4ed5c4cc2869c2405869c35dbc32c35d76ac3a807d0562c808dea5',
- 'test_sirius_amd_production': 'c1904ca8e8d1d2a33b3156f5fa76bdce0776871ac920eea5550401db5438d80a',
+ 'test_sirius_amd_production': '25f385db672ea9029bbab606a59157d99da8870bc9fe96222ba04746a384507b',
  'test_sirius_amd_smoke': '13f91475ce925b866ddf4739eb4b2610d04629fd20e6f00ab849fae4aa9c23e5',
  'test_sirius_amd_smoke_campaign': '760c2e71e6fa834acda03826cc9c0a23bff15d0ea7dbbd908e63415e82ef4c8b',
  'test_sirius_amd_smoke_evidence': 'aacef55694427cf7102c35348091e8786e82aa28347c5fe922b9dee711cec142',

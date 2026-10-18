@@ -184,6 +184,31 @@ class SiriusProductionTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.master()
 
+    def test_blas_solver_correction_keeps_paired_two_wave_counts_and_rejects_missing_rows(self):
+        for family, definition in self.config["benchmarks"].items():
+            definition["enabled"] = family in {"rocblas", "rocsolver"}
+        Path(self.plan["config"]["path"]).write_bytes(dump_bytes(self.config))
+        self.plan["config"]["sha256"] = production.digest(self.config)
+        for row in self.prototypes:
+            row["config_sha256"] = self.plan["config"]["sha256"]
+        self.assertEqual(production.expected_counts(self.config), (36, 180))
+        for wave in (0, 1):
+            self.plan["wave"] = wave
+            self.assertEqual(self.master(), 0)
+            report = load(self.run_root / "waves" / str(wave) / "artifact-manifest.json")
+            self.assertEqual((report["expected_rows"], report["observed_rows"]), (1080, 1080))
+            self.assertEqual(load(self.run_root / "waves" / str(wave) / "wave-metadata.json")["expected_rows"], 1080)
+        self.assertEqual(self.process_count, 432)
+        rows = self.rows_for(0)
+        self.assertEqual({r["benchmark"] for r in rows}, {"rocblas", "rocsolver"})
+        self.assertEqual({r["implementation"] for r in rows}, {"cpu", "hip", "openmp"})
+        with self.assertRaisesRegex(ValueError, "Missing or extra"):
+            production.validate_rows(rows[:-1], self.plan, self.bindings[0], self.config,
+                                     self.manifest, self.runtime)
+        self.config["benchmarks"]["rocsolver"]["enabled"] = False
+        with self.assertRaisesRegex(ValueError, "paired BLAS/Solver"):
+            production.expected_counts(self.config)
+
     def test_unresolved_duplicate_or_incomplete_placement_never_starts_mpi(self):
         self.plan["placement"] = None
         with self.assertRaisesRegex(ValueError, "unresolved"):

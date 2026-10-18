@@ -152,6 +152,7 @@ def artifact_inputs(plan):
     require(config["run_mode"] == "production" and config.get("vendor") == "amd"
             and config["cpu_threads"] == 24 and config["output_format"] == "jsonl"
             and config["continue_on_failure"] is False, "Expected AMD production configuration")
+    expected_counts(config)
     manifest, _ = runner.load_manifest(checked_file(plan["manifest"]))
     expected = {(family, variant) for family in AMD_BENCHMARKS for variant in ("cpu", "hip", "openmp")}
     entries = manifest["entries"]
@@ -403,11 +404,20 @@ def context_for(config, plan, binding, runtime):
                                         for key in runner.AOCL_SPARSE_ENVIRONMENT_KEYS})
 
 
+def expected_counts(config):
+    """Keep the full campaign and the paired BLAS/Solver correction bounded."""
+    enabled = {name for name, definition in config["benchmarks"].items() if definition["enabled"]}
+    require(enabled == set(AMD_BENCHMARKS) or enabled == {"rocblas", "rocsolver"},
+            "Expected all AMD families or the paired BLAS/Solver correction")
+    return 18 * len(enabled), 90 * len(enabled)
+
+
 def schedule_for(config, manifest, context):
     schedule = runner.build_schedule(config, manifest, context)
-    require(len(schedule) == INVOCATIONS and sum(i["scope_settings"]["trials"] for i in schedule) == ROWS
+    invocations, rows = expected_counts(config)
+    require(len(schedule) == invocations and sum(i["scope_settings"]["trials"] for i in schedule) == rows
             and all(i["entry"] and not i["prerequisite_failure"] for i in schedule),
-            "Incomplete 108-invocation/540-row node schedule")
+            "Incomplete {0}-invocation/{1}-row node schedule".format(invocations, rows))
     return schedule
 
 
@@ -619,7 +629,8 @@ def prepare_wave(run_root, plan, bindings, observations):
     save(wave_root / "job-master/runtime-environment-evidence.json", evidence)
     wave = dict(wave_metadata_schema_version=1, run_id=plan["run_id"], wave=plan["wave"],
                 scheduler="PBS", scheduler_job_id=observations[0]["scheduler_job_id"],
-                expected_node_count=NODES, observed_node_count=NODES, expected_rows=NODES * ROWS,
+                expected_node_count=NODES, observed_node_count=NODES,
+                expected_rows=NODES * expected_counts(config)[1],
                 effective_config_sha256=plan["config"]["sha256"],
                 executables_manifest_sha256=plan["manifest"]["sha256"],
                 runtime_environment_sha256=plan["runtime"]["sha256"],
@@ -656,7 +667,7 @@ class LoggedRunner:
 def validate_rows(rows, plan, binding, config, manifest, runtime):
     context = context_for(config, plan, binding, runtime)
     schedule = schedule_for(config, manifest, context)
-    require(len(rows) == ROWS, "Missing or extra node rows")
+    require(len(rows) == expected_counts(config)[1], "Missing or extra node rows")
     report = validate_campaign(rows, config, plan["config"]["sha256"], manifest)
     require(report["validation_status"] == "pass" and report["block_count"] == 1,
             "Node campaign did not pass")
@@ -720,7 +731,7 @@ def run_worker(run_root, plan, wave_hash):
         runner.subprocess = adapter
         code = runner.execute_schedule(schedule, context, node / "raw.jsonl", plan["config"]["sha256"],
                                        plan["runtime"]["sha256"], metadata, None, None)
-        require(code == 0 and adapter.calls == INVOCATIONS, "Incomplete benchmark invocation count")
+        require(code == 0 and adapter.calls == len(schedule), "Incomplete benchmark invocation count")
         rows = load_raw_results(node / "raw.jsonl")
         result["validation"] = validate_rows(rows, plan, binding, config, manifest, runtime)
         result["status"] = "COMPLETE"
@@ -755,12 +766,14 @@ def collect_wave(run_root, plan, mpi_exit):
     """Retain incomplete nodes and inventory their evidence; never fill missing rows."""
     wave_root = run_root / "waves" / str(plan["wave"])
     wave = load(wave_root / "wave-metadata.json")
-    report = dict(status="FAILED", mpi_exit=mpi_exit, expected_rows=NODES * ROWS,
+    report = dict(status="FAILED", mpi_exit=mpi_exit, expected_rows=wave["expected_rows"],
                   observed_rows=0, errors=[], nodes=[], files=[], loaded_libraries_verified=False,
                   observed_cpu_worker_count=None, wave_metadata_sha256=sha256_file(wave_root / "wave-metadata.json"))
     all_rows = []
     try:
         config, manifest, _, runtime = inputs(plan)
+        invocations, rows_per_node = expected_counts(config)
+        require(report["expected_rows"] == NODES * rows_per_node, "Wave row count differs from config")
         require(wave["launch_plan_sha256"] == digest(plan), "Collection plan changed")
         require(sha256_file(wave_root / "job-master/runtime-environment-evidence.json")
                 == wave["runtime_environment_evidence_sha256"], "Missing or changed preflight evidence")
@@ -771,7 +784,7 @@ def collect_wave(run_root, plan, mpi_exit):
             try:
                 status = load(node / "node-status.json")
                 require(status["status"] == "COMPLETE" and status["exit_code"] == 0
-                        and status["benchmark_calls"] == INVOCATIONS
+                        and status["benchmark_calls"] == invocations
                         and status["wave_metadata_sha256"] == report["wave_metadata_sha256"],
                         "Missing successful node completion")
                 node_metadata = load(node / "node-metadata.json")
@@ -782,7 +795,7 @@ def collect_wave(run_root, plan, mpi_exit):
                         "Node metadata/observation mismatch")
                 commands = status["commands"]
                 schedule = schedule_for(config, manifest, expected_context)
-                require(len(commands) == INVOCATIONS, "Incomplete command evidence")
+                require(len(commands) == invocations, "Incomplete command evidence")
                 for command, item in zip(commands, schedule):
                     require(command["argv"] == item["argv"] and command["exit"] == 0
                             and command["timed_out"] is False, "Failed or unexpected command evidence")
@@ -796,7 +809,7 @@ def collect_wave(run_root, plan, mpi_exit):
             except (OSError, ValueError, KeyError, TypeError) as error:
                 report["errors"].append(binding["hostname"] + ": " + str(error))
         report["observed_rows"] = len(all_rows)
-        require(mpi_exit == 0 and not report["errors"] and len(all_rows) == NODES * ROWS,
+        require(mpi_exit == 0 and not report["errors"] and len(all_rows) == NODES * rows_per_node,
                 "MPI failure or incomplete six-host wave")
         report["validation"] = validate_campaign(all_rows, config, plan["config"]["sha256"], manifest)
         require(report["validation"]["block_count"] == NODES

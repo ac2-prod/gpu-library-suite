@@ -239,7 +239,10 @@ def select_aocl_candidates(env, disabled_root, deadline, clock=time.monotonic, s
         return found[0] if not errors else None, errors
 
     cblas_header, cblas_errors = collect("cblas_header", ("include", "include_LP64"), ("cblas.h",))
-    blis, blis_errors = collect("blis", ("lib", "lib_LP64"), ("libblis.so",))
+    # AOCL ships distinct serial and OpenMP shared libraries. These Sirius
+    # CPU series request multiple threads; never fall back to the serial BLIS.
+    blis, blis_errors = collect("blis", ("lib", "lib_LP64"), ("libblis-mt.so",))
+    report["blis_threading"] = "OPENMP"
     lapacke_header, lapacke_errors = collect("lapacke_header", ("include", "include_LP64"), ("lapacke.h",))
     lapacke, lapacke_library_errors = collect("lapacke_library", ("lib", "lib_LP64"), ("libflame.so", "liblapacke.so"))
     recipes = [

@@ -673,7 +673,7 @@ class SiriusAmdBuildTests(unittest.TestCase):
         (provider / "include/nested").mkdir(parents=True)
         (provider / "lib_LP64").mkdir()
         (provider / "include/cblas.h").write_text("cblas")
-        (provider / "lib_LP64/libblis.so").write_text("blis")
+        (provider / "lib_LP64/libblis-mt.so").write_text("blis")
         (provider / "include/nested/lapacke.h").write_text("must not recurse")
         (provider / "include/unrelated.h").write_text("unrelated")
         with mock.patch.object(build.subprocess, "Popen") as popen:
@@ -681,11 +681,11 @@ class SiriusAmdBuildTests(unittest.TestCase):
             popen.assert_not_called()
         self.assertFalse(result["automatic_provider_selection"])
         self.assertFalse(result["recursive_search"])
-        self.assertEqual({Path(row["path"]).name for row in result["candidates"]}, {"cblas.h", "libblis.so"})
+        self.assertEqual({Path(row["path"]).name for row in result["candidates"]}, {"cblas.h", "libblis-mt.so"})
         self.assertTrue(all(row["hash_status"] == "HASHED" for row in result["candidates"]))
 
     def test_explicit_provider_options_allow_only_corresponding_existing_inputs(self):
-        library = self.root / "libblis.so"
+        library = self.root / "libblis-mt.so"
         library.write_text("fake")
         extra = self.root / "libomp.so"
         extra.write_text("fake extra")
@@ -701,7 +701,7 @@ class SiriusAmdBuildTests(unittest.TestCase):
 
     def aocl_fixture(self, name="aocl"):
         root = self.root / name
-        for relative in ("include_LP64/cblas.h", "include_LP64/lapacke.h", "lib_LP64/libblis.so", "lib_LP64/libflame.so"):
+        for relative in ("include_LP64/cblas.h", "include_LP64/lapacke.h", "lib_LP64/libblis-mt.so", "lib_LP64/libblis.so", "lib_LP64/libflame.so"):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("Synthetic AOCL candidate " + relative)
@@ -880,7 +880,7 @@ class SiriusAmdBuildTests(unittest.TestCase):
         aliases = {}
         original_resolve = Path.resolve
         for directory, real_directory, names in (("include", "include_LP64", ("cblas.h", "lapacke.h")),
-                                                 ("lib", "lib_LP64", ("libblis.so", "libflame.so"))):
+                                                 ("lib", "lib_LP64", ("libblis-mt.so", "libflame.so"))):
             (root / directory).mkdir()
             aliases[root / directory] = root / real_directory
             for name in names:
@@ -893,17 +893,20 @@ class SiriusAmdBuildTests(unittest.TestCase):
             result = self.select_aocl(root)
             process.assert_not_called()
         self.assertTrue(all(row["status"] == "CANDIDATE_SELECTED" for row in result["providers"].values()))
+        self.assertEqual(result["blis_threading"], "OPENMP")
+        self.assertEqual(result["providers"]["CBLAS"]["ordered_libraries"][0]["resolved_path"],
+                         str(root / "lib_LP64/libblis-mt.so"))
         self.assertEqual(len(result["candidates"]["blis"]["files"]), 1)
         self.assertEqual(len(result["candidates"]["blis"]["files"][0]["aliases"]), 2)
         libraries = result["providers"]["LAPACKE"]["ordered_libraries"]
-        self.assertEqual([Path(item["resolved_path"]).name for item in libraries], ["libflame.so", "libblis.so"])
+        self.assertEqual([Path(item["resolved_path"]).name for item in libraries], ["libflame.so", "libblis-mt.so"])
         self.assertTrue(all(item["sha256"] == build.file_identity(item["resolved_path"])["sha256"] for item in libraries))
-        self.assertEqual(result["cmake_options"]["GPU_SUITE_GENERIC_LAPACKE_EXTRA_LIBRARIES"], str(root / "lib_LP64/libblis.so"))
+        self.assertEqual(result["cmake_options"]["GPU_SUITE_GENERIC_LAPACKE_EXTRA_LIBRARIES"], str(root / "lib_LP64/libblis-mt.so"))
         self.assertEqual(result["api_validation"], "DEFERRED_TO_CMAKE_COMPILE_LINK")
 
     def test_aocl_missing_ambiguous_escape_and_ilp64_inputs_reject(self):
         original_resolve = Path.resolve
-        for case in ("missing-root", "missing-header", "ambiguous-header", "ambiguous-library", "escape", "ilp64"):
+        for case in ("missing-root", "missing-header", "serial-only", "ambiguous-header", "ambiguous-library", "escape", "ilp64"):
             with self.subTest(case=case):
                 root = self.aocl_fixture(case)
                 aliases = {}
@@ -911,6 +914,9 @@ class SiriusAmdBuildTests(unittest.TestCase):
                     root = root / "absent"
                 elif case == "missing-header":
                     aliases[root / "include_LP64/cblas.h"] = root / "include_LP64/not-present.h"
+                elif case == "serial-only":
+                    # The serial library is present but must never be a fallback.
+                    aliases[root / "lib_LP64/libblis-mt.so"] = root / "lib_LP64/missing-mt.so"
                 elif case == "ambiguous-header":
                     (root / "include").mkdir()
                     (root / "include/cblas.h").write_text("distinct header")
@@ -926,7 +932,7 @@ class SiriusAmdBuildTests(unittest.TestCase):
                                    root / "lib_ILP64/provider.so")
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     destination.write_text("invalid candidate")
-                    aliases[root / "lib_LP64/libblis.so"] = destination
+                    aliases[root / "lib_LP64/libblis-mt.so"] = destination
                 def resolve(path, *args, **kwargs):
                     replacement = aliases.get(path)
                     return original_resolve(replacement if replacement is not None else path, *args, **kwargs)
@@ -945,7 +951,7 @@ class SiriusAmdBuildTests(unittest.TestCase):
 
     def test_aocl_unmarked_layout_is_recorded_without_claiming_verified_abi(self):
         root = self.root / "unmarked-aocl"
-        for relative in ("include/cblas.h", "include/lapacke.h", "lib/libblis.so", "lib/liblapacke.so"):
+        for relative in ("include/cblas.h", "include/lapacke.h", "lib/libblis-mt.so", "lib/liblapacke.so"):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("Unmarked synthetic candidate")
@@ -992,7 +998,7 @@ class SiriusAmdBuildTests(unittest.TestCase):
     def test_aocl_changed_files_and_link_order_are_rejected(self):
         root = self.aocl_fixture()
         selection = self.select_aocl(root)
-        library = root / "lib_LP64/libblis.so"
+        library = root / "lib_LP64/libblis-mt.so"
         library.write_text("changed after selection")
         with self.assertRaisesRegex(ValueError, "Selected AOCL input changed"):
             build.validate_aocl_selection(selection)

@@ -1010,6 +1010,24 @@ NVIDIA Fortran and AMD in separate campaigns with their own immutable provenance
 Align mathematical comparison fields without erasing vendor/runtime identities
 or merging differently sourced results into one campaign.
 
+For the AOCL parallel-BLIS correction, repeat rocBLAS and rocSOLVER in a new
+campaign with CPU, HIP and OpenMP measured together in every new node block.
+Retain all three cases, scope settings and five trials: 180 rows per node,
+1,080 per six-node wave and 2,160 across two waves. Do not pair a corrected CPU
+result with a GPU timing from the previous campaign. The previous 5,940
+numerically successful rows and failed-node evidence remain unchanged; the old
+BLAS/Solver timings describe their original linked providers. Unaffected FFT,
+Sparse, RAND and Thrust results retain their original campaign provenance and
+may be presented alongside the new two-family campaign, with separate campaign
+labels and aggregation. A corrected result never overwrites or silently merges
+into the earlier raw dataset.
+
+CPU thread labels distinguish the requested library setting from observed
+worker activity. Correct parallel-library selection, documented thread controls
+and the allocated CPU set are the acceptance boundary here. An implementation
+may use fewer workers for a particular operation; continuously proving exactly
+24 active workers or tracing every dynamically loaded object is not required.
+
 Compare direct CUDA/HIP elapsed times and separately label OpenACC/OpenMP
 interop results. Preserve compute and end-to-end panels: the latter includes
 system-specific allocation, transfers and host result availability. CPU speedups

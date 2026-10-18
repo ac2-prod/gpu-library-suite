@@ -675,6 +675,33 @@ measurement). Six successful 540-row blocks are still required for wave 1
 `COMPLETE`. There is no automatic retry, partial acceptance of a later failure,
 next wave, or submission. Commit approval and SSH/job approval remain separate.
 
+#### BLAS/Solver parallel CPU correction
+
+The retained campaign above completed with 5,940 accepted numerical rows, but
+its CPU BLAS links the serial AOCL `libblis.so`; the CPU Solver links that BLIS
+explicitly while its saved dependency resolution also includes `libblis-mt.so`.
+Those results are historical evidence, not confirmation of the intended parallel
+CPU baseline. Keep all binaries, raw rows, adoption and FAILED records unchanged.
+
+The correction uses a new clean build and fresh campaign identity. Reuse the
+existing 18-benchmark build/runtime preparation rather than introduce another
+build mode. Before measurement, require the saved CPU BLAS and Solver link and
+runtime receipts to select `libblis-mt.so`, with no serial BLIS in their resolved
+dependencies. Keep the existing four modules and 24-thread environment controls.
+Configured thread limits are not a promise of 24 simultaneously active workers;
+no profiler, full DSO trace or continuous worker-count monitoring is required.
+
+`amd_production.py` also accepts an effective config enabling exactly rocBLAS
+and rocSOLVER, with the other four families explicitly disabled. The original
+three sizes, CPU/HIP/OpenMP pairing, two scopes, repeats and five trials remain
+unchanged: 36 invocations/180 rows per node, 1,080 per six-host wave, and 2,160
+over two waves. Full six-family schedules still require 540 rows per node.
+Use the same mcrp allocation, `select=24` + `place=exclhost`, one rank/APU per
+physical host and PATH/LD_LIBRARY_PATH exports. Only proceed to a later wave
+after reviewing the preceding build or wave; never retry automatically.
+The [benchmark protocol](../../docs/BENCHMARK_PROTOCOL.md#matched-nvidiaamd-evaluation)
+owns pairing and treatment of the superseded performance series.
+
 ### Prepared six-family allocated build
 
 [amd_build_job.sh](amd_build_job.sh) and [amd_build.py](amd_build.py) support the
@@ -749,9 +776,13 @@ The successful build required no further supply search or private installation.
 The allocated build records a bounded inventory of relevant files under the
 loaded AOCL prefix and any explicit oneMKL prefix. The prepared job explicitly requests
 `GENERIC_CBLAS`, `GENERIC_LAPACKE` and `--aocl-cpu-candidates`. This opt-in rule
-only considers `cblas.h`/`lapacke.h` in `include`/`include_LP64`, `libblis.so`
+only considers `cblas.h`/`lapacke.h` in `include`/`include_LP64`, `libblis-mt.so`
 for CBLAS, and `libflame.so` or `liblapacke.so` followed by the selected BLIS
 library for LAPACKE, in `lib`/`lib_LP64` under the loaded `AOCL_ROOT`.
+The parallel BLIS choice is explicit for both CBLAS and LAPACKE. A missing
+`libblis-mt.so` never falls back to the serial `libblis.so`; the selection receipt
+records `blis_threading=OPENMP`. AOCL 5.1 documents these as distinct binaries
+in its [BLAS link table](https://docs.amd.com/r/5.1-English/57404-AOCL-user-guide/AOCL-BLAS?contentId=pdiSWTBKZQ4NpLvk_kRbjw).
 These remain selection rules, not a guarantee of supply in a future module environment.
 Aliases of the same resolved file count once. Distinct candidates, ILP64
 paths, escaping paths or missing inputs disable the affected CPU pair with a
