@@ -76,6 +76,8 @@ class SiriusProductionTests(unittest.TestCase):
         self.run_root = self.work / self.plan["run_id"]
         self.process_count = 0
         self.fail_at = None
+        self.fail_rank = None
+        self.fail_kind = "timeout"
         self.fake_mpi_actions = []
         self.row_cache = {}
 
@@ -137,7 +139,7 @@ class SiriusProductionTests(unittest.TestCase):
                         else:
                             wave_path = test.run_root / "waves" / str(test.plan["wave"]) / "wave-metadata.json"
                             with mock.patch.object(production, "observe", return_value=test.observations()[rank]):
-                                code = production.run_worker(test.run_root, test.plan, sha256_file(wave_path))
+                                code = production.finish_worker_rank(test.run_root, test.plan, sha256_file(wave_path))
                             test.assertEqual(code, 0)
                     return SimpleNamespace(returncode=0, stdout="", stderr="")
                 test.process_count += 1
@@ -147,12 +149,14 @@ class SiriusProductionTests(unittest.TestCase):
                 stdout, stderr = root / (str(index) + ".stdout"), root / (str(index) + ".stderr")
                 stdout.write_bytes(b"".join(dump_bytes(row) for row in rows))
                 stderr.write_text("fixture stderr is kept separate\n")
-                failed = test.fail_at == index
+                failed = test.fail_at == index and (test.fail_rank is None or test.fail_rank == rank)
+                timed_out = failed and test.fail_kind == "timeout"
                 self.records.append(dict(argv=argv, started="fixture-start", ended="fixture-end",
-                    exit=None if failed else 0, timed_out=failed, stdout=str(stdout), stderr=str(stderr),
+                    exit=(None if timed_out else -6) if failed else 0, timed_out=timed_out,
+                    stdout=str(stdout), stderr=str(stderr),
                     stdout_sha256=sha256_file(stdout), stderr_sha256=sha256_file(stderr)))
                 if failed:
-                    raise ValueError("fixture timeout; no retry")
+                    raise ValueError("fixture " + test.fail_kind + "; no retry")
                 return SimpleNamespace(returncode=0, stdout=stdout.read_text(), stderr="")
         return Fake()
 
@@ -464,20 +468,42 @@ class SiriusProductionTests(unittest.TestCase):
         self.assertFalse((self.run_root / "waves/1").exists())
 
     def test_timeout_preserves_partial_output_and_missing_nodes_are_not_success(self):
+        for failure, expected_status in (("timeout", "UNKNOWN"), ("signal", "FAILED")):
+            with self.subTest(failure=failure):
+                self.plan["run_id"] = "fixture-production-" + failure
+                self.run_root = self.work / self.plan["run_id"]
+                self.row_cache = {}
+                self.process_count, self.fake_mpi_actions = 0, []
+                self.fail_at, self.fail_rank, self.fail_kind = 1, 0, failure
+                self.assertEqual(self.master(), 1)
+                wave = self.run_root / "waves/0"
+                node = wave / "nodes/node0"
+                status = load(node / "node-status.json")
+                self.assertEqual((status["status"], status["exit_code"]), (expected_status, 1))
+                self.assertEqual(len(status["commands"]), 2)  # No retry on the failed node.
+                self.assertEqual(len((node / "raw.jsonl").read_text().splitlines()), 5)
+                for rank in range(1, 6):
+                    other = wave / ("nodes/node" + str(rank))
+                    self.assertEqual(load(other / "node-status.json")["status"], "COMPLETE")
+                    self.assertEqual(len((other / "raw.jsonl").read_text().splitlines()), 540)
+                self.assertEqual(self.process_count, 2 + 5 * 108)
+                self.assertEqual(self.fake_mpi_actions, ["observe", "worker"])
+                result = load(wave / "artifact-manifest.json")
+                self.assertEqual((result["status"], result["mpi_exit"]), ("FAILED", 0))
+                self.assertEqual(result["observed_rows"], 2700)
+                self.assertTrue(result["errors"])
+                self.assertTrue(result["files"])
+                self.assertEqual(load(self.run_root / "launch/0/status.json")["status"], "FAILED")
+        self.plan["run_id"] = "fixture-production-missing"
+        self.run_root = self.work / self.plan["run_id"]
         self.run_root.mkdir()
-        wave = production.prepare_wave(self.run_root, self.plan, self.bindings, self.observations())
-        self.fail_at = 1
-        with mock.patch.object(production, "Processes", side_effect=self.fake_processes), \
-                mock.patch.object(production, "observe", return_value=self.observations()[0]):
-            self.assertEqual(production.run_worker(self.run_root, self.plan, production.digest(wave)), 1)
-        node = self.run_root / "waves/0/nodes/node0"
-        self.assertEqual(load(node / "node-status.json")["status"], "UNKNOWN")
-        self.assertEqual(self.process_count, 2)
-        self.assertEqual(len((node / "raw.jsonl").read_text().splitlines()), 5)
-        result = production.collect_wave(self.run_root, self.plan, None)
-        self.assertEqual(result["status"], "FAILED")
-        self.assertEqual(len(result["errors"]), 7)
-        self.assertTrue(result["files"])
+        production.prepare_wave(self.run_root, self.plan, self.bindings, self.observations())
+        missing = production.collect_wave(self.run_root, self.plan, 0)
+        self.assertEqual((missing["status"], missing["observed_rows"]), ("FAILED", 0))
+        self.assertEqual(len(missing["errors"]), 7)
+        with mock.patch.object(production, "run_worker", side_effect=ValueError("unrecorded failure")), \
+                self.assertRaisesRegex(ValueError, "unrecorded failure"):
+            production.finish_worker_rank(self.run_root, self.plan, "a" * 64)
 
     def test_collector_rejects_tampered_node_evidence(self):
         self.assertEqual(self.master(), 0)

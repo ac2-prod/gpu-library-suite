@@ -576,6 +576,18 @@ def run_worker(run_root, plan, wave_hash):
     return code
 
 
+def finish_worker_rank(run_root, plan, wave_hash):
+    """A recorded node failure must not cancel independent MPI workers."""
+    code = run_worker(run_root, plan, wave_hash)
+    if code != 0:
+        print("Sirius node measurement stopped; failure is recorded in node-status.json; "
+              "other workers continue", file=sys.stderr, flush=True)
+    # This is only the MPI rank's completion status. collect_wave still requires
+    # every node's successful status, exit code, command evidence and raw rows.
+    # An exception before run_worker records its result remains an MPI failure.
+    return 0
+
+
 def collect_wave(run_root, plan, mpi_exit):
     """Retain incomplete nodes and inventory their evidence; never fill missing rows."""
     wave_root = run_root / "waves" / str(plan["wave"])
@@ -766,7 +778,7 @@ def main(argv=None):
             save(run_root / "launch" / str(plan["wave"]) / "observations" / (str(record["rank"]) + ".json"), record)
             return 0
         require(args.wave_sha256 is not None, "Worker requires the master wave hash")
-        return run_worker(run_root, plan, args.wave_sha256)
+        return finish_worker_rank(run_root, plan, args.wave_sha256)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
         print("Sirius production stopped: " + str(error), file=sys.stderr)
         return 1

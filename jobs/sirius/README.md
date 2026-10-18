@@ -245,8 +245,14 @@ and aggregation are owned by the [benchmark protocol](../../docs/BENCHMARK_PROTO
 [amd-benchmark.json](amd-benchmark.json) is the site production configuration.
 It changes the pilot to `run_mode=production` and five trials; three cases,
 precision, repeat, warm-up and verification remain the NVIDIA reference values.
-CPU backends and the 24-thread request remain those listed above. Execution
-stops on a failed invocation. No production source/binary identity or new
+CPU backends and the 24-thread request remain those listed above. Each node
+stops on its first failed invocation, preserving its exit status and partial
+output without retrying. After that node's result is recorded, its MPI rank
+returns normally so the other independent nodes can finish. MPI exit zero alone
+does not establish measurement success: the master requires all six successful
+node records and all 3,240 validated rows; a failed, unknown or missing node
+makes the wave and PBS job fail. Preflight failures and unrecorded worker
+exceptions still stop the MPI launch. No production source/binary identity or new
 execution approval is assigned by creating this configuration.
 
 | Planned item | Value |
