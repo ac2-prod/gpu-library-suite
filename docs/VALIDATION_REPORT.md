@@ -1,5 +1,78 @@
 # Validation report
 
+## Current coexistence status
+
+Retained logs reviewed on 2026-10-18 (JST) establish the following bounded
+coverage. No new execution is implied by this documentation update.
+
+| Evidence | Confirmed result | Source boundary |
+| --- | --- | --- |
+| AMD C/C++ on Sirius | Six-family build: 36 teaching/benchmark artifacts; focused numerical coverage: 18 teaching examples and 576 records, all passing | rocFFT and the other five families use the distinct snapshots recorded below; these are not one campaign or a test of every later edit. |
+| NVIDIA local/fixture compatibility after AMD addition | Existing CMake, CPU-provider, CLI/schema/manifest, runner/aggregation/plot and Fortran checks passed | Synthetic providers and local compilers are not GPU or performance evidence. |
+| NVIDIA C/C++ and Fortran on Pegasus | 36 benchmark artifacts built; 72/72 numerical smoke cases passed, including Fortran Thrust CUDA/OpenACC interoperation | Clean commit `eb9e594be3ea4f1dc4bef6fb562223961c60a43a`; details and private evidence identities are recorded below. |
+| AMD three-size pilot on Sirius | 108/108 numerical records passed; PBS `45781.pbs`, exit 0, walltime 00:12:59 | One APU, one trial per condition; retained dirty source snapshot `a3697cae…`. No physical-node or multi-trial dispersion evidence. |
+
+The requested source coexistence review and minimal NVIDIA real build/smoke
+are complete within this coverage. This does not certify an AMD run at the
+Pegasus-tested commit, production statistics, effective CPU worker counts, or
+complete loaded-library provenance. The later pilot separately confirms the
+three configured sizes on one APU, as recorded below. The
+[next minimal performance plan](IMPLEMENTATION_PLAN.md#minimal-performance-evaluation-plan)
+keeps those gates separate. Historical failures and intermediate pending states
+below retain their original meaning; later successful runs do not rewrite them.
+
+## AMD three-size pilot and timing review
+
+The retained run `sirius-amd-pilot-20261017T183416Z-a3697cae` completed as
+PBS `45781.pbs`, state `F`, exit 0; SSH exit was 0. All 108 actual rows passed
+numerical verification: six libraries, three sizes, CPU/HIP/OpenMP and both
+scopes, with one trial. PBS walltime was 779 seconds; the node runner took
+731.531582 seconds. Timed intervals totalled 202.306040168 seconds. These
+quantities have different boundaries and must not be substituted for one another.
+Per-condition dispersion is unavailable with one trial, not zero.
+
+Evidence under `runs/<RUN_ID>/` is `pilot/node0/raw.jsonl`,
+`pilot/validation.json`, `pilot/timing-summary.json`, `dispatch-result.json`
+and `review/review.json`. Important identities are:
+
+| Item | SHA-256 |
+| --- | --- |
+| Source snapshot, originally dirty at `c2b6e30b264496f624178057bdfe4db121857291` | `a3697cae2e446a51eec5a6107dedc39caf656fc8158b08e3591c59f0bc1148e6` |
+| Effective pilot config | `bb528ca0e3d4ec0b027728e6023085e8483fb9fa9a516ade0b9df6c814dc6fb1` |
+| Selected 18-benchmark manifest | `85781c82bc0ece717d15d0b091728127d7012283013e1288109bbc1b971ecfd3` |
+| Raw 108-row JSONL | `e9442f7e4182bab450d40b0d8f38a72e4c14881d922f5cf47e2e653da4930762` |
+
+The four-module environment and one-rank MPI preflight/worker route completed.
+This does not validate six-host placement. `loaded_libraries_verified=false`
+and unobserved effective BLAS/Sparse/Solver worker counts remain unresolved.
+RAND/Thrust CPU series remain serial. Existing dirty artifacts are not clean
+production binaries; their source identity must not be relabelled.
+
+A read-only comparison used this artifact source and the saved NVIDIA
+publication source at `916a8bda22f6188aa995d21954ddb1d6de2f3cf3`.
+The common clock implementation was byte-identical. All 108 AMD pilot rows,
+108 NVIDIA pilot rows and 6,480 NVIDIA production rows recorded
+`CLOCK_MONOTONIC` and a reported resolution of `1e-9` seconds, with consistent
+`elapsed_sec = elapsed_total_sec / repeat`. Reported resolution is not an
+accuracy measurement. FFT compute interval grouping differed as described in
+the [protocol](BENCHMARK_PROTOCOL.md#rocfft-cpuhipopenmp-contract).
+The owner accepted preserving both methods and all existing results. No
+benchmark implementation or historical measurement was changed by this review.
+
+Production preparation uses `jobs/sirius/amd-benchmark.json` and the
+[Sirius production plan](../jobs/sirius/README.md#amd-production-preparation).
+The config SHA-256 is
+`7bb6636f3d58180900a289aabd2f0fbed2f9c20b2f06cf2c18e40ca45bd69c8e`.
+Nine focused offline checks passed: strict production config, historical
+NVIDIA workload equality, bounded pilot-to-production change, reference
+inventory, 12-block schedule/counts, balanced orders, dirty-build rejection,
+preserved source/config/result bytes and saved pilot evidence. The dirty-build
+check mocked filesystem lookups; an initial missing dependency-hash mock was
+corrected and the checks rerun, without changing production code or old logs.
+These are preparation checks, not GPU or multi-host results. Clean
+production artifacts, actual six-host/APU placement and 6,480 production rows
+have not been executed or validated.
+
 ## AMD rocFFT Sirius baseline
 
 The saved Sirius run `sirius-rocfft-smoke-20261017T062713Z-b29643fc`
@@ -67,8 +140,9 @@ or source provenance. It does not validate later edits or production sizes.
 RAND/Thrust CPU backends are sequential; BLAS/Sparse/Solver effective worker
 counts and complete actual loaded-library identity remain unverified.
 No profiling, additional remote operation or performance measurement is
-implied by this review of saved logs. The current remaining coexistence gate
-is [NVIDIA real-toolchain/GPU validation](#nvidia-coexistence-review-after-amd-addition).
+implied by this review of saved logs. The subsequent
+[NVIDIA coexistence review](#nvidia-coexistence-review-after-amd-addition)
+completed its local/fixture and Pegasus build/basic-smoke gates independently.
 
 ## AMD six-family Sirius build
 
@@ -977,7 +1051,9 @@ publication. Raw data, metadata, logs, analysis outputs and figures are not
 included in this source publication; users follow the existing own-measurement workflow
 to generate their own inputs and figures.
 
-### NVIDIA coexistence review after AMD addition
+## NVIDIA coexistence review after AMD addition
+
+### Local and fixture evidence
 
 The local review compared the AMD changes with the existing NVIDIA C/C++ and
 Fortran paths: CMake vendor/language selection, common CLI/result handling,
@@ -1000,7 +1076,7 @@ sources. The synthetic FFTW check is not evidence about a real FFTW installation
 
 No full local suite, CUDA/NVHPC build, GPU execution, SSH, scheduler operation
 or Git publication was performed. CUDA/OpenACC C/C++ and Fortran execution on
-Pegasus remains a separately approved real-machine check; this local review
+Pegasus was still pending at this local-review stage; this local review
 does not revalidate those GPU binaries. Existing AMD/Sirius and NVIDIA/Pegasus
 run records were preserved unchanged.
 
@@ -1028,11 +1104,93 @@ The unchanged Fortran Thrust sources and CMake path were explicitly reviewed:
 the canonical `thrust_wrapper.cu` remains an input to both GPU teaching and
 benchmark targets, with matching `bind(C)`/`extern "C"` entry points and explicit
 C++ runtime linking. This is source-level evidence only; the NVHPC/NVCC mixed
-link and CUDA/OpenACC GPU smoke still require a separately approved Pegasus
-check. No new regression tests or implementation changes were needed.
+link and CUDA/OpenACC GPU smoke were pending at this source-review stage and
+were subsequently checked below. No new regression tests or implementation
+changes were needed for the local review.
 
 The coexistence checks do not resolve the AMD CPU parallelism or loaded-library
 provenance limitations: RAND/Thrust CPU backends remain sequential;
 BLAS/Sparse/Solver effective thread counts and complete actual loaded-library
 identity remain unverified. No diagnostic campaign or performance rerun was
 added, and no additional remote operation was performed.
+
+### Pegasus build and numerical smoke after AMD addition
+
+Run `pegasus-nvidia-coexistence-20261017T165103Z-eb9e594` used the Git-transferred,
+clean commit `eb9e594be3ea4f1dc4bef6fb562223961c60a43a`. Build job `135494.nqsv`
+and the separately approved smoke job `135525.nqsv` both completed with exit 0.
+Each submission used one local-Shell noninteractive SSH and one `qsub`; neither
+performed a queue query or automatic retry. Source identity was checked before
+and after execution. No source copy replaced the Git checkout.
+
+The four independent build trees were C/C++ CPU+CUDA, C/C++ OpenACC,
+Fortran CPU+CUDA, and Fortran OpenACC. All configure/build steps passed;
+the manifests contain 18 C/C++ and 18 Fortran benchmarks, with six libraries
+per CPU/CUDA/OpenACC implementation. Real FFTW pthread and oneMKL CPU providers
+were used. Fortran CUDA `reduce_gpu_bench` and OpenACC `openacc_thrust_bench`
+both explicitly compiled `thrust_wrapper.cu` and linked its object with the
+Fortran objects. CMake unused-variable, NVHPC unreachable-statement and
+`pgacclnk` ignored-`-lcudart_static` warnings were retained; no link failed.
+
+Smoke reused those 36 binaries without rebuilding. Each table entry covers
+CPU/CUDA/OpenACC in both compute and end-to-end scopes, with warm-up/repeat/trials
+of 1/1/1. The result is numerical verification at small sizes, not a performance
+campaign or a repetition of the historical NVIDIA measurements.
+
+| Library | C/C++ cases | Fortran cases |
+| --- | --- | --- |
+| FFT | 6/6 PASS | 6/6 PASS |
+| BLAS | 6/6 PASS | 6/6 PASS |
+| Sparse | 6/6 PASS | 6/6 PASS |
+| Solver | 6/6 PASS | 6/6 PASS |
+| RAND | 6/6 PASS | 6/6 PASS |
+| Thrust | 6/6 PASS | 6/6 PASS |
+| Total | 36/36 PASS | 36/36 PASS |
+
+All 72 child exits were zero, case stderr files were empty, numerical metrics
+passed the configured tolerances, and case identity/schema checks passed.
+No case failed or remained unexecuted. Each case's binary hash matched the
+successful build receipt; recorded stdout/stderr hashes also matched the files.
+
+Before submission, a variable-name collision in the one-off smoke helper was
+fixed in new `smoke-launch/check_smoke.py` and `smoke-launch/smoke.pbs` copies.
+The verification-option loop had overwritten the case/log name. The narrow
+local check confirmed 72 unique names and unchanged executable arguments;
+shell syntax passed. Original scripts, build artifacts and older logs were
+preserved. This launcher correction did not change the tested source commit.
+
+Private evidence is on the **Pegasus** checkout under `runs/<RUN_ID>/`:
+`build/verified.json`, per-profile manifests/build metadata and Fortran compile/
+link commands; `smoke/summary.json` and 72 case JSON/stdout/stderr sets;
+`smoke-job/exit-code.txt`, scheduler output, `submission/`, `smoke-submission/`
+and `smoke-launch/launcher-fix.patch`. The Sirius checkout is a different
+directory even when its remote path has the same spelling. Key SHA-256 values:
+
+| Evidence | SHA-256 |
+| --- | --- |
+| `build/verified.json` | `0d6fdfccf03a50b3fa092065a722225d2dcf22017f8579a53bb1cd4449cf1ea5` |
+| `smoke/summary.json` | `f3a3598726e18630b7642c13bf295e358814725ed07c06cf5be08db191224c68` |
+| `smoke-launch/check_smoke.py` | `352f7da9766f4ad41bc6ba8935c0a6bbba64472a455abf35af67a2824e9d984c` |
+| `smoke-launch/smoke.pbs` | `83e557e9e81b82a7d51cbd63eb4c67ef3d1f0afeaa03aea6a4d94041b2c72390` |
+
+### Limits retained after coexistence acceptance
+
+- AMD coverage still refers to its recorded snapshots, not to a new Sirius
+  execution of the Pegasus-tested commit. Later source changes need their own
+  scoped evidence; different snapshots/campaigns are never pooled.
+- This Pegasus increment built and ran benchmarks. NVIDIA teaching examples
+  were not rebuilt or rerun here; their older evidence remains historical.
+- CPU RAND/Thrust backends are serial, including Fortran intrinsic RNG/sum.
+  AOCL/oneMKL BLAS/Sparse/Solver effective worker counts remain unobserved;
+  requested thread counts do not establish parallel scaling.
+- Configured/resolved dependency evidence and binary hashes do not establish
+  complete actually loaded-library identity. The earlier AMD diagnostic
+  campaign remains incomplete; numerical success does not relabel it PASS.
+- Production-size behavior, performance calibration, complete production
+  campaign provenance and new performance figures were not validated by these
+  small smoke jobs. Existing NVIDIA production data retain their own provenance.
+
+No profiling or additional diagnostic campaign is required merely to record
+this coexistence result. The next bounded work is planned in the
+[implementation plan](IMPLEMENTATION_PLAN.md#minimal-performance-evaluation-plan);
+new real execution and Git publication still require separate approval.

@@ -29,9 +29,11 @@ The original NVIDIA Phases 1–6 below retain their historical scope. The later
 approval gates. The recorded rocFFT build/basic-smoke milestone and the later
 36-artifact six-family build are complete at their respective source snapshots.
 The later focused jobs completed basic numerical smoke for the five remaining
-families. NVIDIA local/fixture coexistence checks passed; the real Pegasus
-build/smoke and performance evaluation remain open. Further real execution
-requires separate approval.
+families. NVIDIA local/fixture coexistence checks and the separately approved
+Pegasus 36-artifact build/72-case smoke passed. Their source boundaries and
+unresolved evidence are in [VALIDATION_REPORT](VALIDATION_REPORT.md#current-coexistence-status).
+The next step is the [minimal performance plan](#minimal-performance-evaluation-plan),
+not a new full regression campaign. Further real execution requires separate approval.
 
 ## Planning baseline and cross-phase constraints
 
@@ -1172,12 +1174,15 @@ provenance and local tests. The separately approved AOCL Sparse follow-up
 verified all 36 real build artifacts at its recorded snapshot. Subsequent
 focused jobs passed the remaining five families' basic numerical smoke; see
 [the recorded results](VALIDATION_REPORT.md#amd-focused-numerical-smoke).
-NVIDIA local/fixture coexistence checks passed, while the real Pegasus
-build/smoke remains open. Prepare a reviewed Git commit for that check using
-[the Git handoff procedure](PEGASUS_EXECUTION.md#git経由の検証版反映).
-Performance evaluation follows coexistence acceptance and separate
-resource/execution approval. CPU worker-count and complete loaded-library
-evidence limitations remain open, independently of numerical smoke.
+NVIDIA local/fixture coexistence checks and the Pegasus 36-artifact build/72-case
+smoke passed at clean commit `eb9e594be3ea4f1dc4bef6fb562223961c60a43a`, transferred
+using [the Git handoff procedure](PEGASUS_EXECUTION.md#git経由の検証版反映).
+This closes the requested coexistence check within the
+[recorded coverage](VALIDATION_REPORT.md#nvidia-coexistence-review-after-amd-addition).
+The AMD real runs retain their earlier source snapshots; they are not relabelled
+as tests of this commit. Performance evaluation needs separate resource/execution
+approval. CPU worker-count and complete loaded-library evidence limitations
+remain open, independently of numerical smoke.
 The teaching inventory belongs to PROJECT_SPECIFICATION; Sirius operations
 belong to jobs/sirius/README.md.
 
@@ -1188,7 +1193,7 @@ belong to jobs/sirius/README.md.
 | 0 — Investigation | Repository facts, safe existing local-test evidence, and revised development plan. | Read-only investigation does not authorize implementation or remote access. |
 | 1 — Local preparation | The documents, Sirius helper/probe, mock/fake tests, and fixed safe-validation entry listed below. | Completed historical local stage; its real SSH and scheduler counts remain zero. |
 | 2 — Environment probe | One approved lightweight probe and a report of observed environment facts. | Completed via one approved owner-authenticated interactive SSH in the integrated terminal; Codex reviewed saved output. Historical failed transport records remain unchanged. |
-| 3 — AMD implementation and validation | Complete all six CPU/HIP/OpenMP teaching/benchmark families; reconcile docs, CMake, result tooling and local checks; then final NVIDIA coexistence review. | All six families have recorded Sirius build/basic numerical smoke evidence. NVIDIA local/fixture checks passed; a Git-fixed Pegasus build/smoke remains open. CPU worker-count and complete loaded-library evidence limitations remain. Further real execution requires separate approval. |
+| 3 — AMD implementation and validation | Complete all six CPU/HIP/OpenMP teaching/benchmark families; reconcile docs, CMake, result tooling and local checks; then final NVIDIA coexistence review. | Recorded AMD build/basic smoke and NVIDIA local/fixture plus Git-fixed Pegasus build/72-case smoke passed within their source boundaries. CPU worker-count and complete loaded-library evidence limitations remain. Further real execution requires separate approval. |
 | 4 — Pilot | Verification, runtime/memory observations, and proposed production parameters. | Separately approve resources, sizes, submission count, and observation budget; analyze captured failures before another run. |
 | 5 — Fixed version and production | A reviewed fixed source revision, clean rebuild, immutable provenance, and raw measurements. | Obtain measurement-version commit approval and separate execution approval. Do not modify the measured source/configuration or mix provenance. |
 | 6 — Results and publication | Validated raw results, aggregation, six figures, and usage guidance. | Slide integration and push/PR/merge require their own authorization. Preserve private operational and measurement artifacts. |
@@ -1244,9 +1249,9 @@ artifacts or replace a missing production CPU Sparse backend with a reference.
 The successful build closes the compile/link gate for that snapshot; it ran
 no generated programs. The later focused smoke closed the basic numerical
 gate for the five new families without resolving complete runtime-library
-bindings or effective worker counts. NVIDIA coexistence review is now the
-next gate before performance work. Build preparation itself grants no
-execution permission.
+bindings or effective worker counts. The subsequent NVIDIA coexistence check
+also passed its bounded build/basic-smoke gate. Performance preparation follows
+the minimal plan below; build preparation itself grants no execution permission.
 
 The prebuilt six-family diagnostic smoke harness is implemented locally.
 It verifies the entire original source snapshot and all 36 retained artifacts
@@ -1308,6 +1313,134 @@ rejection. Those local fixtures establish neither real numerical correctness,
 loaded-DSO identity nor worker behavior. The later focused smoke supplies basic
 numerical evidence; complete loaded-library identity and effective worker
 counts remain unverified.
+
+### Minimal performance evaluation plan
+
+Status: three-size pilot complete; AMD production preparation authorized;
+Git writes, real builds, SSH and submissions remain unapproved. The primary
+teaching objective is AMD CPU versus AMD GPU. The owner accepted the retained
+FFT methods in [D-076](DECISIONS.md): no benchmark timing rewrite or NVIDIA
+remeasurement is part of this work. Timing/sampling rules stay with
+[BENCHMARK_PROTOCOL](BENCHMARK_PROTOCOL.md#matched-nvidiaamd-evaluation),
+provenance with [RESULT_SCHEMA](RESULT_SCHEMA.md), and operating details with
+[the Sirius plan](../jobs/sirius/README.md#amd-production-preparation).
+
+1. **Completed pilot gate.** The earlier one-size pilot remains historical.
+   The three-size run `sirius-amd-pilot-20261017T183416Z-a3697cae` (PBS
+   `45781.pbs`) passed all 108 rows and completed in 00:12:59 PBS walltime.
+   Its four-module environment and one-rank MPI route worked. Preserve its
+   dirty snapshot and all recorded limits; one trial on one APU establishes
+   neither within-condition dispersion nor physical-node variation. See
+   [the exact evidence](VALIDATION_REPORT.md#amd-three-size-pilot-and-timing-review).
+2. **Concrete production configuration.**
+   [`jobs/sirius/amd-benchmark.json`](../jobs/sirius/amd-benchmark.json) selects
+   production mode and five trials, preserving the pilot's three sizes, repeats,
+   warm-up, verification, 24-core request and successful AMD CPU providers.
+   Cases and per-scope settings match the historical NVIDIA production config.
+   Stop on failure remains explicit. Preview all 12 node blocks with the
+   existing runner/order functions: 108 invocations and 540 rows per block,
+   3,240 rows per wave and 6,480 rows overall. This preview neither launches
+   a benchmark nor makes the historical dirty manifest production-eligible.
+3. **Freeze the measurement version and build only what is needed.**
+   Existing 18 benchmark binaries were built from dirty source and fail the
+   production clean-build gate. After separate approval, fix a clean Git version
+   and build CPU/HIP/OpenMP benchmarks (six per profile) in fresh directories
+   inside a Sirius allocation. Preserve older builds and logs. The measurement
+   job never rebuilds. Record exact source, manifest, binary and build hashes;
+   do not relabel old binaries. Verify the new 18-artifact inventory and numerical
+   behavior with a scoped check before approving the two-wave campaign; no new
+   six-family local regression or NVIDIA build is required by this preparation.
+   The owner requested that the minimal CPU/APU correspondence check share this
+   clean-build job. Use the [site-owned build/preparation sequence](../jobs/sirius/README.md#clean-build-with-a-minimal-cpuapu-correspondence-check):
+   build the 18 benchmarks once on one exclusive physical host, check one APU's
+   24-CPU/NUMA/device correspondence, collect runtime inputs, report and stop.
+   Do not reserve six hosts just to compile identical binaries six times.
+   The explicit `--clean-benchmarks` mode now requires 18 clean artifacts at an
+   approved commit and disables teaching targets; the default 36-artifact mode
+   remains available. The job wrapper adds the pilot MPI module only in this
+   mode, before the final GCC library-order correction. `amd_prepare.py` then
+   performs the one-worker PCI/NUMA/HIP/OpenMP check and collects runtime inputs
+   with the build's common deadline. Build and preparation failures are recorded
+   separately. Focused local fixtures validate this control flow, not real device
+   correspondence. The first allocated clean build, its explicit ROCm version
+   file, the clean-version commit and the later six-host placement evidence
+   remain required; no submission or measurement is authorized by implementation.
+4. **Six-host orchestration implemented; site prerequisites remain.**
+   The current pilot wrapper deliberately accepts only rank 0/world size 1 and
+   108 rows. Its job-specific runtime document is pilot evidence, not the
+   normalized cross-wave production identity. A replacement of `-np 1` by
+   `-np 6` alone is insufficient. `jobs/sirius/amd_production.py` now implements
+   the Sirius job-master/node-worker path using existing runner, ordering and
+   validation functions, following the NVIDIA launch ownership model. It uses
+   MPI preflight → master-only metadata → six independent runners → master
+   collection, with disjoint output subtrees. Keep each benchmark single-process.
+   Reject duplicate physical hosts, wrong affinity/APU visibility, missing ranks
+   or different required runtime identities before measurement. Host/job/rank/APU
+   observations belong in node/wave evidence, not in a shared hash whose value
+   would change just because wave or hostname changed. Required software/config/
+   compiler/library/binary identity must remain fixed across the two waves.
+   The owner-supplied guide does not establish `place=scatter`; the confirmed
+   `exclhost` constraint and resource alternatives are recorded in the Sirius
+   owner document. The launcher now fixes `-np 6 -npernode 1 --bind-to none`,
+   matching the saved NVIDIA and Sirius pilot routes, and requires six actual
+   hosts in the saved PBS nodefile. It applies the confirmed 24-CPU subset
+   itself, constrained by scheduler affinity, without rewriting GPU masks.
+   The owner selected 24 vnodes with `place=exclhost` for the six-host
+   measurement plan, accepting its larger reservation for preparation. Actual
+   execution remains unapproved. Settle the CPU/APU correspondence in the
+   clean-build job, then verify it against each wave's actual allocation;
+   neither a speculative scatter test nor a separate diagnostic job is planned.
+   A missing/unresolved job-bound placement record stops before MPI. The
+   allocation/device evidence must still identify the selected APU and its
+   24 CPUs in the actual allocation. No external binding wrapper is required.
+   `collect-runtime` now prepares normalized input using the existing link and
+   ldd checks on the new clean build's 18 artifacts, with raw job evidence kept
+   separate. Execute this only in a separately approved allocated job; compare
+   the canonical hash between waves. Modules and tool paths are grounded in
+   the successful pilot, but new binary/metadata hashes need the clean build.
+   Local fixtures check two waves of six writers (6,480 synthetic rows),
+   incomplete/failed output, immutable inputs and cross-wave rejection; they
+   do not certify the unexecuted MPI/device binding.
+5. **Two separate, sequential wave jobs.** Each wave must actually contain
+   six distinct physical hosts, with one active APU/24-core benchmark process
+   per host. Keep the same effective config, binaries and required runtime
+   identity. Use fresh per-wave output, validate wave 0 before advancing to
+   wave 1, and require explicit execution approval. Do not automatically retry,
+   cancel, change resources, drop a slow host or substitute CPU backends.
+   Record overlap between waves. NVIDIA's retained campaign used 12 distinct
+   hosts overall; do not label repeated AMD hosts as new independent devices.
+6. **Numerical and statistical acceptance.** Require all 6,480 expected rows,
+   numerical PASS and finite positive timings with valid provenance. Preserve
+   failed/missing rows and do not call an incomplete campaign complete. Use
+   block medians from five trials, then wave medians from six host blocks, then
+   a cross-wave summary of the two wave medians. Retain block/trial and within-
+   wave Q1/Q3/IQR/min/max/sample counts; do not pool all trials or portray two
+   wave medians as 12 independent host samples. Figures primarily compare AMD
+   CPU/HIP/OpenMP, with the retained FFT method explained. Optional NVIDIA
+   overlays preserve timing, CPU-provider/resource and compiler/RNG differences.
+
+Local preparation checks are limited to strict config validation, counterpart
+case equality, the real runner's 12-block schedule/count/order preview, the
+existing dirty-artifact rejection, preservation of existing inputs/results and
+diff review. They do not exercise MPI, a GPU or scheduler. A clean measurement
+commit, selected production artifact hashes, actual physical-host/APU placement,
+production runtime input collection, site binding integration and execution approval remain gates;
+this preparation is not a claim that a multi-node job is ready to submit.
+
+The CPU primary baseline remains AOCL OpenMP FFTW, BLIS, AOCL Sparse,
+libFLAME/BLIS, serial standard RNG and serial STL. Configured FFTW threads do
+not establish observed active workers. BLAS/Sparse/Solver effective counts and
+complete loaded-DSO identity remain unverified; keep those limits in the report
+and do not add a profiler, loader trace or diagnostic campaign to resolve them.
+Fortran coexistence evidence is preserved; no Fortran measurement change is
+part of this AMD preparation.
+
+The final execution packet, prepared after the remaining gates, must bind the
+source/config/manifest/binary/payload hashes and include resource limits,
+timeouts, bounded SSH/submission/observation counts and a fresh `runs/<RUN_ID>/`
+destination. Do not issue approval for a packet with placeholder artifacts or
+unresolved placement. No commit, push, SSH, build or submission is authorized
+by the present document/config preparation.
 
 ### Stage 1 deliverables
 

@@ -26,7 +26,9 @@ CPU_FIXTURE_TEST_IDS = frozenset({
 
 # Audited IDs, not counts. Update a digest only after reviewing every new/removed
 # case. Checked before unittest discovery imports any test modules.
-AUDITED_MODULE_IDS = {'test_sirius_amd_smoke': '13f91475ce925b866ddf4739eb4b2610d04629fd20e6f00ab849fae4aa9c23e5',
+AUDITED_MODULE_IDS = {'test_sirius_amd_prepare': 'bb12a02bc05940a4b89c45a88579af529b4bebc5aa106bbc30ec55ca3275c18c',
+ 'test_sirius_amd_production': '0dd0044591fd7e07e2bf98ed7c61f420f6a550a784fb1aac816e8ef6105003ef',
+ 'test_sirius_amd_smoke': '13f91475ce925b866ddf4739eb4b2610d04629fd20e6f00ab849fae4aa9c23e5',
  'test_sirius_amd_smoke_campaign': '760c2e71e6fa834acda03826cc9c0a23bff15d0ea7dbbd908e63415e82ef4c8b',
  'test_sirius_amd_smoke_evidence': '91179b71a8937de1781d3476374e3a4c622ac53017aa9a472621e5e982f1fe16',
  'test_sirius_amd_smoke_job': 'c84d9cbfb58685ca691023abab1ece3ff5de476543d557dbd4aa8d5b4517b978',
@@ -41,7 +43,7 @@ AUDITED_MODULE_IDS = {'test_sirius_amd_smoke': '13f91475ce925b866ddf4739eb4b2610
  'test_aocl_sparse': '6fbf14b3eeb3fadfba9926cc5bd5366f6d04c5e3ce3b528f5be4fab37f1d7390',
  'test_aocl_sparse_tools': 'fa122dd3d6c523d2fca8333000ddcb1a36fff49c7c987cb9f053ebeacb68b988',
  'test_amd_solver': 'c9b50d4b8d6ec12d6452b1fda4017e2b5da4e73e44c6f99671c51f6aa17fa8dc',
- 'test_rocfft_module_build': '7c3e57bee79c20a59e90e4e404c1784d517d5ba5db8304d67fe27cf993af456b',
+ 'test_rocfft_module_build': '218fe1fe4d5b6bea3269fc8284d3e094c91bd1078f59eec240a54258b60ac547',
  'test_rocfft_build_only': 'a26cf1f6d508e98c709d2f2bd5ae98a179e56975a84ec76141ce4d2a372b113e',
  'test_fftw_metadata': '58e19ef4359bf9f8314aea82b3c0e98361e4476e129224cc86e1cd41c724e6cd',
  'test_aggregation': 'ae78f974d5804b334f74e0da2aabfef4ec2bd203911791cf94dea4914c34d9c2',
@@ -81,7 +83,7 @@ AUDITED_MODULE_IDS = {'test_sirius_amd_smoke': '13f91475ce925b866ddf4739eb4b2610
  'test_scheduler_identity': '11d27f0f535e34c0e72ae9533cce26d77ae0ee8f076c9d4e22fef0d14b03370f',
  'test_schema': '712a1e552fb3055780061f8588a6d1009df5fa577ac4efcb087bfa2403f3d2f6',
  'test_sirius_remote': 'a7aab7a08b9ba4f532cc6d10645db6b3add700b6e6c1993aef3caa800f5e09bf',
- 'test_sirius_amd_build': '2005712b26fb2dc6bbeb9c413faf84b9cbe337d4bc90bde9524dde62a16b4b9c',
+ 'test_sirius_amd_build': '14551e438b16ee06bd973c5a272b2f0afaf216e59ccef63289cf42994cb96f43',
  'test_sirius_fftw_probe': '2ebe5e9c722e9a175fde27a26ba8c468eb8e82eb68532fce6606b4951dcab51d',
  'test_sirius_fftw_modules': 'a472cfc8ccf0fcdb34e094c62c399abf478b6c998d7036688c15af3229e022d7',
  'test_sirius_fftw_threads': 'cd0154146969d641603abf14eda75f32d8cb33bd7290807f8dc6263c89cab3d7',

@@ -90,6 +90,20 @@ module list
 Codex、renderer、build script、runnerはこれらを自動実行しない。job投入、
 削除、照会も人間だけが行う。
 
+### 非対話SSHの投入経路
+
+対話ログイン時の`PATH`、alias、shell functionが非対話SSHでも使えると
+仮定しない。投入・照会コマンドには、Pegasusで確認済みの`qsub`・`qstat`の
+絶対pathを使い、確認したhost、取得方法、証跡を実行資料に残す。
+必要な環境初期化がある場合も、その手順を確認して明示する。
+Siriusなど別システムの実行pathを流用したり、未確認のlogin shell初期化で
+補ったりしない。
+
+コマンド解決が未確認なら「スクリプト準備済み・投入経路未確認」と報告し、
+投入可能とは扱わない。SSHログインの成功、`bash -n`、ShellCheck、fixtureの
+成功は、schedulerコマンドの存在・実行可能性を確認した証拠にはならない。
+実行済みの資料と失敗ログは保持し、再投入案は別の資料として作成する。
+
 ## Pegasus設定
 
 `jobs/pegasus/pegasus.json.example`はPython 3.9標準libraryで読める

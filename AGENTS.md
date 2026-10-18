@@ -41,6 +41,10 @@ Do not redefine an owned specification elsewhere. Link to its owner.
 - On login nodes perform only file/lightweight environment checks, approved job
   submission/queue observation, and log collection. Computational builds,
   tests, benchmarks, and GPU execution must use the system scheduler.
+- Local syntax and fixture checks do not establish remote launch readiness.
+  Before presenting an operation for approval, check its exact noninteractive
+  invocation against target-specific evidence. Report unresolved command-path
+  or environment prerequisites explicitly; follow the system operating document.
 - Report the SSH argv, stdout, stderr, exit code and, after submission, job ID.
   Deletion, overwriting existing run artifacts, job cancellation, and bulk
   resubmission require prior approval. Preserve historical runs and auth state.
@@ -81,10 +85,11 @@ purpose (`examples/` or `benchmarks/`). Principal top-level areas are
 The NVIDIA C/C++ and approved NVIDIA Fortran implementations coexist with the
 AMD C/C++ development family: rocFFT, rocBLAS, rocSPARSE, rocSOLVER, rocRAND,
 and rocThrust. rocFFT's recorded Sirius build and 96-case basic smoke form the
-baseline for the remaining five libraries. Complete AMD implementations and
-local validation first; final NVIDIA coexistence review follows, then separately
-approved performance evaluation. See `docs/VALIDATION_REPORT.md` for evidence
-and its exact source snapshot; a passed baseline does not validate later edits.
+baseline for the remaining five libraries. AMD basic numerical coverage and the
+subsequent NVIDIA local/fixture plus Pegasus build/smoke coexistence review are
+recorded in `docs/VALIDATION_REPORT.md`, with their distinct source snapshots.
+Performance preparation follows `docs/IMPLEMENTATION_PLAN.md` and requires
+separate execution approval; a passed baseline does not validate later edits.
 AMD Fortran, Miyabi, and TSUBAME4.0 remain future scope. Do not create empty
 future directories or dummy implementations. System support belongs under
 `jobs/pegasus` and `jobs/sirius`; do not create Furo job directories.

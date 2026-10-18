@@ -5,17 +5,20 @@
 This is an extension guide, not open-ended authorization to create vendor trees.
 The implemented source scope includes NVIDIA C/C++, the approved NVIDIA Fortran
 addition, and AMD C/C++ CPU/HIP/OpenMP forms for rocFFT, rocBLAS, rocSPARSE,
-rocSOLVER, rocRAND and rocThrust. Current owner direction is to complete the AMD
-families using the successful rocFFT implementation as the baseline, then finish
-NVIDIA coexistence review, and then perform separately approved performance
-evaluation. AMD Fortran remains outside this increment.
+rocSOLVER, rocRAND and rocThrust. AMD basic numerical coverage and the bounded
+NVIDIA coexistence review are recorded in
+[VALIDATION_REPORT](VALIDATION_REPORT.md#current-coexistence-status).
+The next step is separately approved pilot/performance work under the
+[minimal plan](IMPLEMENTATION_PLAN.md#minimal-performance-evaluation-plan).
+AMD Fortran remains outside this increment.
 
-Implementation is not the same as real-device validation: Sirius rocFFT has
-completed an allocated build/basic smoke with 96 successful records. The later
-six-family allocated recovery verified 34 build artifacts, with the two
-oneMKL Sparse CPU targets unavailable. The subsequent explicit AOCL Sparse
-addition has local fixture evidence and still needs its own real build/smoke.
-Other-family runtime and performance work require separate execution approval.
+Implementation is not the same as real-device validation. The retained Sirius
+six-family build verified all 36 artifacts with explicit AOCL Sparse; rocFFT
+and the focused remaining-family runs provide 576 passing numerical records
+at their distinct snapshots. Pegasus subsequently verified 36 NVIDIA C/C++/
+Fortran benchmarks and 72 numerical cases at its recorded clean commit.
+These results do not establish performance, effective CPU worker counts or
+complete loaded-library identity. New execution still needs separate approval.
 See the [stage gates](IMPLEMENTATION_PLAN.md#amd-cc-and-sirius-development-stages).
 For any additional scope, obtain applicable owner approval and update authority
 documents before writing vendor source. Do not create an empty vendor directory,
@@ -92,11 +95,10 @@ families, including complete teaching and benchmark sources, optional API/link
 discovery, manifest/config/result integration and failure/verification fixtures.
 The mathematical tasks follow the corresponding NVIDIA families under the
 [specification owner](PROJECT_SPECIFICATION.md); rocRAND explicitly compares
-different CPU/GPU RNG algorithms. Finish AMD source coverage and local gates
-first. Comprehensive NVIDIA coexistence/regression review is a later acceptance
-step, and performance evaluation follows implementation and real basic smoke.
-Do not silently change saved NVIDIA formats or results while deferring that
-review.
+different CPU/GPU RNG algorithms. The subsequent local/fixture and minimal
+Pegasus build/smoke coexistence checks passed within the recorded coverage.
+Future extensions must continue to preserve saved NVIDIA formats and results;
+that acceptance does not certify later edits or performance.
 
 The owner-approved AOCL Sparse increment adds an independent, explicit CPU
 production choice for AMD rocSPARSE while retaining oneMKL and reference
@@ -104,7 +106,7 @@ behavior. The backend, threading and ordered-link contract belongs to
 [BENCHMARK_PROTOCOL](BENCHMARK_PROTOCOL.md#cpu-backends-and-parallelism), and
 header/library/runtime identity belongs to [RESULT_SCHEMA](RESULT_SCHEMA.md).
 Configured input hashes do not certify which shared object was actually loaded;
-that check remains part of the real-smoke gate.
+the remaining runtime-provenance gate is separate from numerical smoke success.
 
 `rocthrust_wrapper.hip` is the owner-selected canonical wrapper name across
 teaching source, distribution, CMake, tests and documentation. Its HIP object

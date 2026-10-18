@@ -959,6 +959,51 @@ The default STL rocThrust CPU series is serial; a separately selected
 `cpu-openmp` artifact and its effective thread evidence define a different CPU
 series/campaign.
 
+### Matched NVIDIA/AMD evaluation
+
+The primary AMD teaching comparison is the Sirius CPU baseline against HIP
+and OpenMP target on the same allocated APU. The NVIDIA C/C++ publication
+matrix remains its workload and sampling reference; an H100/MI300A overlay is
+optional and must disclose the FFT timing difference below. Apply the counterpart
+mapping to all three cases,
+precision, mathematical parameters, input construction, verification thresholds,
+and scope-specific warm-up/repeat settings. Preserve the existing restoration
+and monotonic wall-clock timing boundaries; do not introduce faster numerical
+modes or reduce cases/repeats for one vendor. The one-block pilot uses the
+`configs/pilot.json` trial count (one); production uses the
+`configs/benchmark.json` trial count (five). A pilot therefore has 108 rows;
+single-trial variability is not estimable.
+
+Match the recorded NVIDIA production sampling: six distinct physical hosts
+per wave, one GPU per host, two consecutive waves and five trials per condition.
+This gives 540 rows per node block, 3,240 per wave and 6,480 overall. Multiple
+devices on one host are not independent physical-node samples. Record observed
+host identities and overlap between waves. Preserve the six implementation
+permutations and alternating size order defined above, replacing CUDA/OpenACC
+by HIP/OpenMP in the order mapping. No MPI collective enters a benchmark's
+timed operation; distribution remains a launcher responsibility.
+
+Apply the existing block-median → wave-median → cross-wave-median aggregation.
+Retain within-wave node Q1/Q3/IQR/min/max and sample counts so physical-node
+variation remains visible; cross-wave statistics have only two wave medians
+as inputs. Do not pool all trials or discard a slow host. Keep NVIDIA C/C++,
+NVIDIA Fortran and AMD in separate campaigns with their own immutable provenance.
+Align mathematical comparison fields without erasing vendor/runtime identities
+or merging differently sourced results into one campaign.
+
+Compare direct CUDA/HIP elapsed times and separately label OpenACC/OpenMP
+interop results. Preserve compute and end-to-end panels: the latter includes
+system-specific allocation, transfers and host result availability. CPU speedups
+remain paired within a node block, using that system's selected production CPU
+provider; differing CPU allocations/providers do not define an equal CPU
+baseline. Record hardware, compiler/numerical flags and library/runtime versions.
+RAND remains a comparison of the declared uniform-generation task with its
+actual generator/interval; matching seeds/selectors does not prove identical
+streams or algorithms. Existing numerical-mode and provenance limits remain
+visible rather than being waived by matching the config. The retained FFT
+compute methods are an explicit exception to identical cross-vendor timing
+procedures; see the [rocFFT contract](#rocfft-cpuhipopenmp-contract).
+
 For rocBLAS/rocSPARSE compute scope, keep context/descriptors, device arrays and
 required workspace/preprocessing outside timing. Restore C/y after warm-up and
 before each raw trial, then time the requested successive updates and completion;
@@ -1010,13 +1055,13 @@ OpenMP-owned mappings. Input preparation and numerical verification stay outside
 measurement, and warm-up follows the selected scope's complete lifecycle.
 The more specific rocFFT restoration/workspace rules below remain in force.
 
-Current development priority is to complete and locally validate all AMD
-families, then finish NVIDIA coexistence/regression review, then perform
-separately approved performance evaluation. Local fixtures and source checks
-are not GPU or performance evidence. Historical Sirius rocFFT build/basic smoke
-passed 96 records across serial/threaded CPU, HIP and OpenMP; that evidence does
-not establish real-device support for the five additional families. Execution
-approvals and scheduler restrictions belong to [Sirius operations](../jobs/sirius/README.md).
+Implementation/validation status and exact source boundaries are recorded in
+[VALIDATION_REPORT](VALIDATION_REPORT.md#current-coexistence-status): AMD basic
+smoke and the bounded NVIDIA coexistence checks passed. They do not establish
+performance or remove unresolved worker/runtime-provenance limits. Next work
+follows the [minimal performance plan](IMPLEMENTATION_PLAN.md#minimal-performance-evaluation-plan).
+Execution approvals and scheduler restrictions belong to
+[Sirius operations](../jobs/sirius/README.md).
 
 ## rocFFT CPU/HIP/OpenMP contract
 
@@ -1069,9 +1114,22 @@ OpenMP: restore canonical input/output outside timing **before each repeat**,
 then time one FFT and completion. `elapsed_total_sec` is the sum of these
 individually timed intervals; `elapsed_sec` divides that sum by repeat. Wall
 start/end timestamps bracket all segments and may also span untimed restoration.
-This preserves identical inputs and comparable scope without changing historical
-NVIDIA timing or hashes. Warm-up also restores before every execute and performs
-exactly the requested number of transforms.
+This preserves identical inputs within the AMD CPU/HIP/OpenMP comparison.
+Warm-up also restores before every execute and performs exactly the requested
+number of transforms.
+
+The owner accepted retaining this method. Historical NVIDIA C/C++ cuFFT compute
+times the complete repeat loop, with one completion wait after the GPU loop;
+AMD times each FFT and its completion separately, excluding each restoration.
+Both use the same `CLOCK_MONOTONIC` helper, seconds and repeat normalization,
+but their synchronization/clock-call frequency and interval boundaries differ.
+The current CPU/HIP/OpenMP method and the existing NVIDIA method remain
+unchanged; this difference does not require an FFT rewrite or NVIDIA
+remeasurement. Preserve all historical binaries, configurations and results.
+AMD teaching text must explain the untimed restoration and per-repeat sum. If
+NVIDIA FFT results are also shown, disclose the methods and do not describe the
+comparison as identical timing procedures or a pure GPU-hardware speed ratio.
+The existing end-to-end scope is unchanged.
 
 For HIP/OpenMP `compute`, plan, execution-info creation, work-buffer size
 query/allocation/binding and array allocation/map are persistent and prepared
@@ -1105,6 +1163,6 @@ Runtime information may be outside mathematical comparison keys, but campaign
 identity still fixes configuration, source, manifest, per-artifact compiler and
 build conditions, binaries, resolved libraries and ROCm/HIP runtime environment.
 Reject mismatches even when FFT dimensions match. Existing NVIDIA configuration, raw fields, hashes, aggregation and figure
-meaning must remain compatible; the final cross-vendor coexistence review is
-a separate acceptance step after AMD family completion.
+meaning must remain compatible; the completed bounded coexistence review and
+its limits are recorded separately in [VALIDATION_REPORT](VALIDATION_REPORT.md#nvidia-coexistence-review-after-amd-addition).
 See the result-schema owner for the AMD representation and provenance gates.

@@ -86,6 +86,15 @@ verification and explicit cleanup follow the existing untimed rules;
 `rocfft_setup`/`rocfft_cleanup` run once per program outside both scopes. All
 batches' DC/non-DC values and every nonfinite output are checked.
 
+This per-repeat compute timing is intentionally retained for the AMD CPU/GPU
+teaching comparison. Historical NVIDIA C/C++ cuFFT instead times the repeat
+loop as a whole, waiting for GPU completion at its end. The clock and units
+match, but the timing procedures differ. Keep existing results and explain
+that difference if an H100/MI300A comparison is shown; no NVIDIA rewrite or
+remeasurement is required by this decision. The
+[benchmark protocol](../../../docs/BENCHMARK_PROTOCOL.md#rocfft-cpuhipopenmp-contract)
+owns this exception.
+
 `--device` selects a HIP index; `OMP_DEFAULT_DEVICE` independently selects an
 OpenMP index. Matching integers do not prove physical identity. The OpenMP
 benchmark requires actual device execution and checks the mapped HIP pointer

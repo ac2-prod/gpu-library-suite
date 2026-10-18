@@ -21,6 +21,17 @@ done
 [[ $AMD_BUILD_PYTHON == /* && -f $AMD_BUILD_PYTHON && -x $AMD_BUILD_PYTHON ]] || fail 'explicit Python executable required'
 export AMD_BUILD_CPU_SPARSE_BACKEND=${AMD_BUILD_CPU_SPARSE_BACKEND:-ONEMKL}
 [[ $AMD_BUILD_CPU_SPARSE_BACKEND == ONEMKL || $AMD_BUILD_CPU_SPARSE_BACKEND == AOCLSPARSE ]] || fail 'invalid explicit CPU Sparse provider'
+export AMD_BUILD_MODE=${AMD_BUILD_MODE:-all}
+case $AMD_BUILD_MODE in
+    all) export SIRIUS_COMPUTE_MPI_MODULE='' ;;
+    clean-benchmarks)
+        [[ ${AMD_BUILD_EXPECTED_COMMIT:-} =~ ^[0-9a-f]{40}$ ]] || fail 'approved clean commit required'
+        [[ ${AMD_BUILD_ROCM_VERSION_FILE:-} == /* && -f $AMD_BUILD_ROCM_VERSION_FILE ]] || fail 'explicit ROCm version file required'
+        export AMD_BUILD_EXPECTED_COMMIT AMD_BUILD_ROCM_VERSION_FILE
+        export SIRIUS_COMPUTE_MPI_MODULE=openmpi/5.0.10/rocm7.2.0
+        ;;
+    *) fail 'unknown AMD_BUILD_MODE' ;;
+esac
 command -v timeout >/dev/null 2>&1 || fail 'timeout unavailable'
 check_hash() {
     local path=$1 expected=$2 actual
@@ -30,7 +41,7 @@ check_hash() {
 }
 check_hash "$AMD_BUILD_RUN_ROOT/amd_build.py" "$AMD_BUILD_CONTROLLER_SHA256" || fail 'controller hash mismatch'
 check_hash "$AMD_BUILD_RUN_ROOT/rocfft_compute_modules.sh" "$AMD_BUILD_MODULES_SHA256" || fail 'module helper hash mismatch'
-# These legacy names are only an adapter to the unchanged source-only module helper.
+# Legacy names adapt the source-only module helper; MPI is opt-in above.
 export STAGE31_SOURCE_ROOT=$AMD_BUILD_SOURCE_ROOT STAGE31_RUN_ROOT=$AMD_BUILD_RUN_ROOT STAGE31_RUN_ID=$AMD_BUILD_RUN_ID
 export GPU_SUITE_SIRIUS_COMPUTE_APPROVED=yes PYTHONDONTWRITEBYTECODE=1
 set -C
@@ -44,6 +55,10 @@ unset BASH_ENV ENV
 TERM=dumb timeout --signal=TERM --kill-after=15 "$((AMD_BUILD_TIMEOUT_SECONDS + 60))" /bin/bash --login -i -c '
 source "$1" || exit $?
 shift
+extra=()
+if [[ $AMD_BUILD_MODE == clean-benchmarks ]]; then
+    extra=(--clean-benchmarks --expected-git-commit "$AMD_BUILD_EXPECTED_COMMIT" --rocm-version-file "$AMD_BUILD_ROCM_VERSION_FILE")
+fi
 exec "$AMD_BUILD_PYTHON" -B "$1" \
   --source-root "$AMD_BUILD_SOURCE_ROOT" --run-root "$AMD_BUILD_RUN_ROOT" \
   --run-id "$AMD_BUILD_RUN_ID" --expected-source-sha256 "$AMD_BUILD_SOURCE_SHA256" \
@@ -52,7 +67,7 @@ exec "$AMD_BUILD_PYTHON" -B "$1" \
   --amd-cxx-compiler "$HIP_CLANG" --rocm-root "$ROCM_PATH" \
   --cpu-blas-backend GENERIC_CBLAS --cpu-lapack-backend GENERIC_LAPACKE \
   --cpu-sparse-backend "$AMD_BUILD_CPU_SPARSE_BACKEND" \
-  --aocl-cpu-candidates
+  --aocl-cpu-candidates "${extra[@]}"
 ' bash "$AMD_BUILD_RUN_ROOT/rocfft_compute_modules.sh" "$AMD_BUILD_RUN_ROOT/amd_build.py" </dev/null >&3 2>&4
 rc=$?
 printf '%s\n' "$rc" > "$AMD_BUILD_RUN_ROOT/amd-build-job-exit.txt" || exit 2

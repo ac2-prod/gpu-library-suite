@@ -35,11 +35,12 @@ def save(path, value):
 
 class FakeProcesses:
     def __init__(self, test, missing_cpu=(), fail_profile=None, corrupt=None, fail_targets=(), fail_manifest=None,
-                 durations=None, clock=None):
+                 durations=None, clock=None, clean=False):
         self.test, self.missing_cpu = test, set(missing_cpu)
         self.fail_profile, self.corrupt = fail_profile, corrupt
         self.fail_targets, self.fail_manifest = set(fail_targets), fail_manifest
         self.durations, self.clock = durations or {}, clock
+        self.clean = clean
         self.build_attempts = []
         self.calls = []
         self.pid = 424242
@@ -74,7 +75,7 @@ class FakeProcesses:
             if argv[-2:] == ["rev-parse", "HEAD"]:
                 return 0, "a" * 40 + "\n", ""
             if "status" in argv:
-                return 0, "## fixture\n M source.txt\n", ""
+                return 0, "## fixture\n" + ("" if self.clean else " M source.txt\n"), ""
             if "diff" in argv:
                 return 0, "", ""
             if "ls-files" in argv:
@@ -144,7 +145,7 @@ class FakeProcesses:
     def configure(self, directory, profile, flags):
         t = self.test
         directory.mkdir()
-        rows = [row for row in build.slots() if row["profile"] == profile
+        rows = [row for row in build.slots(flags["GPU_SUITE_BUILD_EXAMPLES"] == "OFF") if row["profile"] == profile
                 and not (profile == "cpu" and row["library"] in self.missing_cpu)]
         entries = []
         for row in rows:
@@ -158,6 +159,9 @@ class FakeProcesses:
                     backends = ["cpu-generic-cblas" if row["library"] == "rocblas" else "cpu-generic-lapacke"]
                 if row["library"] == "rocsparse" and t.args.cpu_sparse_backend == "AOCLSPARSE":
                     backends = ["cpu-aocl-sparse"]
+                if self.clean:
+                    backends = {"rocrand": ["cpu-std-random-serial"],
+                                "rocthrust": ["cpu-stl-serial"]}.get(row["library"], backends)
             entries.append({"target_name": row["target"], "library": row["library"],
                             "executable_path": str(target), "implementation": profile,
                             "build_profile": profile, "executable_role": row["role"],
@@ -167,7 +171,7 @@ class FakeProcesses:
         save(directory / "partial-manifest-input.json", {"build_metadata_path": str(directory / "build-metadata.json"), "entries": entries})
         cxx = t.args.amd_cxx_compiler if profile == "openmp" else t.args.cpu_cxx_compiler
         metadata = {"vendor": "amd", "build_profile": profile, "build_type": "Release",
-                    "git_commit": "a" * 40, "git_metadata_available": True, "git_dirty": True,
+                    "git_commit": "a" * 40, "git_metadata_available": True, "git_dirty": not self.clean,
                     "amd_build_inputs": dict(build.cpu_options(t.args), GPU_SUITE_AMD_LIBRARIES=";".join(build.FAMILIES)),
                     "dependencies": {}, "fftw_threading": {"requested": "OPENMP", "backend": "openmp", "compile_options": ["-fopenmp"], "link_options": [], "dependency_names": ["fftw3f", "fftw3f_omp"]},
                     "rocm": {"root": str(t.args.rocm_root)},
@@ -296,6 +300,86 @@ class SiriusAmdBuildTests(unittest.TestCase):
     def artifact_builds(self, fake):
         names = {row["target"] for row in build.slots()}
         return [argv for argv in fake.calls if "--build" in argv and argv[-1] in names]
+
+    def clean_mode(self):
+        sys.path.insert(0, str(ROOT / "jobs/sirius"))
+        import amd_prepare
+        self.argv += ["--clean-benchmarks", "--expected-git-commit", "a" * 40,
+                      "--rocm-version-file", str(self.rocm / "version")]
+        self.args = build.parser().parse_args(self.argv)
+        return amd_prepare
+
+    def test_clean_mode_builds_exactly_18_benchmarks_and_wrapper(self):
+        prepare = self.clean_mode()
+        with mock.patch.object(prepare, "preflight", return_value={}) as preflight:
+            job, fake = self.execute(clean=True)
+        preflight.assert_called_once_with(job)
+        self.assertEqual(len(job.slots), 18)
+        self.assertTrue(all(row["role"] == "benchmark" and row["status"] == "BUILT" for row in job.slots))
+        self.assertEqual(len(self.artifact_builds(fake)), 18)
+        self.assertTrue(all("-DGPU_SUITE_BUILD_EXAMPLES=OFF" in argv for argv in fake.calls if "-S" in argv))
+        self.assertEqual(fake.build_attempts.count(("build-openmp", "rocthrust_openmp_wrapper")), 1)
+        self.assertTrue(all(p["build_metadata"]["git_dirty"] is False for p in job.profiles.values()))
+
+    def test_clean_manifest_and_link_inputs_use_only_new_18_artifacts(self):
+        prepare = self.clean_mode()
+        config = self.source / "jobs/sirius/amd-benchmark.json"
+        config.parent.mkdir(parents=True)
+        config.write_bytes((ROOT / "jobs/sirius/amd-benchmark.json").read_bytes())
+        self.source_paths.append("jobs/sirius/amd-benchmark.json")
+        self.args.expected_source_sha256 = source_snapshot_sha256(self.source, self.source_paths)
+        self.opt_in_aocl(self.sparse_fixture())
+        self.args.cpu_sparse_backend = "AOCLSPARSE"
+        with mock.patch.object(prepare, "preflight", return_value={}):
+            job, _ = self.execute(clean=True)
+        self.assertTrue(all(r["status"] == "BUILT" for r in job.slots), job.slots)
+        job.preparation_inputs = {key: prepare.identity(self.tools["cmake"])
+                                  for key in ("mpirun", "ldd", "rocm_version_file")}
+        for profile, result in job.profiles.items():
+            for target, artifact in result["artifacts"].items():
+                directory = Path(artifact["identity"]["path"]).parent / "CMakeFiles" / (target + ".dir")
+                directory.mkdir(parents=True)
+                (directory / ("link.txt" if profile == "hip" else "link.d")).write_text("fixture link input\n")
+        output = job.root / "frozen"
+        output.mkdir()
+        request = prepare.freeze_inputs(job, output)
+        _, manifest, metadata = prepare.production.artifact_inputs(request)
+        self.assertEqual(len(manifest["entries"]), 18)
+        self.assertEqual(len(metadata), 3)
+        links = build.load_json(output / "link-evidence.json")
+        self.assertEqual(set(links), {e["artifact_id"] for e in manifest["entries"]})
+        self.assertTrue(all(e["executable_role"] == "benchmark" and not e["git_dirty"] for e in manifest["entries"]))
+
+    def test_clean_mode_rejects_dirty_or_wrong_commit_before_configure(self):
+        prepare = self.clean_mode()
+        for dirty, commit in ((True, "a" * 40), (False, "b" * 40)):
+            with self.subTest(dirty=dirty):
+                self.args.expected_git_commit = commit
+                fake = FakeProcesses(self, clean=not dirty)
+                # source_evidence alone is the pre-configure gate; no second attempt directory.
+                job = mock.Mock(args=self.args, env=self.env)
+                job.run.side_effect = lambda stage, argv: fake.dispatch([str(x) for x in argv])[1]
+                with mock.patch.object(build.shutil, "which", side_effect=self.which), mock.patch.object(prepare, "preflight") as preflight:
+                    with self.assertRaisesRegex(ValueError, "clean and match"):
+                        build.source_evidence(job)
+                    preflight.assert_not_called()
+                self.assertFalse(any("-S" in call.args[1] for call in job.run.call_args_list))
+
+    def test_clean_mode_preparation_failure_preserves_successful_build_records(self):
+        prepare = self.clean_mode()
+        fake = FakeProcesses(self, clean=True)
+        with mock.patch.dict(os.environ, self.env, clear=True), mock.patch.object(build.shutil, "which", side_effect=self.which), \
+             mock.patch.object(build.subprocess, "Popen", side_effect=fake), \
+             mock.patch.object(prepare, "preflight", return_value={}), \
+             mock.patch.object(prepare, "prepare", side_effect=ValueError("No APU proof")), redirect_stdout(io.StringIO()):
+            code = build.main(self.argv)
+        summary = build.load_json(self.run / "amd-build/summary.json")
+        self.assertEqual(code, 1)
+        self.assertEqual(summary["build_status"], "BUILT")
+        self.assertEqual(summary["preparation_status"], "FAILED")
+        self.assertEqual(summary["status"], "PREPARATION_FAILED")
+        self.assertEqual(summary["counts"], {"BUILT": 18})
+        self.assertEqual(summary["artifact_execution_count"], 0)
 
     def test_missing_allocation_approval_and_unsafe_paths_start_no_process(self):
         cases = [({}, "approval"), ({"GPU_SUITE_SIRIUS_AMD_BUILD_APPROVED": "yes"}, "PBS_JOBID"),
@@ -994,6 +1078,8 @@ message(STATUS "REJECTED: ${GPU_SUITE_CBLAS_REASON}; ${GPU_SUITE_LAPACKE_REASON}
         self.assertIn('--cpu-sparse-backend "$AMD_BUILD_CPU_SPARSE_BACKEND"', text)
         self.assertLess(text.index("invalid explicit CPU Sparse provider"), text.index("date -u"))
         self.assertIn("set -C", text)
+        self.assertIn('AMD_BUILD_MODE=${AMD_BUILD_MODE:-all}', text)
+        self.assertIn('--clean-benchmarks --expected-git-commit', text)
         for forbidden in ("compute_smoke.py", "run_suite.py", "rocminfo", "rocm-smi", "ldd ", "qsub", "qstat", "ssh ", "ctest", "hipcc"):
             self.assertNotIn(forbidden, text)
 

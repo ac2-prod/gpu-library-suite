@@ -11,16 +11,22 @@ The source tree includes `nvidia/c-cpp` and the
 builds, real-machine checks and production measurements were completed on Pegasus;
 see the [recorded coverage and limits](docs/VALIDATION_REPORT.md#fortran-production-validation).
 The AMD C/C++ family covers rocFFT, rocBLAS, rocSPARSE, rocSOLVER, rocRAND,
-and rocThrust. The [rocFFT baseline](amd/c-cpp/rocfft/README.md) completed
-Sirius CPU serial/threaded, HIP and OpenMP builds and a 96-record basic smoke.
-The [validation report](docs/VALIDATION_REPORT.md#amd-rocfft-sirius-baseline)
-binds this evidence to its source snapshot. The later six-family allocated
-recovery verified 34 build artifacts, with two oneMKL Sparse CPU targets
-unavailable. An explicit [AOCL Sparse CPU backend](amd/c-cpp/rocsparse/README.md)
-has since been added and locally tested; its real build and the other families'
-runtime smoke remain unverified. GPU success and performance are not inferred
-from compilation or rocFFT. AMD completion precedes final NVIDIA coexistence review
-and separately approved performance evaluation. The project is maintained
+and rocThrust. Sirius verified all 36 teaching/benchmark build artifacts,
+including the explicit [AOCL Sparse CPU backend](amd/c-cpp/rocsparse/README.md).
+The separate rocFFT and focused five-family runs passed 18 teaching examples
+and 576 numerical records across their recorded source snapshots.
+After AMD addition, NVIDIA C/C++ and Fortran passed the local/fixture
+coexistence checks and a clean-commit Pegasus build of 36 benchmarks followed
+by 72/72 numerical smoke cases, including Fortran Thrust interoperation.
+The [validation report](docs/VALIDATION_REPORT.md#current-coexistence-status)
+separates these source identities and evidence limits. Effective CPU worker
+counts and complete loaded-library identity remain unverified where noted;
+basic smoke does not establish performance. The subsequent three-size AMD
+pilot passed all 108 numerical rows on one APU. The next step is
+[six-host/two-wave AMD production preparation](docs/IMPLEMENTATION_PLAN.md#minimal-performance-evaluation-plan),
+with execution separately approved. The accepted FFT timing difference is
+[documented](amd/c-cpp/rocfft/README.md); it does not require repeating NVIDIA
+measurements. The project is maintained
 under `ac2-prod` and is not an official HAIRDESC repository.
 
 This is the source repository for the **Library Edition (NVIDIA GPU)**

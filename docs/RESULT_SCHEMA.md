@@ -628,6 +628,51 @@ An additional wave may share a run ID only when
 environment hashes must not be combined in one primary cross-wave aggregate.
 They require a separate campaign or an explicitly non-primary comparison.
 
+### Sirius six-worker runtime checks
+
+The Sirius production launcher consumes the same immutable config/manifest/
+runtime identity and separate observation model. It does not require NVIDIA
+driver or CUDA fields for AMD. Its prepared runtime input uses
+`runtime_environment_schema_version: 1`, `executables_manifest_sha256`,
+`build_metadata` hash records, observed `rocm_version`, and
+`resolved_libraries` keyed by all 18 selected artifact IDs. Each library record
+retains its resolved `path` and `sha256`, with version/SONAME evidence retained
+when available; this inventory is not proof of every dynamically loaded DSO.
+`library_resolution` records the normalized `ldd` lines by artifact ID, retaining
+SONAME and resolved path while removing process-specific load addresses.
+`rocm_version_file` binds the actual version text file by path/hash; do not
+derive `rocm_version` from a module's name. Preserve compiler versions/build
+conditions through the immutable build metadata rather than inventing versions.
+
+The additive `sirius_execution_checks` object binds the normalized software/
+thread `environment` and a `files` list of `{path, sha256}` identities, including
+the compilers, Python and MPI executable. The exact reviewed environment keys
+are enumerated by `jobs/sirius/amd_production.py`; the node processes compare
+them and check the recorded files before timing. Existing build metadata and
+binary validation remain required. Do not fill unobserved version fields from
+assumed module names or discard a mismatch to reuse a campaign ID.
+For PATH and LD_LIBRARY_PATH remove only later identical entries, preserving
+lookup order and symlink spelling. Empty or relative components are rejected.
+No other environment difference is silently normalized away.
+
+Rank, physical host, scheduler job, CPU affinity, allocation/device mapping and
+visibility are separate per-wave/per-node observations. The master records
+their raw preflight evidence under `job-master/`, binds its hash in wave
+metadata, and freezes the same runtime hash for every worker. Sirius's
+`collect-runtime` entry constructs this input from clean artifacts, actual
+version-file bytes and the existing link/`ldd` validator. It saves raw commands
+and job/host/time facts separately. It does not run the benchmark or a GPU probe.
+Recollection in another wave must produce identical canonical bytes; different
+ROCm, compiler/binary, config, resolved-library or software controls require
+a different campaign. The old job-specific pilot identity is not a substitute.
+
+The existing AMD rows may have null GPU UUIDs. These stay null; a supplied
+placement record must not be copied into a raw observation. A non-null raw
+UUID must match the allocation/device evidence. The node validation report
+records whether all GPU rows actually observed a UUID. Complete loaded-library
+identity and effective CPU worker counts remain explicitly unverified.
+This additive site evidence does not change NVIDIA raw/aggregate formats.
+
 ## Run metadata
 
 `run-metadata.json` is immutable campaign metadata created once by the PBS job
@@ -1041,9 +1086,8 @@ requires one unambiguous recorded archive from link-dependency evidence.
 Unsupported syntax, ambiguous resolution, changed content or a mismatched
 loaded DSO is rejection, not a general exemption for files ending in `.so`.
 
-The completed Sirius rocFFT smoke established its particular build/runtime
-mapping and 96 successful raw records. The other five families currently have
-local implementation/fixture evidence only. Their real build, loaded-runtime
-binding, GPU validation and any performance campaign remain separately gated.
-NVIDIA coexistence review follows AMD family completion; no saved NVIDIA schema
-or artifact is silently migrated to AMD values.
+Recorded Sirius AMD build/basic-smoke and Pegasus NVIDIA coexistence evidence
+are summarized in [VALIDATION_REPORT](VALIDATION_REPORT.md#current-coexistence-status),
+with their exact source boundaries. Numerical success does not complete the
+remaining loaded-runtime binding or production-campaign provenance gates.
+No saved NVIDIA schema or artifact is silently migrated to AMD values.

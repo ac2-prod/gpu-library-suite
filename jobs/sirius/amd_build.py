@@ -122,13 +122,13 @@ def source_snapshot_sha256(root, relative_paths):
     return digest.hexdigest()
 
 
-def slots():
+def slots(benchmarks_only=False):
     result = []
     for profile in PROFILES:
         for library, stem in FAMILIES.items():
             stem = (stem + "_cpu" if profile == "cpu" else stem + "_gpu"
                     if profile == "hip" else "openmp_" + library)
-            for role in ("example", "benchmark"):
+            for role in (("benchmark",) if benchmarks_only else ("example", "benchmark")):
                 result.append({"library": library, "profile": profile, "role": role,
                                "target": stem + ("_bench" if role == "benchmark" else ""),
                                "status": "NOT_ATTEMPTED", "compile_status": "NOT_ATTEMPTED",
@@ -332,6 +332,13 @@ def validate(args, env):
         raise ValueError("Run root must be SOURCE/runs/RUN_ID")
     if not re.fullmatch(r"[0-9a-f]{64}", args.expected_source_sha256):
         raise ValueError("The approved source snapshot SHA-256 is required")
+    if args.clean_benchmarks:
+        if not re.fullmatch(r"[0-9a-f]{40}", args.expected_git_commit or ""):
+            raise ValueError("Clean benchmark mode requires the approved Git commit")
+        if args.rocm_version_file is None or not args.rocm_version_file.is_absolute():
+            raise ValueError("Clean benchmark mode requires an explicit ROCm version file")
+    elif args.expected_git_commit or args.rocm_version_file:
+        raise ValueError("Production preparation options require --clean-benchmarks")
     if not re.fullmatch(r"gfx[0-9a-z]+(?::[a-z0-9]+[+-])*", args.gpu_arch):
         raise ValueError("An explicit approved GPU architecture is required")
     for path in (args.cpu_c_compiler, args.cpu_cxx_compiler, args.amd_cxx_compiler):
@@ -375,7 +382,8 @@ def configure_argv(args, cmake, build, profile, env, selected_cpu_options=None):
              "GPU_SUITE_VENDOR": "amd", "GPU_SUITE_AMD_LIBRARIES": ";".join(FAMILIES),
              "GPU_SUITE_SOURCE_LANGUAGE": "c-cpp", "GPU_SUITE_BUILD_CUDA": "OFF",
              "GPU_SUITE_BUILD_OPENACC": "OFF", "GPU_SUITE_BUILD_TESTS": "OFF",
-             "GPU_SUITE_BUILD_EXAMPLES": "ON", "GPU_SUITE_BUILD_BENCHMARKS": "ON",
+             "GPU_SUITE_BUILD_EXAMPLES": "OFF" if args.clean_benchmarks else "ON",
+             "GPU_SUITE_BUILD_BENCHMARKS": "ON",
              "Python3_EXECUTABLE": sys.executable,
              "CMAKE_C_COMPILER": str(args.cpu_c_compiler),
              "CMAKE_CXX_COMPILER": str(args.amd_cxx_compiler if profile == "openmp" else args.cpu_cxx_compiler)}
@@ -461,7 +469,7 @@ class Build:
             (self.root / name).mkdir()
         self.popen = subprocess.Popen if popen is None else popen
         self.deadline = clock() + args.timeout_seconds
-        self.commands, self.slots, self.profiles = [], slots(), {}
+        self.commands, self.slots, self.profiles = [], slots(args.clean_benchmarks), {}
         self.cpu_flags, self.aocl_selection = cpu_options(args), None
         self.env.update(PYTHONDONTWRITEBYTECODE="1", GIT_OPTIONAL_LOCKS="0",
                         TMPDIR=str(self.root / "tmp"), XDG_CACHE_HOME=str(self.root / "cache"))
@@ -473,7 +481,7 @@ class Build:
         self.env["GIT_CONFIG_COUNT"] = str(count)
         self.env.pop("GIT_EXTERNAL_DIFF", None)
 
-    def run(self, stage, argv, timeout=30):
+    def run(self, stage, argv, timeout=30, env=None):
         prefix = self.root / "logs" / ("%03d-%s" % (len(self.commands) + 1, stage))
         item = {"stage": stage, "argv": [str(v) for v in argv], "started": utc(), "exit_status": None,
                 "stdout": str(prefix) + ".stdout", "stderr": str(prefix) + ".stderr", "timeout_seconds": timeout,
@@ -485,7 +493,7 @@ class Build:
                 if remaining <= 0:
                     raise CommandFailure("Global build deadline exhausted; command not started")
                 item["effective_timeout_seconds"] = min(timeout, remaining)
-                process = self.popen(item["argv"], cwd=str(self.root), env=self.env,
+                process = self.popen(item["argv"], cwd=str(self.root), env=self.env if env is None else env,
                                      stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True)
                 item["process_started"] = True
                 try:
@@ -522,6 +530,9 @@ def source_evidence(job):
         raise ValueError("Source is not the expected Git root")
     head = job.run("git-head", prefix + ["rev-parse", "HEAD"]).strip()
     status = job.run("git-status", prefix + ["status", "--short", "--branch", "--untracked-files=all"])
+    if job.args.clean_benchmarks and (head != job.args.expected_git_commit
+            or any(line and not line.startswith("## ") for line in status.splitlines())):
+        raise ValueError("Production source must be clean and match the approved Git commit")
     job.run("git-diff-check", prefix + ["diff", "--no-ext-diff", "--check"])
     inventory = job.run("git-inventory", prefix + ["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
     paths = sorted({p for p in inventory.split("\0") if p and Path(p).parts[0] != "runs"
@@ -558,7 +569,7 @@ def profile_targets(job, profile, build, configure_output):
     for library in FAMILIES:
         rows = [row for row in expected.values() if row["library"] == library]
         present = [row for row in rows if row["target"] in names]
-        if len(present) == 1:
+        if 0 < len(present) < len(rows):
             raise ValueError("Only one of the required example/benchmark pair was configured")
         if not present:
             pattern = r"^-- " + library + r" " + profile + r" targets: DISABLED \((.+)\)\s*$"
@@ -587,6 +598,8 @@ def verify_artifacts(job, profile, build, names):
         raise ValueError("Build metadata identifies a different build")
     if metadata.get("git_commit") != job.source_before["git_head"] or metadata.get("git_metadata_available") is not True:
         raise ValueError("Build metadata Git identity mismatch")
+    if job.args.clean_benchmarks and metadata.get("git_dirty") is not False:
+        raise ValueError("Production build metadata must record clean source")
     compilers = {"c": job.args.cpu_c_compiler,
                  "cxx": job.args.amd_cxx_compiler if profile == "openmp" else job.args.cpu_cxx_compiler}
     if profile != "cpu":
@@ -689,7 +702,9 @@ def verify_artifacts(job, profile, build, names):
             raise ValueError("Built binary hash mismatch: " + name)
         artifacts[name] = {"identity": identity, "manifest_entry": entry}
     # Reuse the suite's read-only manifest/dependency/source checks, not its runner.
-    validate_manifest_artifacts(manifest, {metadata_hash: metadata}, "smoke", True)
+    validate_manifest_artifacts(manifest, {metadata_hash: metadata},
+                                "production" if job.args.clean_benchmarks else "smoke",
+                                not job.args.clean_benchmarks)
     aocl_validation = validate_aocl_selection(job.aocl_selection, metadata, names) if profile == "cpu" and job.aocl_selection else None
     return {"artifacts": artifacts, "dependencies": dependencies, "build_metadata": metadata,
             "aocl_cpu_provider_validation": aocl_validation,
@@ -821,6 +836,12 @@ def execute(job):
         cmake = shutil.which("cmake", path=job.env.get("PATH"))
         if not cmake:
             raise ValueError("cmake is unavailable")
+        if job.args.clean_benchmarks:
+            sys.path.insert(0, str(job.args.source_root / "jobs/sirius"))
+            import amd_prepare
+            # Fail before any compiler call if this is not the planned full-host
+            # allocation or required preparation tools/evidence are unavailable.
+            job.preparation_inputs = amd_prepare.preflight(job)
         if job.args.aocl_cpu_candidates:
             job.aocl_selection = select_aocl_candidates(job.env, job.root / "unavailable-aocl-candidates",
                                                         min(job.deadline, job.clock() + 30), job.clock,
@@ -872,7 +893,9 @@ def execute(job):
             if "artifacts" in profile:
                 combined.extend(item["manifest_entry"] for item in profile["artifacts"].values())
                 metadata_by_hash[profile["files"]["build-metadata.json"]["sha256"]] = profile["build_metadata"]
-        validate_manifest_artifacts({"entries": combined}, metadata_by_hash, "smoke", True)
+        validate_manifest_artifacts({"entries": combined}, metadata_by_hash,
+                                    "production" if job.args.clean_benchmarks else "smoke",
+                                    not job.args.clean_benchmarks)
     finally:
         after = source_evidence(job)
         write_json(job.root / "source-after.json", after)
@@ -889,6 +912,10 @@ def parser():
     result.add_argument("--timeout-seconds", type=int, default=1500)
     result.add_argument("--configure-timeout", type=int, default=180)
     result.add_argument("--build-timeout", type=int, default=600)
+    result.add_argument("--clean-benchmarks", action="store_true",
+                        help="Build only 18 clean production benchmarks, then check CPU/APU mapping and collect runtime inputs in this allocation")
+    result.add_argument("--expected-git-commit")
+    result.add_argument("--rocm-version-file", type=Path)
     result.add_argument("--cpu-blas-backend", choices=("ONEMKL", "OPENBLAS", "GENERIC_CBLAS"), default="ONEMKL")
     result.add_argument("--cpu-lapack-backend", choices=("ONEMKL", "OPENBLAS", "GENERIC_LAPACKE"), default="ONEMKL")
     result.add_argument("--cpu-sparse-backend", choices=("ONEMKL", "AOCLSPARSE"), default="ONEMKL")
@@ -911,7 +938,7 @@ def main(argv=None):
         job = Build(args)
         execute(job)
         counts = Counter(row["status"] for row in job.slots)
-        summary["status"] = "BUILT" if counts.get("BUILT") == 36 else "INCOMPLETE" if set(counts) <= {"BUILT", "NOT_BUILT_DEPENDENCY"} else "FAILED"
+        summary["status"] = "BUILT" if counts.get("BUILT") == len(job.slots) else "INCOMPLETE" if set(counts) <= {"BUILT", "NOT_BUILT_DEPENDENCY"} else "FAILED"
     except (OSError, ValueError, KeyError, TypeError) as error:
         summary["error"] = str(error)
         if job:
@@ -920,14 +947,28 @@ def main(argv=None):
                     row.update(status="FAILED", failure_stage="FINAL_PROVENANCE", reason=str(error))
                 elif row["status"] == "NOT_ATTEMPTED":
                     row["reason"] = str(error)
-    summary.update(ended=utc(), slots=job.slots if job else slots(),
+    summary["build_status"] = summary["status"]
+    if args.clean_benchmarks:
+        summary["preparation_status"] = "NOT_RUN"
+        if summary["build_status"] == "BUILT":
+            try:
+                import amd_prepare
+                summary["preparation"] = amd_prepare.prepare(job)
+                summary.update(preparation_status="COMPLETE", status="PREPARED")
+            except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+                summary.update(preparation_status="FAILED", status="PREPARATION_FAILED", error=str(error))
+        # These are real device-runtime checks, never benchmark executions.
+        summary["gpu_query_count"] = None
+        summary["device_check_commands"] = [r for r in job.commands if r["stage"] == "placement-mpi"] if job else []
+    summary.update(ended=utc(), slots=job.slots if job else slots(args.clean_benchmarks),
+                   mode="clean-benchmarks" if args.clean_benchmarks else "all",
                    commands=job.commands if job else [], profiles=job.profiles if job else {},
                    aocl_cpu_provider_selection=job.aocl_selection if job else None)
     summary["counts"] = dict(Counter(row["status"] for row in summary["slots"]))
     if job:
         write_json(job.root / "summary.json", summary)
     print(json.dumps(summary, sort_keys=True, allow_nan=False), flush=True)
-    return 0 if summary["status"] == "BUILT" else 1
+    return 0 if summary["status"] in {"BUILT", "PREPARED"} else 1
 
 
 if __name__ == "__main__":

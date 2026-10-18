@@ -5,10 +5,11 @@
 The CPU, HIP and OpenMP target sources are implemented. Local host API fixtures
 exercise numerical recurrence and failure handling; they do not establish real
 ROCm compilation, offload or GPU execution. On Sirius, all six BLAS artifacts
-built successfully in `sirius-amd-build-20261017T104351Z-a3697cae`; saved logs also
-show CPU/HIP teaching examples with zero numerical error. The complete BLAS-only
-96-row smoke, including OpenMP target and CPU thread requests 1/2, remains pending
-separate execution approval. The completed rocFFT smoke does not cover it.
+built successfully in `sirius-amd-build-20261017T104351Z-a3697cae`. The separate
+BLAS run `sirius-blas-smoke-20261017T135452Z-a3697cae` passed all three teaching
+examples and 96 numerical records, including OpenMP target and CPU thread
+requests 1/2. Effective CPU workers and performance remain unverified; see the
+[recorded source boundary and results](../../../docs/VALIDATION_REPORT.md#amd-focused-numerical-smoke).
 
 | Implementation | Teaching source / target | Benchmark source / target |
 | --- | --- | --- |

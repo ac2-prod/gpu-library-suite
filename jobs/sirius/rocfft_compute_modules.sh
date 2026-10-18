@@ -25,12 +25,15 @@ _sirius_compute_validate_libraries() {
 
 _sirius_compute_prepare_modules() {
     local source_root=${STAGE31_SOURCE_ROOT:-} run_root=${STAGE31_RUN_ROOT:-} run_id=${STAGE31_RUN_ID:-}
-    local source_real run_real before_gcc after_gcc after_aocl after_rocm gcc_paths='' effective=''
+    local source_real run_real before_gcc after_gcc after_aocl after_rocm after_mpi='' gcc_paths='' effective=''
     local remaining entry cpu_cc cpu_cxx amd_cxx version
     local aocl_root=/system/apps/rhel/9.6-202602/aocl/5.1.0/gcc
     local rocm_root=/opt/rocm-7.2.0
     [[ ${GPU_SUITE_SIRIUS_COMPUTE_APPROVED:-} == yes && -n ${PBS_JOBID:-} ]] || {
         _sirius_compute_module_error 'explicit compute approval and PBS_JOBID are required'; return 2;
+    }
+    [[ -z ${SIRIUS_COMPUTE_MPI_MODULE:-} || $SIRIUS_COMPUTE_MPI_MODULE == openmpi/5.0.10/rocm7.2.0 ]] || {
+        _sirius_compute_module_error 'unsupported explicit MPI module'; return 2;
     }
     [[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$ && $run_id != *..* ]] || {
         _sirius_compute_module_error 'invalid STAGE31_RUN_ID'; return 2;
@@ -90,6 +93,14 @@ _sirius_compute_prepare_modules() {
     after_rocm=${LD_LIBRARY_PATH:-}
     printf 'COMPUTE_LD_LIBRARY_PATH_AFTER_ROCM=%s\n' "$after_rocm"
     _sirius_compute_validate_libraries after-ROCm "$after_rocm" || return 2
+    if [[ -n ${SIRIUS_COMPUTE_MPI_MODULE:-} ]]; then
+        module show "$SIRIUS_COMPUTE_MPI_MODULE" || return 2
+        module load "$SIRIUS_COMPUTE_MPI_MODULE" || return 2
+        after_mpi=${LD_LIBRARY_PATH:-}
+        printf 'COMPUTE_LD_LIBRARY_PATH_AFTER_MPI=%s\n' "$after_mpi"
+        _sirius_compute_validate_libraries after-MPI "$after_mpi" || return 2
+        command -v mpirun >/dev/null 2>&1 || { _sirius_compute_module_error 'loaded MPI unavailable'; return 2; }
+    fi
     [[ ${AOCL_ROOT:-} == "$aocl_root" && ${ROCM_PATH:-} == "$rocm_root" && ${HIP_PATH:-} == "$rocm_root" &&
        -f $rocm_root/include/hip/hip_runtime_api.h && -f $rocm_root/include/rocfft/rocfft.h ]] || {
         _sirius_compute_module_error 'ROCm/AOCL prefixes or headers differ from observed providers'; return 2;
@@ -97,7 +108,7 @@ _sirius_compute_prepare_modules() {
     # Reapply GCC precedence only after ALL module loads. Retain every observed
     # AOCL/ROCm/initial entry even if a later module replaced the whole variable.
     effective=$gcc_paths
-    for remaining in "$after_rocm" "$after_aocl" "$after_gcc" "$before_gcc"; do
+    for remaining in "$after_mpi" "$after_rocm" "$after_aocl" "$after_gcc" "$before_gcc"; do
         while [[ -n $remaining ]]; do
             entry=${remaining%%:*}
             if [[ :$effective: != *":$entry:"* ]]; then

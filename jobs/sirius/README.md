@@ -19,8 +19,12 @@ all 36 artifacts verified: CPU 12, HIP 12 and OpenMP 12, including the explicit
 AOCL Sparse CPU pair. PBS and SSH exits were zero. This is compile/link
 evidence only; no produced program or numerical smoke ran in that build job.
 Subsequent focused smoke jobs below verified all five remaining families.
-Complete loaded-DSO identity, parallel worker behavior, final NVIDIA coexistence
-review and performance remain open. See
+The subsequent [NVIDIA coexistence check](../../docs/VALIDATION_REPORT.md#nvidia-coexistence-review-after-amd-addition)
+passed its local/fixture and Pegasus build/basic-smoke gates. Complete loaded-DSO
+identity, effective worker counts and full performance evaluation remain open. The
+first one-size pilot and the later three-size pilot both completed. The latter
+passed 108/108 numerical rows in 00:12:59 PBS walltime; AMD production
+preparation now follows without changing either saved run. See
 [the complete build evidence](../../docs/VALIDATION_REPORT.md#amd-six-family-build-with-aocl-sparse)
 for its exact source snapshot, hashes and operation counts.
 
@@ -39,6 +43,528 @@ instructions retained in the history below:
   prior approval. Each new execution uses a new `runs/<RUN_ID>`; retain old runs.
 - Current work is local AMD implementation and validation. No additional SSH,
   scheduler execution or performance campaign is authorized by that work.
+
+The owner confirmed on 2026-10-18 that this allocation uses the
+interdisciplinary joint-use category, with `debug` and `mcrp` available. The
+owner-provided Sirius manual excerpt gives these planning limits:
+
+| Queue | Maximum vnode count per job | Maximum/default walltime | Concurrent jobs per user | Submitted-job limit |
+| --- | ---: | --- | ---: | ---: |
+| `debug` | 2 (default 1) | 30 minutes | 1 | 1 |
+| `mcrp` | 96 (default 1) | 24 hours | 4 | 200 |
+
+One vnode is one APU (24 CPU cores, 124 GB, one GPU). The `debug` maximum is
+**two** vnodes; the first pilot intentionally requests one. Use an explicit
+walltime appropriate to the approved work; consider `mcrp` for work exceeding
+30 minutes. These documented limits do not establish current availability or
+authorize another job, parallel submissions, or a queue change.
+
+### NVIDIA-aligned AMD pilot and production plan
+
+The first pilot, `sirius-amd-pilot-20261017T173138Z-a3697cae` (PBS
+`45780.pbs`, exit 0), passed all 108 numerical rows. It used one smallest case
+per library, three trials and compute repeat 100 except SOLVER. Its logs and
+effective config remain unchanged under `runs/`; it does not establish the
+three-size or multi-node comparison below.
+
+[amd-pilot.json](amd-pilot.json) now copies all three cases, precision,
+verification thresholds and per-scope warm-up/repeat/trials from the corresponding
+NVIDIA C/C++ `configs/pilot.json` families. It retains the confirmed AMD
+implementations and CPU providers. The authoritative comparison and sampling
+rules are in [BENCHMARK_PROTOCOL](../../docs/BENCHMARK_PROTOCOL.md#matched-nvidiaamd-evaluation).
+This site config does not replace or modify the NVIDIA configs. Preparation
+does not authorize SSH, submission, measurement or a rebuild. Use a new
+`runs/<RUN_ID>/` and retain every previous effective config and result.
+
+The selected artifacts are the **18 benchmarks** in
+`sirius-amd-build-20261017T104351Z-a3697cae`: six libraries in each of the CPU,
+HIP and OpenMP build trees. No teaching examples or diagnostic repetitions are
+part of this pilot. Their binary hashes and three build-metadata hashes were
+checked locally against the retained manifests. The complete 439-file source
+snapshot retained under
+`runs/sirius-amd4-smoke-20261017T141232Z-a3697cae/artifact-source` hashes to
+`a3697cae2e446a51eec5a6107dedc39caf656fc8158b08e3591c59f0bc1148e6`.
+The artifacts retain their original dirty Git provenance
+(`c2b6e30b264496f624178057bdfe4db121857291`); do not relabel them as the later
+Pegasus-tested commit. Comparison found no changed or added portable AMD,
+common, CMake or runner inputs, so this pilot does not require a rebuild.
+A later production campaign needs clean build provenance and a separately
+approved clean-version build.
+
+| Library | Production CPU backend on Sirius |
+| --- | --- |
+| rocFFT | `cpu-fftw-threaded`, AOCL OpenMP FFTW |
+| rocBLAS | `cpu-generic-cblas`, AOCL BLIS |
+| rocSPARSE | `cpu-aocl-sparse` |
+| rocSOLVER | `cpu-generic-lapacke`, AOCL libFLAME/BLIS |
+| rocRAND | `cpu-std-random-serial` |
+| rocThrust | `cpu-stl-serial` |
+
+The aligned pilot has **108 invocations and 108 raw rows**: six libraries,
+three sizes, CPU/HIP/OpenMP, two scopes and one trial. Each invocation now has
+one trial; single-trial dispersion is unavailable, not zero. Use the existing
+parameter-aware runner/campaign validator so different sizes cannot collide.
+Do not reuse the first run's 36-invocation wrapper or its parameter-free result
+keys. Before the next approved launch, bind the reviewed config and updated
+invocation/row checks to new payload hashes. Do not tune AMD repeats independently
+or reduce sizes automatically.
+
+The CPU request is 24. FFTW receives 24 through its thread API; that reports
+the configured setting, not an observation of active workers. BLAS, Sparse and
+Solver keep `cpu_threads_effective=null`; RAND and Thrust remain serial with
+effective count 1. Set `OMP_NUM_THREADS`, `BLIS_NUM_THREADS` and
+`AOCLSPARSE_NUM_THREADS` consistently to 24 and `OMP_DYNAMIC=FALSE` in the
+allocated shell. Preserve the successful GCC/AOCL/ROCm module setup and GCC
+library precedence from [rocfft_compute_modules.sh](rocfft_compute_modules.sh).
+The prepared pilot loads, in order:
+
+```text
+gcc/14.2.1
+aocl/5.1.0/gcc14.2.1
+rocm/7.2.0
+openmpi/5.0.10/rocm7.2.0
+```
+
+The MPI module appears in the saved 2026-10-17 `module avail` output. The
+run-specific `pilot_modules.sh` extends the successful three-module helper;
+it reapplies GCC library precedence **after** the MPI load and checks that the
+AOCL/ROCm prefixes remain unchanged. It resolves and records `mpirun` after
+loading the module, rather than guessing its installation path. The completed
+three-size pilot confirmed this four-module environment and one-rank launcher;
+that result does not establish multi-host placement.
+Only this one MPI module is selected; no MPI compiler wrapper or relinking of
+the 18 non-MPI benchmark artifacts is required.
+
+Follow the NVIDIA launch sequence in
+[`run_benchmarks.pbs.in`](../pegasus/run_benchmarks.pbs.in): MPI preflight,
+job-master metadata creation, MPI node-runner launch, then job-master result
+validation. MPI distributes independent runners; it does not divide a library
+operation or enter its timed interval. For this one-APU pilot, both MPI launches
+use `--hostfile <saved-PBS_NODEFILE> -np 1 -npernode 1 --bind-to none`.
+The hostfile must name only the allocated job-master host. Preflight and the
+measurement worker must agree on rank 0/world size 1, hostname, CPU affinity,
+GPU visibility and measurement environment. The job master freezes the config,
+schedule, provenance and runtime hashes before measurement; the worker writes
+only its node results. The master then requires all 108 validated rows.
+Do not copy Pegasus's `NQSV_MPIOPTS` or `#PBS -T openmpi` into Sirius PBS Pro.
+This bounded pilot does not yet implement or validate six-host placement.
+
+The run `sirius-amd-pilot-20261017T183416Z-a3697cae` completed under `runs/`
+after its separate approval: PBS `45781.pbs`, state F, SSH/PBS exit 0,
+108 numerical passes, and PBS walltime 00:12:59. Its one-use approval is
+consumed; do not execute `dispatch.py` again. The bound inputs and scripts,
+`pilot/node0/raw.jsonl`, `pilot/validation.json`, `pilot/timing-summary.json`,
+`pilot/summary.json` and `review/review.json` remain immutable evidence.
+The resource/budget details below describe that completed pilot, not a new
+execution authorization.
+The earlier, unexecuted `sirius-amd-pilot-20261017T181125Z-a3697cae` debug
+packet is retained unchanged but superseded; do not launch it.
+
+At the largest cases, one FFT buffer is 512 MiB, one GEMM matrix 128 MiB,
+one SOLVER matrix 1152 MiB, and one RAND/Thrust principal array 512 MiB. These
+are individual-array sizes, not total memory needs or library workspace bounds.
+The one-at-a-time schedule avoids adding all six workloads' memory needs.
+
+The saved NVIDIA timings were rechecked through the existing Pegasus mount.
+The matching 108-row `pilot-866605` config hash is
+`e4d13a91a9ed5310a2625263640c92da1f86c7fca3db1fd826e7ae700357c81b`.
+Its wave metadata timestamp to node artifact-collection timestamp spans
+**755.677 seconds (12 min 35.677 s)**; its PBS script requested one hour.
+The two six-node production waves in
+`publication-benchmark-20260716T025037Z` span **3575.862 and 3578.817
+seconds** to their last node collection, with 540 rows per node and a
+90-minute PBS request per wave. Nodes run concurrently; do not divide a
+wave's duration by six. These are intervals derived from saved metadata and
+node-status timestamps, not scheduler accounting walltimes. The pilot's summed
+timed intervals are only 122.795 seconds, so timing totals alone omit substantial
+work outside the comparison timer. Evidence remains in Pegasus's
+`manual-validation/pegasus/results/` and corresponding saved PBS scripts.
+
+The earlier 30-minute proposal was not supported by this timing review.
+Sirius uses different CPU providers and 24 rather than 48 requested cores;
+the NVIDIA duration does not guarantee the AMD duration or justify linear
+scaling. Proposed allocation: the owner-confirmed **mcrp queue**,
+`select=1:ncpus=24:mem=124gb:ngpus=1:mpiprocs=1:ompthreads=24`,
+one chunk/1 APU, **walltime one hour**, matching NVIDIA's pilot request.
+Bound the pilot body at **3300 seconds** and each invocation at **600 seconds**;
+retain five minutes before the PBS limit for stopping and recording results.
+This is a time allowance, not a guarantee of completion. Actual duration, workspace
+and affinity are allocation-time checks; absence of 24 usable CPUs or a
+provider/hash mismatch stops execution. No fallback or silent size reduction
+is allowed. The proposed budgets are one noninteractive SSH, one submission,
+at most **121** queue/job observations (one queue check plus 120 job checks,
+60 seconds apart) over **7200 seconds**, and zero retries. The local SSH wait
+limit is **7500 seconds**. This observation allowance includes queue waiting;
+it does not guarantee the job will start within one hour. Use the
+confirmed `/opt/pbs/bin/qsub` and `/opt/pbs/bin/qstat`; an observation deadline
+does not authorize cancellation or resubmission.
+
+Use the runner and validators from the verified artifact source. Capture the
+effective module/environment and existing link/`ldd` resolution evidence inside
+the allocation before fixing the runtime hash. Keep
+`loaded_libraries_verified=false` and the observed worker count unknown; no
+profiler or loader tracing is added. The source, config, manifest, binaries,
+runtime identity and all raw trials must stay bound to this one run. Require
+all 108 actual numerically verified successes across all three sizes, positive
+finite timings and one complete block/wave before reviewing timing adequacy. Missing or failed rows
+are not successful pilot evidence. A single allocation supplies no cross-node
+performance conclusion. The [performance plan](../../docs/IMPLEMENTATION_PLAN.md#minimal-performance-evaluation-plan)
+owns the subsequent review and production approval gates.
+
+The full comparison proposal follows NVIDIA's six **distinct physical hosts**
+per wave, two waves and five trials, selecting one APU per physical host on
+Sirius. Six allocated vnodes alone do not prove six physical hosts: multiple
+APUs can share a host. Before a production approval request, confirm the PBS
+placement syntax and validate the actual rank/physical-host/APU mapping. Record
+host overlap between waves; the same six hosts across both waves are not required.
+The candidate queue is `mcrp`, since six hosts exceed `debug`'s two-vnode limit.
+The [production preparation](#amd-production-preparation) now fixes the
+configuration, counts and provisional deadlines. Placement and clean artifacts
+still prevent a submission-ready packet; no multi-node job is approved here.
+Keep one process and one GPU/APU per block and retain the 24-core local CPU
+allocation. Pegasus's 48-thread CPU baseline and different providers remain
+explicit system differences; do not oversubscribe to imitate its thread count.
+
+For H100/MI300A comparison, retain direct CUDA/HIP and OpenACC/OpenMP as
+separate series. End-to-end results include each system's host/device memory
+and transfer behavior. CPU-relative speedups use each block's own CPU baseline;
+compare GPU elapsed times across systems. Preserve hardware, compiler flags,
+library/runtime versions and sampling information alongside the figures. The
+historical [NVHPC flag audit](../../docs/VALIDATION_REPORT.md#nvhpc-release-flag-audit)
+remains applicable to the NVIDIA OpenACC evidence; aligned workload settings
+do not make different compiler numerical modes or RNG algorithms identical.
+
+### AMD production preparation
+
+This is preparation only, authorized after the successful three-size pilot.
+The primary teaching comparison is AMD CPU/HIP/OpenMP. Keep the accepted
+[FFT timing difference](../../docs/BENCHMARK_PROTOCOL.md#rocfft-cpuhipopenmp-contract)
+and preserve both vendors' code and historical measurements. Workload/sampling
+and aggregation are owned by the [benchmark protocol](../../docs/BENCHMARK_PROTOCOL.md#matched-nvidiaamd-evaluation).
+
+[amd-benchmark.json](amd-benchmark.json) is the site production configuration.
+It changes the pilot to `run_mode=production` and five trials; three cases,
+precision, repeat, warm-up and verification remain the NVIDIA reference values.
+CPU backends and the 24-thread request remain those listed above. Execution
+stops on a failed invocation. No production source/binary identity or new
+execution approval is assigned by creating this configuration.
+
+| Planned item | Value |
+| --- | --- |
+| Sampling | 6 distinct physical hosts per wave, 2 sequential waves |
+| Selected reservation plan | `select=24` + `place=exclhost`: 6 full physical hosts / 24 reserved APUs |
+| Active work on each host | 1 APU, 24 CPU cores, 1 independent runner |
+| Benchmark calls / raw rows per host | 108 calls / 540 rows (5 trials per call) |
+| Rows per wave / campaign | 3,240 / 6,480 |
+| Queue / proposed walltime | `mcrp` / 01:30:00 per wave |
+| Controller / per-call limits | 5,100 seconds / 600 seconds, then retain time for result recording |
+| Proposed remote budget per wave | 1 BatchMode SSH, 1 qsub, at most 241 qstat calls (1 precheck + 240 observations, 60-second spacing), no retries |
+| Observation / local SSH deadline | 14,400 / 14,700 seconds; expiry is not permission to cancel or resubmit |
+| Logs and results | Fresh `runs/<RUN_ID>/waves/0/` and `waves/1/`, with per-host result directories |
+
+The 90-minute proposal follows the saved NVIDIA per-wave request and observed
+roughly 60-minute runs. The AMD one-trial pilot took 12:59; multiplying by five
+is about 65 minutes and is only a conservative planning estimate, not a measured
+five-trial duration. Nodes run concurrently, so do not multiply the wave duration
+by six. Multi-host startup/I/O and node variation remain unknown. Review wave 0
+before approving/starting wave 1; a failed wave never triggers automatic retry.
+
+**Use one MPI process per allocated physical host.** The launcher fixes
+`-np 6 -npernode 1 --bind-to none`, matching the NVIDIA launcher and the
+successful Sirius pilot's one-rank invocation. The saved
+`runs/sirius-amd-pilot-20261017T183416Z-a3697cae/pilot/runtime-environment.json`
+records this option with OpenMPI 5.0.10. It is not a new MPI-version assumption.
+A hashed copy of `PBS_NODEFILE` must name exactly six physical hosts, matching
+the confirmed placement file; fewer hosts stop before MPI. `-npernode 1`
+controls ranks on allocated hosts; it cannot allocate missing hosts.
+
+**Reservation plan selected by the owner.** Use `select=24` with
+`place=exclhost`, following the supplied Sirius v1.1 section 7.3 rule of four
+vnodes per exclusive physical host. The planned measurement request is:
+
+```text
+#PBS -q mcrp
+#PBS -l select=24
+#PBS -l place=exclhost
+#PBS -l walltime=01:30:00
+```
+
+The final packet supplies the separately approved project/account. Each chunk
+uses the documented defaults: 24 CPUs, 124 GB, one GPU, one MPI slot and
+`ompthreads=24`. Although PBS reserves 24 APUs, MPI launches only six workers,
+one per physical host, and only six APUs are active in measurement. Do not use
+the allocated slot count as the benchmark process count. This resource plan
+is accepted for preparation; it is **not execution approval**. No scatter
+investigation or separate placement-probe job is planned. The actual PBS
+allocation and rank mapping must still prove six unique hosts before timing;
+otherwise stop without retry or resource substitution.
+The historical NVIDIA waves used six hosts each with no overlap (12 hosts
+overall); record actual AMD overlap and unique-host count, without assuming
+wave 1 obtains new devices or discarding an otherwise valid slow host.
+
+**MPI/APU binding must match the chosen allocation.** The supplied guide's
+section 7.5.10 uses `mpirun --bind-to socket` and a worker wrapper with
+`ROCR_VISIBLE_DEVICES=${OMPI_COMM_WORLD_LOCAL_RANK}`; section 7.5.7 documents
+`--display-map` for inspecting placement. Its normal rank placement
+is a prerequisite. This is not proof that a custom one-rank-per-host launch
+selects the allocated physical APU, particularly with partial-host allocation
+or remapped device indices. Do not blindly overwrite an inherited scheduler GPU
+mask or force device 0 based only on local rank. Preflight and the worker must
+agree on physical hostname, rank/local rank, allocated vnode, 24-CPU affinity,
+visible-device identity and OpenMP/HIP device correspondence. Stop before any
+benchmark if that mapping is unproved or the default core binding gives one
+CPU. Set `ompthreads=24` in the resource request and verify the resulting worker
+environment; retain the selected AOCL thread controls. Do not force remote
+NUMA allocation or replace scheduler-assigned IB settings.
+
+The successful pilot is a concrete partial-host reference: PBS allocated
+`a22[2]`, the process affinity was CPUs 48–71, and `ROCR_VISIBLE_DEVICES=0`.
+This does **not** establish that visible device 0 is physical APU 0; its raw GPU
+UUIDs were null. Do not copy those CPU numbers to other hosts. The new worker
+uses Python's Linux `sched_setaffinity` to select the **confirmed** 24-CPU set
+from the process's existing scheduler affinity. It refuses CPUs outside that
+set and requires the inherited visibility to match placement evidence. MPI
+leaves CPU binding to this step; full-host allocation alone would otherwise
+permit all 96 CPUs. No topology, NUMA memory policy, GPU index or UUID is guessed.
+
+Confirm the correspondence between **one selected vnode/APU, its 24 CPU IDs,
+and GPU visibility/device identity** in the clean-build job described below.
+The owner need not supply six hostnames or hand-write a mapping before PBS
+assigns them. Each measurement job needs a mapping for its actual allocation;
+the build job's hostnames, job ID and GPU UUID must not be copied into it.
+
+Preserve the four modules demonstrated by the pilot, in this order:
+`gcc/14.2.1`, `aocl/5.1.0/gcc14.2.1`, `rocm/7.2.0`, and
+`openmpi/5.0.10/rocm7.2.0`; the benchmark binaries remain non-MPI. The guide's
+older `_amdflang_afar` example and its `HSA_XNACK=1` are not new requirements
+for these artifacts. Use only the XNACK/target conditions actually recorded for
+the chosen build. Apply GCC library precedence after all module loads.
+
+**Remaining production gates.** Fix a clean measurement version after separate
+Git authorization, then build only the 18 selected benchmarks in a separately
+approved allocated build. All existing pilot binaries report dirty build
+provenance and must not be relabelled as clean. Bind the resulting manifests,
+binaries and compiler/library identities before forming the final run packet.
+Do not rebuild during measurement or overwrite the earlier build/run paths.
+
+#### Clean build with a minimal CPU/APU correspondence check
+
+The local implementation is available; its first real allocated execution still
+requires a separately approved clean Git version and job packet. It ends with
+build/preparation results, not a measurement wave. There is no standalone
+topology/diagnostic job.
+
+| Item | Preparation plan |
+| --- | --- |
+| Build allocation | One full physical host: `select=4`, `place=exclhost`, `mcrp`; proposed walltime 00:30:00 |
+| Build work | One copy of the 18 benchmarks: six CPU, six HIP, six OpenMP, in three separate build trees; retain the established build parallelism of one |
+| Binding check | One MPI worker, `-np 1 -npernode 1 --bind-to none`, under full-host visibility; check one selected APU and its 24 CPUs |
+| Module stack | The four successful pilot modules above, then the GCC library-order correction |
+| Output | Fresh `runs/<BUILD_RUN_ID>/amd-build/`; `preparation/placement/` evidence and `preparation/runtime/` inputs |
+
+Using one full host here reproduces the per-host reservation of the six-host
+measurement while avoiding five idle hosts during compilation. It validates a
+binding rule on that host, not all future hosts. Measurement preflight applies
+and verifies the rule on all six actual hosts before any timing.
+
+1. Check the approved commit, clean Git status and source identity before the
+   first configure. Record the allocation, nodefile, host and inherited CPU/
+   device constraints. A partial-host allocation is not this full-host check.
+2. Build only `executable_role=benchmark` for the six families and three
+   profiles. Required common objects and the rocThrust HIP wrapper remain
+   explicit dependencies; teaching examples are not rebuilt. Require 18/18
+   successful artifacts, clean build metadata, matching source before/after,
+   the manifest, binary hashes and existing link evidence.
+3. In the same job, record the selected APU's identity/visibility and the
+   corresponding NUMA CPU set using the allocation, CPU/NUMA topology and a
+   bounded HIP/OpenMP device-identity check. Select exactly 24 allocated CPUs,
+   confirm that affinity takes effect and that HIP/OpenMP address the same
+   APU. Device-runtime initialization is included in this proposed check;
+   no benchmark loops, performance measurement, profiler, loader tracing or
+   repeated device sweep is included. Do not infer correspondence from local
+   rank or the previous pilot's numeric device index. If an explicit GPU-mask
+   selection is necessary, record and review it for the future launch packet;
+   the existing launcher must not silently overwrite the inherited mask.
+4. Collect the production runtime input with the existing `collect-runtime`
+   entry from the new 18-artifact manifest and actual version/link evidence.
+   Save build and placement/runtime status separately. A successful build with
+   unknown binding or incomplete runtime evidence is not measurement-ready.
+5. Report the results and stop. Resolve missing evidence without inventing it;
+   no retry, expanded query, automatic smoke or wave submission follows.
+
+`amd_build_job.sh` keeps `AMD_BUILD_MODE=all` as the default: the historical
+36 teaching-plus-benchmark artifacts, with no device execution or added MPI
+module. Set `AMD_BUILD_MODE=clean-benchmarks` explicitly for the new mode, together
+with `AMD_BUILD_EXPECTED_COMMIT` (the approved full commit hash) and
+`AMD_BUILD_ROCM_VERSION_FILE` (the actual, observed absolute version-file path).
+The controller receives `--clean-benchmarks --expected-git-commit ...
+--rocm-version-file ...`; it rejects incomplete or misplaced options. Existing
+source snapshot, controller/module hashes, compiler/architecture, timeout and
+fresh RUN_ID requirements still apply. Select the approved AOCL Sparse backend
+explicitly with `AMD_BUILD_CPU_SPARSE_BACKEND=AOCLSPARSE`.
+
+In this mode CMake disables examples, enables the six benchmark targets in each
+of the three trees, and requires clean Release metadata at the approved commit.
+The job loads the successful pilot's `openmpi/5.0.10/rocm7.2.0` after ROCm and
+reapplies GCC library precedence **after every module load**. No default or
+historical 36-target invocation acquires this MPI requirement.
+
+`amd_prepare.py` checks a four-slot, single-host PBS nodefile and at least 96
+inherited CPUs before compilation. The separately reviewed PBS packet must
+request `select=4` and `place=exclhost`; the nodefile alone does not prove the
+scheduler's exclusivity policy. After 18 successful builds, the helper freezes
+their manifest, metadata and actual link records, and checks that their CPU
+backends match `amd-benchmark.json`. It compiles `apu_probe.cpp` using the new
+OpenMP build's compiler/flags and HIP dependency. This tiny allocation-check
+executable is separate from the 18 benchmark artifacts.
+
+One MPI worker runs the helper twice: identify HIP device 0's PCI address and
+UUID, then verify HIP/OpenMP correspondence after binding to that PCI device's
+24 NUMA CPUs. The CPU set must be entirely within inherited scheduler affinity;
+unknown NUMA identity, insufficient CPUs, host fallback, a changed UUID or a
+pointer belonging to another device stops preparation. The check inherits GPU
+masks without changing them and records visibility; it does not infer an APU
+from local rank or equate a NUMA number to a PBS vnode index. Under full-host
+visibility more than one GPU may remain visible, but only selected device 0 is
+checked. Consequently the result is build-job evidence, **not** a six-host
+production placement document. The later launch packet must resolve its actual
+vnode/mask inputs and pass the existing production placement gate.
+
+Runtime collection reuses `collect-runtime` and the same job deadline/command
+log: 18 `ldd` resolutions, link-input checks, actual ROCm version, compiler/MPI/
+Python identities and environment controls. It does not profile, trace the
+loader or execute benchmarks. Resolution evidence does not prove every library
+actually loaded during execution; observed CPU worker counts also remain
+unverified. These limitations are retained in the runtime document.
+
+`summary.json` records `build_status` separately from `preparation_status`.
+Only 18 successful builds **and** completed placement/runtime collection yield
+`status=PREPARED` and exit zero. A later preparation failure preserves the build
+records and returns nonzero. Raw helper stdout/stderr, MPI/compile commands,
+`preparation/placement/placement.json`, `preparation/runtime-request.json`,
+runtime evidence and the preparation summary remain under this fresh build run.
+No failure causes an automatic retry or wave launch. The final clean commit,
+hashes, explicit version-file path and timeouts remain execution-approval inputs;
+local fixture checks are not an executed Sirius clean build.
+
+The one-rank `pilot.py` remains historical. The six-worker implementation below
+uses existing suite functions without changing Pegasus or its NVIDIA runtime
+collector. Clean artifacts, a confirmed placement/binding method, normalized
+runtime collection on Sirius and a separately approved job packet are still prerequisites.
+There is no submission-ready multi-node packet yet. No production RUN_ID or SSH
+allowance is consumed by this preparation.
+
+#### Six-worker launch and output management
+
+[`amd_production.py`](amd_production.py) runs **inside an already approved PBS
+batch allocation**. It does not open SSH, submit/query/cancel jobs, load modules,
+build artifacts, or start another wave. Its ownership model follows
+[`jobs/pegasus/run_benchmarks.pbs.in`](../pegasus/run_benchmarks.pbs.in):
+
+1. `master` checks the clean source/artifact identity and starts six MPI
+   `observe` processes with the same rank/CPU binding used for measurement.
+2. All six ranks must report distinct physical hosts, the expected 24-CPU
+   affinity, visibility settings and normalized runtime identity. Missing or
+   duplicate ranks, host aliases and changed inputs stop before measurement.
+3. Only the master freezes campaign inputs and creates wave metadata.
+4. One MPI launch starts six `worker` processes. Each rechecks its preflight
+   observation and exclusively creates its own hostname directory. The common
+   runner writes that node's raw results; no worker writes shared metadata.
+5. The master collects completion records, checks all 3,240 rows and hashes the
+   logs. Missing output, failed MPI, timeout, invalid numerical data or provenance
+   mismatch cannot produce `COMPLETE`. Partial files remain; nothing retries.
+
+Each worker makes 108 sequential benchmark calls, with five raw trials per
+call. Existing AMD ordering, numerical thresholds and FFT timing remain intact.
+The command adapter saves argv, separate stdout/stderr, exit and timestamps;
+it uses the existing own-child timeout implementation with no profiler or
+loader trace. Cache/tmp directories are private to each node. Collection
+requires the expected invocation logs as well as raw rows and node metadata.
+
+```text
+runs/<RUN_ID>/
+  effective-config.json, executables-manifest.json, runtime-environment.json
+  run-metadata.json
+  launch/<wave>/plan.json, status.json, commands/, observations/<rank>.json
+  waves/<wave>/wave-metadata.json, artifact-manifest.json
+  waves/<wave>/job-master/runtime-environment-evidence.json
+  waves/<wave>/nodes/<hostname>/
+    node-metadata.json, node-status.json, raw.jsonl, commands/, tmp/, cache/
+```
+
+The `master --plan PATH --plan-sha256 SHA256` entry accepts a reviewed,
+deterministic JSON launch plan with these explicit fields:
+
+- `sirius_launch_schema_version: 1`, `run_id`, and `wave` (0 or 1);
+- `{path, sha256}` inputs `config`, `manifest`, `runtime`, plus a list of
+  `{path, sha256}` `build_metadata` inputs; all are immutable production inputs;
+- `{path, sha256}` identities for `mpirun`, `placement`, and
+  `allocation_nodefile` (the saved PBS nodefile), the `launcher_sha256`, and
+  `mpi_options` containing only optional `--display-map` / `--report-bindings`;
+- `controller_timeout_seconds: 5100` and `invocation_timeout_seconds: 600`.
+
+Prepare those inputs outside the new output `runs/<RUN_ID>` directory; the
+master creates that directory exclusively for wave 0 and saves its own frozen
+plan there. Normalize the effective config/manifest/runtime JSON with the
+shared serializer before computing their plan hashes.
+
+The launcher owns `--hostfile`, `-np 6 -npernode 1 --bind-to none` and the
+worker command. Other MPI mapping, host, count or oversubscription options are
+rejected. Both `observe` and `worker` apply the same confirmed 24-CPU subset
+before checking their environment. No external binding shell wrapper is needed.
+There is no scheduler template or GPU-mask rewrite; the site mapping rule must
+still be settled as described above.
+
+`placement: null` is an explicit unresolved state and is rejected before MPI.
+A usable placement file needs `status: "site-verified"`, the actual
+`scheduler_job_id`, a confirmed `method`, a hashed `evidence` file, and six
+`rank_bindings`. Each binding records `rank`, `local_rank: 0`, exact `hostname`,
+`allocated_vnode`, 24 sorted `affinity_cpus`, `gpu_uuid` from allocation/device
+evidence, and `visibility` for ROCR/HIP/CUDA_VISIBLE_DEVICES,
+GPU_DEVICE_ORDINAL and OMP_DEFAULT_DEVICE. This is a **required input from the
+still-unresolved allocation/binding preparation**, not a generated assertion
+that LOCAL_RANK proves physical APU identity. The observer checks CPU affinity
+and masks but does not perform a GPU device query. Raw GPU UUIDs, if available,
+are cross-checked; the saved AMD pilot's null UUIDs remain explicitly unobserved.
+
+Runtime identity and evidence follow [RESULT_SCHEMA](../../docs/RESULT_SCHEMA.md#sirius-six-worker-runtime-checks).
+`amd_production.py collect-runtime --plan REQUEST --plan-sha256 SHA256
+--output-directory FRESH_DIRECTORY` prepares this input **inside a separately
+approved PBS batch job**, after the four modules and GCC library precedence
+are established. The fresh output directory must be under `runs/` and outside
+the future measurement campaign root. The request contains:
+
+- `sirius_runtime_request_schema_version: 1`;
+- the hashed `config`, 18-entry `manifest`, and `build_metadata` list;
+- hashed `mpirun`, `ldd`, and an actual `rocm_version_file` (not a version
+  inferred from a module name);
+- hashed `link_evidence`: the new build's artifact-ID-to-link-evidence mapping,
+  in the existing `amd_smoke.preflight_link_evidence` format.
+
+The collector checks clean production artifacts and all 18 link records, then
+runs the existing strict `ldd` validation once per artifact. It records the
+resolved libraries and normalized SONAME lines, compiler/MPI/Python/tool file
+hashes, observed ROCm version, and software/thread controls. No benchmark,
+GPU initialization, profiler, loader trace, module or scheduler command runs.
+Raw commands/stdout/stderr and job/host facts go into separate evidence. Failed
+collection does not publish a runtime document or retry. Existing output is
+never replaced. Recollect in wave 1 and require the same canonical runtime
+hash before measurement; every worker checks the recorded files and controls.
+This checks the selected loader resolution, not every DSO loaded by a running
+benchmark. No old job-specific pilot document is promoted to production.
+Per-rank/job/host/cache
+facts remain in observations, while compiler, binary, config, software controls
+and resolved-library identities must agree across both waves. Full actually
+loaded-library identity and effective CPU worker counts remain unverified.
+
+Wave 1 is a separate invocation after wave 0's successful master/collection
+records and owner approval. Existing run/wave/node output is never replaced.
+Local fixtures exercise six independent writers and two-wave identity checks;
+they do not validate real MPI placement, CPU/APU correspondence or GPU execution.
+The focused follow-up covers fixed one-rank-per-host launch, CPU subset binding
+and runtime normalization in addition to the existing six-worker fixtures.
+No full regression, MPI process, GPU operation or real benchmark is part of
+these local fixture checks.
 
 ### Prepared six-family allocated build
 

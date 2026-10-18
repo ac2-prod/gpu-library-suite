@@ -281,6 +281,22 @@ class RocfftComputeModuleTests(unittest.TestCase):
         expected = self.gcc_libraries + [self.rocm / "lib", self.aocl / "lib"] + self.system_libraries + [self.unrelated]
         self.assertEqual(environment["LD_LIBRARY_PATH"], ":".join(map(str, expected)))
 
+    def test_compute_optional_mpi_load_precedes_final_gcc_library_order(self):
+        mpi = self.base / "mpi"
+        mpi.mkdir()
+        self.executable(self.base / "base-bin/mpirun", "#!/bin/sh\nexit 97\n")
+        text = self.driver.read_text().replace('                *) return 8 ;;',
+            '                openmpi/5.0.10/rocm7.2.0) export LD_LIBRARY_PATH="' + str(mpi) + ':$LD_LIBRARY_PATH" ;;\n'
+            '                *) return 8 ;;')
+        self.driver.write_text(text)
+        result = self.run_fake(SIRIUS_COMPUTE_MPI_MODULE="openmpi/5.0.10/rocm7.2.0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        environment = json.loads(self.capture.read_text())
+        expected = self.gcc_libraries + [mpi, self.rocm / "lib", self.aocl / "lib"] + self.system_libraries + [self.unrelated]
+        self.assertEqual(environment["LD_LIBRARY_PATH"], ":".join(map(str, expected)))
+        self.assertEqual([line for line in self.modules.read_text().splitlines() if line.startswith("load ")],
+                         ["load gcc/14.2.1", "load aocl/5.1.0/gcc14.2.1", "load rocm/7.2.0", "load openmpi/5.0.10/rocm7.2.0"])
+
     def test_compute_requires_approval_allocation_and_run_gates_before_modules(self):
         for values in ({"GPU_SUITE_SIRIUS_COMPUTE_APPROVED": "no"}, {"PBS_JOBID": ""},
                        {"STAGE31_RUN_ID": ""}, {"STAGE31_SOURCE_ROOT": ""},
