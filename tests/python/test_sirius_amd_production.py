@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "jobs/sirius"))
 
 import amd_production as production
+import amd_wave
 from gpu_suite import runner
 from gpu_suite.config import load_config
 from gpu_suite.hashing import sha256_file
@@ -124,6 +125,9 @@ class SiriusProductionTests(unittest.TestCase):
                 self.records = []
 
             def run(self, argv, environment, label):
+                if label in ("continuation-paths", "continuation-patch"):
+                    text = ("jobs/sirius/amd_production.py\n" if label == "continuation-paths" else "fixture patch\n")
+                    return SimpleNamespace(returncode=0, stdout=text, stderr="")
                 if label.startswith("mpi-"):
                     action = "observe" if label == "mpi-preflight" else "worker"
                     test.fake_mpi_actions.append(action)
@@ -468,6 +472,8 @@ class SiriusProductionTests(unittest.TestCase):
         self.assertFalse((self.run_root / "waves/1").exists())
 
     def test_timeout_preserves_partial_output_and_missing_nodes_are_not_success(self):
+        self.plan["source_revision"] = dict(artifact_commit=self.manifest["entries"][0]["git_commit"],
+            launcher_commit="a" * 40, changed_paths=["jobs/sirius/amd_production.py"])
         for failure, expected_status in (("timeout", "UNKNOWN"), ("signal", "FAILED")):
             with self.subTest(failure=failure):
                 self.plan["run_id"] = "fixture-production-" + failure
@@ -494,6 +500,14 @@ class SiriusProductionTests(unittest.TestCase):
                 self.assertTrue(result["errors"])
                 self.assertTrue(result["files"])
                 self.assertEqual(load(self.run_root / "launch/0/status.json")["status"], "FAILED")
+                if failure == "timeout":
+                    with self.assertRaisesRegex(ValueError, "Unknown"):
+                        production.review_wave0_adoption(self.run_root)
+                else:
+                    self.check_partial_wave_continuation()
+        self.plan["wave"] = 0
+        self.plan.pop("wave0_adoption", None)
+        self.plan.pop("launcher_transition", None)
         self.plan["run_id"] = "fixture-production-missing"
         self.run_root = self.work / self.plan["run_id"]
         self.run_root.mkdir()
@@ -504,6 +518,75 @@ class SiriusProductionTests(unittest.TestCase):
         with mock.patch.object(production, "run_worker", side_effect=ValueError("unrecorded failure")), \
                 self.assertRaisesRegex(ValueError, "unrecorded failure"):
             production.finish_worker_rank(self.run_root, self.plan, "a" * 64)
+
+    def check_partial_wave_continuation(self):
+        adoption = production.review_wave0_adoption(self.run_root)
+        self.assertEqual((adoption["accepted_rows"], adoption["valid_nodes"]), (2700, 5))
+        self.assertEqual(adoption["excluded"][0]["retained_rows"], 5)
+        self.assertEqual(adoption["excluded"][0]["missing_rows"], 535)
+        path = self.run_root / "adoption.json"
+        production.save(path, adoption)
+        retained = dict(adoption["evidence_sha256"])
+        # Missing approval, changed raw evidence and changed measurement identity fail before MPI.
+        self.plan["wave"] = 1
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            self.master()
+        raw = self.run_root / adoption["accepted"][0]["raw_file"]
+        original = raw.read_bytes()
+        raw.write_bytes(original + b"\n")
+        with self.assertRaisesRegex(ValueError, "Changed adoption evidence"):
+            production.review_wave0_adoption(self.run_root)
+        raw.write_bytes(original)
+        self.plan["wave0_adoption"] = self.identity(path)
+        self.plan["source_revision"] = dict(self.plan["source_revision"], launcher_commit="b" * 40)
+        self.plan["launcher_transition"] = dict(
+            **{"from": adoption["original_launcher"], "to": production.campaign_identity(self.plan, self.manifest)["launcher"]},
+            changed_paths=["jobs/sirius/amd_production.py"],
+            patch_sha256=production.hashlib.sha256(b"fixture patch\n").hexdigest())
+        for field in ("config", "manifest", "runtime"):
+            changed = copy.deepcopy(self.plan)
+            changed[field]["sha256"] = "f" * 64
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "provenance"):
+                production.check_prior_wave(self.run_root, changed, production.campaign_identity(changed, self.manifest))
+        transition = self.plan["launcher_transition"]
+        process = self.fake_processes(self.work / "transition-check", 1, 1)
+        production.check_tool_transition(process, self.plan)
+        transition["patch_sha256"] = "f" * 64
+        with self.assertRaisesRegex(ValueError, "patch changed"):
+            production.check_tool_transition(process, self.plan)
+        transition["patch_sha256"] = production.hashlib.sha256(b"fixture patch\n").hexdigest()
+        transition["changed_paths"] = ["common/timer.hpp"]
+        with self.assertRaisesRegex(ValueError, "continuation paths"):
+            production.check_prior_wave(self.run_root, self.plan, production.campaign_identity(self.plan, self.manifest))
+        transition["changed_paths"] = ["jobs/sirius/amd_production.py"]
+        self.assertFalse((self.run_root / "launch/1").exists())
+        self.fail_at = None
+        self.assertEqual(self.master(), 0)
+        self.assertEqual(load(self.run_root / "waves/1/artifact-manifest.json")["observed_rows"], 3240)
+        for relative, sha in retained.items():
+            self.assertEqual(sha256_file(self.run_root / relative), sha)
+        self.assertEqual(load(self.run_root / "waves/0/artifact-manifest.json")["status"], "FAILED")
+        selected = [self.run_root / n["raw_file"] for n in adoption["accepted"]]
+        selected += sorted((self.run_root / "waves/1/nodes").glob("*/raw.jsonl"))
+        rows = [r for f in selected for r in production.load_raw_results(f)]
+        validation = production.validate_campaign(rows, self.config, self.plan["config"]["sha256"], self.manifest)
+        self.assertEqual((len(rows), validation["block_count"], validation["wave_count"]), (5940, 11, 2))
+        summaries, metadata = production.aggregate_results(rows, self.config, include_pooled=False)
+        self.assertEqual(metadata["blocks_per_wave"], {"0": 5, "1": 6})
+        self.assertFalse(metadata["speedup_omissions"])
+        cross_wave = [r for r in summaries if r["summary_level"] == "cross-wave"]
+        self.assertEqual(len(cross_wave), 180)
+        self.assertTrue(all(r["aggregate_status"] == "success" and r["valid_success_count"] == 2
+                            for r in cross_wave))
+        # The placement wrapper must reject an existing wave before a launcher or GPU probe.
+        (self.work / "runs" / self.plan["run_id"] / "launch/1").mkdir(parents=True)
+        with mock.patch.object(production, "ROOT", self.work), \
+                mock.patch.object(amd_wave.sys, "platform", "linux"), \
+                mock.patch.dict(os.environ, PBS_JOBID="42.fixture", PBS_ENVIRONMENT="PBS_BATCH"), \
+                mock.patch.object(production, "Processes") as processes, \
+                self.assertRaisesRegex(ValueError, "Wave output already exists"):
+            amd_wave.run(self.plan, self.work / "runs/fresh-job/preparation")
+        processes.assert_not_called()
 
     def test_collector_rejects_tampered_node_evidence(self):
         self.assertEqual(self.master(), 0)

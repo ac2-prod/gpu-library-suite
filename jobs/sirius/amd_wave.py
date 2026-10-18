@@ -38,15 +38,23 @@ def assemble_placement(request, directory):
 def run(request, output):
     production.require(sys.platform == "linux" and os.environ.get("PBS_ENVIRONMENT") == "PBS_BATCH"
                        and os.environ.get("PBS_JOBID"), "An approved PBS batch allocation is required")
-    production.require(request["wave"] == 0 and request.get("source_revision") is not None,
-                       "This preparation is limited to a sealed wave 0")
+    wave = request["wave"]
+    production.require(type(wave) is int and wave in (0, 1) and request.get("source_revision") is not None,
+                       "This preparation requires a sealed wave 0 or 1")
     production.require(output.is_absolute() and (production.ROOT / "runs").resolve() in output.resolve().parents,
                        "Preparation output must be a fresh directory under runs/")
     run_root = production.ROOT / "runs" / request["run_id"]
-    production.runner.validate_execution_context(request["run_id"], "Sirius", "master", 0, 0, 0)
-    production.require(not run_root.exists() and run_root not in output.parents,
-                       "Campaign output already exists or overlaps preparation")
+    production.runner.validate_execution_context(request["run_id"], "Sirius", "master", wave, 0, 0)
+    production.require(run_root not in output.parents and run_root != output,
+                       "Campaign output overlaps preparation")
+    production.require(not (run_root / "launch" / str(wave)).exists()
+                       and not (run_root / "waves" / str(wave)).exists(), "Wave output already exists")
+    if wave == 0:
+        production.require(not run_root.exists() and not request.get("wave0_adoption")
+                           and not request.get("launcher_transition"), "Wave 0 must create a fresh campaign")
     _, manifest, _, runtime = production.inputs(request)
+    if wave == 1:
+        production.check_prior_wave(run_root, request, production.campaign_identity(request, manifest))
     mpi = production.checked_file(request["mpirun"])
     production.require(os.access(mpi, os.X_OK), "MPI launcher is not executable")
     probe = production.checked_file(request["apu_probe"])
@@ -59,6 +67,7 @@ def run(request, output):
                    scheduler_job_id=os.environ["PBS_JOBID"], run_id=request["run_id"], builds=0)
     try:
         production.clean_source(processes, manifest, request["source_revision"])
+        production.check_tool_transition(processes, request)
         environment = production.worker_environment(os.environ, output)
         production.check_runtime_environment(environment, runtime["sirius_execution_checks"]["environment"],
                                              output / "runtime-mismatch.json")
@@ -85,7 +94,7 @@ def run(request, output):
                     allocation_nodefile=allocation)
         production.save(output / "launch-plan.json", plan)
         code = production.run_master(run_root, plan)
-        summary["status"] = production.load(run_root / "launch/0/status.json")["status"]
+        summary["status"] = production.load(run_root / "launch" / str(wave) / "status.json")["status"]
         return code
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
         summary["error"] = str(error)

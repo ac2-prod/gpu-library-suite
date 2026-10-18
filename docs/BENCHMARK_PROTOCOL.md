@@ -983,6 +983,25 @@ permutations and alternating size order defined above, replacing CUDA/OpenACC
 by HIP/OpenMP in the order mapping. No MPI collective enters a benchmark's
 timed operation; distribution remains a launcher responsibility.
 
+A failed Sirius wave may contribute all five complete node blocks after explicit
+owner acceptance, following the minimum-five-node rule above. This does not turn
+the job or wave into a success. Exclude the entire incomplete node block, including
+its successful partial rows; retain its failure and missing-invocation evidence.
+The separate, hashed adoption record lists the selected raw files, expected/valid
+node and row counts, exclusion reason and actual order-assignment counts. Never
+renumber nodes or fill missing trials. An unknown or unrecorded node outcome is
+not eligible for this continuation procedure.
+
+For the accepted wave 0 of `sirius-amd-production-20261018T085456Z-e00328df`,
+use a24/a19/a23/a14/a15 (2,700 rows) and retain a01's failed block separately.
+The original expectation remains six nodes/3,240 rows and the wave remains
+`FAILED`. Its implementation-permutation counts are 1/0/1/1/1/1 and size-order
+counts are 3/2. A complete six-node wave 1 adds 3,240 rows: 5,940 accepted rows
+in eleven node/wave blocks, not twelve independent hosts. Report host overlap
+between waves and the unequal five/six block counts. Each wave contributes one
+median to the cross-wave statistics; do not weight by row count or pool trials.
+With wave 0 alone, cross-wave variability remains unestimable.
+
 Apply the existing block-median → wave-median → cross-wave-median aggregation.
 Retain within-wave node Q1/Q3/IQR/min/max and sample counts so physical-node
 variation remains visible; cross-wave statistics have only two wave medians

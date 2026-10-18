@@ -618,8 +618,9 @@ hashes, observed ROCm version, and software/thread controls. No benchmark,
 GPU initialization, profiler, loader trace, module or scheduler command runs.
 Raw commands/stdout/stderr and job/host facts go into separate evidence. Failed
 collection does not publish a runtime document or retry. Existing output is
-never replaced. Recollect in wave 1 and require the same canonical runtime
-hash before measurement; every worker checks the recorded files and controls.
+never replaced. Wave 1 reuses the frozen runtime input and requires its exact
+canonical hash; every worker checks the recorded files and controls. Any separately
+approved recollection must produce the same canonical bytes for this campaign.
 This checks the selected loader resolution, not every DSO loaded by a running
 benchmark. No old job-specific pilot document is promoted to production.
 Per-rank/job/host/cache
@@ -628,13 +629,51 @@ and resolved-library identities must agree across both waves. Full actually
 loaded-library identity and effective CPU worker counts remain unverified.
 
 Wave 1 is a separate invocation after wave 0's successful master/collection
-records and owner approval. Existing run/wave/node output is never replaced.
+records and owner approval, or the explicitly approved partial-wave adoption
+below. Existing run/wave/node output is never replaced.
 Local fixtures exercise six independent writers and two-wave identity checks;
 they do not validate real MPI placement, CPU/APU correspondence or GPU execution.
 The focused follow-up covers fixed one-rank-per-host launch, CPU subset binding
 and runtime normalization in addition to the existing six-worker fixtures.
 No full regression, MPI process, GPU operation or real benchmark is part of
 these local fixture checks.
+
+#### Accepted five-node wave 0 and wave 1 continuation
+
+The owner accepted all 2,700 complete rows on a24/a19/a23/a14/a15 from
+`sirius-amd-production-20261018T085456Z-e00328df`. a01's partial five rows are
+excluded as a whole incomplete block. Its failed command, 535 missing rows,
+and the original node/wave/job `FAILED` records remain unchanged. This selection
+does not attribute the GPU fault to hardware or declare its cause resolved.
+The [benchmark protocol](../../docs/BENCHMARK_PROTOCOL.md) owns the five/six-node
+statistics and order imbalance; the [result schema](../../docs/RESULT_SCHEMA.md)
+owns the evidence and exact launcher transition.
+
+`amd_production.py adopt-wave0 --run-root <absolute-local-campaign-path>
+--accept-hosts a24 a19 a23 a14 a15` performs a local evidence review and exclusively
+creates `adoptions/wave-0-adoption.json`. It does not start a process, contact
+Sirius or change prior outputs. A second creation fails. The record must accompany
+any aggregate/report based on these selected files, since aggregation of complete
+inputs alone cannot represent the excluded block's failure.
+
+`amd_wave.py` accepts a sealed wave 1 request using the same campaign ID, a fresh
+job/preparation directory, and previously absent `launch/1` and `waves/1`.
+The request pins `wave0_adoption` and `launcher_transition`; these are checked
+before placement MPI and again before measurement. The new launcher requires a
+separately approved clean commit. The old run metadata retains its old launcher
+identity; wave 1 records the exact transition and does not relabel the 18 binaries.
+Config, runtime/environment, library/file hashes, CPU affinity and GPU placement
+checks remain strict. Reuse the retained runtime; no rebuild or recollection is
+needed for this tool-only change.
+
+Prepare wave 1 for the same mcrp/90-minute, `select=24` + `place=exclhost`
+allocation: six distinct physical hosts, `-np 6 -npernode 1 --bind-to none`,
+`-x PATH -x LD_LIBRARY_PATH`, one selected APU/24 bound CPUs per host. Actual
+hosts are determined by PBS; a01 is neither guaranteed nor silently excluded.
+Keep the existing module setup and three MPI stages (placement, preflight,
+measurement). Six successful 540-row blocks are still required for wave 1
+`COMPLETE`. There is no automatic retry, partial acceptance of a later failure,
+next wave, or submission. Commit approval and SSH/job approval remain separate.
 
 ### Prepared six-family allocated build
 

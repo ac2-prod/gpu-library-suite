@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gpu_suite import runner
+from gpu_suite.aggregation import aggregate_results
 from gpu_suite.config import load_config
 from gpu_suite.families import AMD_BENCHMARKS
 from gpu_suite.hashing import sha256_file
@@ -57,7 +58,12 @@ TOOL_REVISION_PATHS = frozenset({
     "jobs/sirius/amd_production.py", "jobs/sirius/amd_smoke_evidence.py",
     "tests/python/run_profiled_unittests.py", "tests/python/test_sirius_amd_prepare.py",
     "tests/python/test_sirius_amd_production.py", "tests/python/test_sirius_amd_smoke_evidence.py",
-    "docs/RESULT_SCHEMA.md",
+    "docs/RESULT_SCHEMA.md", "docs/BENCHMARK_PROTOCOL.md",
+})
+CONTINUATION_REVISION_PATHS = frozenset({
+    "jobs/sirius/amd_production.py", "jobs/sirius/amd_wave.py", "jobs/sirius/README.md",
+    "docs/BENCHMARK_PROTOCOL.md", "docs/RESULT_SCHEMA.md",
+    "tests/python/test_sirius_amd_production.py",
 })
 
 
@@ -405,6 +411,175 @@ def schedule_for(config, manifest, context):
     return schedule
 
 
+def campaign_identity(plan, manifest):
+    return dict(run_metadata_schema_version=1, run_id=plan["run_id"], run_mode="production",
+                    system_label="Sirius", git_metadata_available=True, git_dirty=False,
+                    git_commit=manifest["entries"][0]["git_commit"], dirty_source_provenance=None,
+                    effective_config_sha256=plan["config"]["sha256"],
+                    executables_manifest_sha256=plan["manifest"]["sha256"],
+                    runtime_environment_sha256=plan["runtime"]["sha256"],
+                    launcher={"name": "amd_production.py", "sha256": plan["launcher_sha256"],
+                              "mpirun": plan["mpirun"], "ranks_per_host": 1,
+                              "source_revision": plan.get("source_revision")})
+
+
+def review_wave0_adoption(run_root):
+    """Read retained evidence only. Never relabel a failed wave or synthesize rows."""
+    evidence = {}
+
+    def retained(relative, expected=None):
+        path = run_root / relative
+        require(path.is_file() and not path.is_symlink(), "Missing adoption evidence: " + relative)
+        value = sha256_file(path)
+        require(expected is None or value == expected, "Changed adoption evidence: " + relative)
+        evidence[relative] = value
+        return path
+
+    original = load(retained("run-metadata.json"))
+    plan = load(retained("launch/0/plan.json"))
+    wave = load(retained("waves/0/wave-metadata.json"))
+    master = load(retained("launch/0/status.json"))
+    collection = load(retained("waves/0/artifact-manifest.json"))
+    require(original["run_id"] == run_root.name == plan["run_id"] == wave["run_id"]
+            and plan["wave"] == wave["wave"] == master["wave"] == 0,
+            "Adoption run/wave identity mismatch")
+    require(master["status"] == collection["status"] == "FAILED" and master["exit_code"] == 1
+            and collection["mpi_exit"] == 0, "Only a recorded failed wave with completed MPI can be adopted")
+    require(wave["expected_node_count"] == wave["observed_node_count"] == NODES
+            and wave["expected_rows"] == collection["expected_rows"] == NODES * ROWS
+            and wave["launch_plan_sha256"] == digest(plan)
+            and collection["wave_metadata_sha256"] == digest(wave), "Adoption inventory mismatch")
+    config_path = retained("effective-config.json", original["effective_config_sha256"])
+    manifest_path = retained("executables-manifest.json", original["executables_manifest_sha256"])
+    retained("runtime-environment.json", original["runtime_environment_sha256"])
+    retained("waves/0/job-master/runtime-environment-evidence.json", wave["runtime_environment_evidence_sha256"])
+    config, manifest = load_config(config_path), runner.load_manifest(manifest_path)[0]
+    require(all(original.get(k) == v for k, v in campaign_identity(plan, manifest).items()),
+            "Original campaign provenance mismatch")
+    for field, metadata_field in (("config", "effective_config_sha256"),
+                                  ("manifest", "executables_manifest_sha256"),
+                                  ("runtime", "runtime_environment_sha256")):
+        require(wave[metadata_field] == original[metadata_field] == plan[field]["sha256"],
+                "Original wave provenance mismatch")
+    indexed = {f["path"]: f["sha256"] for f in collection["files"]}
+    require(len(indexed) == len(collection["files"]), "Duplicate collected file identity")
+    bindings = wave["rank_host_mapping"]
+    require(len(bindings) == NODES and {b["rank"] for b in bindings} == set(range(NODES))
+            and len({b["hostname"] for b in bindings}) == NODES, "Incomplete original host mapping")
+    accepted, excluded, rows = [], [], []
+    for binding in bindings:
+        host = binding["hostname"]
+        require(isinstance(host, str) and HOST.fullmatch(host), "Unsafe adoption hostname")
+
+        def node_file(name):
+            relative = "nodes/" + host + "/" + name
+            return retained("waves/0/" + relative, indexed[relative])
+
+        status = load(node_file("node-status.json"))
+        node_file("node-metadata.json")
+        raw_path = node_file("raw.jsonl")
+        node_rows = load_raw_results(raw_path)
+        require(status["wave_metadata_sha256"] == digest(wave)
+                and status["benchmark_calls"] == len(status["commands"]), "Node completion identity mismatch")
+        if status["status"] == "COMPLETE":
+            require(status["exit_code"] == 0 and status["benchmark_calls"] == INVOCATIONS
+                    and len(node_rows) == ROWS and all(c["exit"] == 0 and not c["timed_out"]
+                                                     for c in status["commands"]), "Incomplete accepted node")
+            require(all(r["hostname"] == host and r["node_index"] == binding["rank"]
+                        and r["wave"] == 0 and r["run_id"] == original["run_id"]
+                        and r["runtime_environment_sha256"] == original["runtime_environment_sha256"]
+                        and r["status"] == "success" and r["verification_status"] == "pass"
+                        and r["attempted"] is True
+                        and all(isinstance(r[k], (int, float)) and math.isfinite(r[k]) and r[k] > 0
+                                for k in ("elapsed_sec", "elapsed_total_sec"))
+                        for r in node_rows), "Accepted row identity mismatch")
+            accepted.append(dict(hostname=host, node_index=binding["rank"], rows=ROWS,
+                                 raw_file="waves/0/nodes/" + host + "/raw.jsonl"))
+            rows.extend(node_rows)
+        else:
+            commands = status["commands"]
+            require(status["status"] == "FAILED" and status["exit_code"] == 1 and commands
+                    and type(commands[-1]["exit"]) is int and commands[-1]["exit"] != 0
+                    and all(not c["timed_out"] for c in commands)
+                    and all(c["exit"] == 0 for c in commands[:-1]),
+                    "Unknown, missing or unrecorded failure cannot be adopted")
+            for command in commands:
+                for channel in ("stdout", "stderr"):
+                    path = node_file("commands/" + Path(command[channel]).name)
+                    require(sha256_file(path) == command[channel + "_sha256"], "Failed-node log changed")
+            excluded.append(dict(hostname=host, node_index=binding["rank"],
+                reason="recorded-process-failure; exclude the whole incomplete node block",
+                exit=commands[-1]["exit"], retained_rows=len(node_rows),
+                missing_rows=ROWS - len(node_rows), attempted_invocations=len(commands),
+                unattempted_invocations=INVOCATIONS - len(commands)))
+    require(len(accepted) == 5 and len(excluded) == 1 and len(rows) == collection["observed_rows"] == 2700,
+            "This adoption requires exactly five complete nodes and one recorded failure")
+    require(sorted((n["hostname"], n["rows"], n["status"]) for n in collection["nodes"])
+            == sorted((n["hostname"], ROWS, "PASS") for n in accepted), "Collected node selection changed")
+    validation = validate_campaign(rows, config, original["effective_config_sha256"], manifest)
+    require(validation["validation_status"] == "pass" and validation["block_count"] == 5
+            and validation["wave_count"] == 1, "Accepted rows failed validation")
+    _, statistics = aggregate_results(rows, config, include_pooled=False)
+    require(not statistics["speedup_omissions"], "Accepted nodes lack paired CPU baselines")
+    return dict(sirius_wave_adoption_schema_version=1, status="ACCEPTED_PARTIAL_WAVE",
+        run_id=original["run_id"], wave=0, original_status="FAILED", expected_nodes=NODES,
+        valid_nodes=5, expected_rows=NODES * ROWS, accepted_rows=len(rows),
+        authorization="owner-approved-five-node-adoption",
+        selection_policy="all-five-complete-node-blocks; no timing-based exclusion",
+        accepted=accepted, excluded=excluded, validation=validation,
+        assignment_counts={k: statistics[k] for k in ("permutation_assignment_counts",
+            "size_order_assignment_counts", "permutation_size_order_counts")},
+        original_launcher=original["launcher"], evidence_sha256=evidence)
+
+
+def check_prior_wave(run_root, plan, identity):
+    existing = load(run_root / "run-metadata.json")
+    adoption = plan.get("wave0_adoption")
+    if adoption is None:
+        require(not plan.get("launcher_transition"), "Transition requires an adoption record")
+        require(all(existing.get(k) == v for k, v in identity.items()), "Campaign provenance changed between waves")
+        require(load(run_root / "waves/0/artifact-manifest.json")["status"] == "COMPLETE",
+                "Wave 0 incomplete")
+        require(load(run_root / "launch/0/status.json")["status"] == "COMPLETE", "Wave 0 master incomplete")
+    else:
+        require(plan["wave"] == 1, "Adoption is limited to continuation into wave 1")
+        require(checked_json(adoption) == review_wave0_adoption(run_root), "Adoption evidence changed")
+        # Every measurement identity is still exact; only the separately pinned tool transition differs.
+        require(all(existing.get(k) == v for k, v in identity.items() if k != "launcher"),
+                "Campaign provenance changed between waves")
+        transition = plan.get("launcher_transition", {})
+        require(set(transition) == {"from", "to", "changed_paths", "patch_sha256"}
+                and transition["from"] == existing["launcher"]
+                and transition["to"] == identity["launcher"], "Unsealed launcher transition")
+        require(transition["from"]["mpirun"] == transition["to"]["mpirun"]
+                and transition["from"]["ranks_per_host"] == transition["to"]["ranks_per_host"] == 1
+                and transition["from"]["name"] == transition["to"]["name"], "MPI/launcher policy changed")
+        require(all(transition[k]["source_revision"]["artifact_commit"] == existing["git_commit"]
+                    for k in ("from", "to")), "Continuation artifact source changed")
+        paths = transition["changed_paths"]
+        require(isinstance(paths, list) and paths and paths == sorted(set(paths))
+                and set(paths) <= CONTINUATION_REVISION_PATHS, "Unapproved continuation paths")
+        runner.validate_sha256(transition["patch_sha256"], "continuation patch SHA-256")
+    for name, field in (("effective-config.json", "config"), ("executables-manifest.json", "manifest"),
+                        ("runtime-environment.json", "runtime")):
+        require(sha256_file(run_root / name) == plan[field]["sha256"], "Frozen campaign input changed")
+
+
+def check_tool_transition(processes, plan):
+    if not plan.get("wave0_adoption"):
+        return
+    transition = plan["launcher_transition"]
+    commits = [transition[k]["source_revision"]["launcher_commit"] for k in ("from", "to")]
+    require(all(isinstance(c, str) and re.fullmatch(r"[0-9a-f]{40}", c) for c in commits),
+            "Unsealed continuation commits")
+    prefix = [shutil.which("git"), "--no-optional-locks", "-C", str(ROOT), "diff", "--no-ext-diff", "--no-renames"]
+    paths = processes.run(prefix + ["--name-only", *commits, "--"], os.environ, "continuation-paths")
+    require(sorted(paths.stdout.splitlines()) == transition["changed_paths"], "Continuation paths changed")
+    patch = processes.run(prefix + ["--binary", *commits, "--"], os.environ, "continuation-patch")
+    require(hashlib.sha256(patch.stdout.encode("utf-8")).hexdigest() == transition["patch_sha256"],
+            "Continuation patch changed")
+
+
 def prepare_wave(run_root, plan, bindings, observations):
     """Master only; called after six successful MPI observations."""
     config, manifest, metadata, runtime = inputs(plan)
@@ -418,15 +593,7 @@ def prepare_wave(run_root, plan, bindings, observations):
                 and observation["size"] == NODES
                 and observation["scheduler_job_id"] == checked_json(plan["placement"])["scheduler_job_id"],
                 "Preflight runtime/allocation mismatch")
-    identity = dict(run_metadata_schema_version=1, run_id=plan["run_id"], run_mode="production",
-                    system_label="Sirius", git_metadata_available=True, git_dirty=False,
-                    git_commit=manifest["entries"][0]["git_commit"], dirty_source_provenance=None,
-                    effective_config_sha256=plan["config"]["sha256"],
-                    executables_manifest_sha256=plan["manifest"]["sha256"],
-                    runtime_environment_sha256=plan["runtime"]["sha256"],
-                    launcher={"name": "amd_production.py", "sha256": plan["launcher_sha256"],
-                              "mpirun": plan["mpirun"], "ranks_per_host": 1,
-                              "source_revision": plan.get("source_revision")})
+    identity = campaign_identity(plan, manifest)
     frozen = {"effective-config.json": "config", "executables-manifest.json": "manifest",
               "runtime-environment.json": "runtime"}
     if plan["wave"] == 0:
@@ -437,13 +604,7 @@ def prepare_wave(run_root, plan, bindings, observations):
                                                   submission_host=socket.gethostname()))
         (run_root / "waves").mkdir()
     else:
-        existing = load(run_root / "run-metadata.json")
-        require(all(existing.get(k) == v for k, v in identity.items()), "Campaign provenance changed between waves")
-        for name, field in frozen.items():
-            require(sha256_file(run_root / name) == plan[field]["sha256"], "Frozen campaign input changed")
-        require(load(run_root / "waves/0/artifact-manifest.json")["status"] == "COMPLETE",
-                "Wave 0 must be reviewed as complete before wave 1")
-        require(load(run_root / "launch/0/status.json")["status"] == "COMPLETE", "Wave 0 master did not complete")
+        check_prior_wave(run_root, plan, identity)
     wave_root = run_root / "waves" / str(plan["wave"])
     wave_root.mkdir()
     (wave_root / "nodes").mkdir()
@@ -466,6 +627,8 @@ def prepare_wave(run_root, plan, bindings, observations):
                 launch_plan_sha256=digest(plan), rank_host_mapping=bindings,
                 preflight_observations=sorted(observations, key=lambda o: o["rank"]),
                 timestamp=runner.utc_timestamp(), submission_host=socket.gethostname(), assignments=[])
+    if plan.get("wave0_adoption"):
+        wave.update(wave0_adoption=plan["wave0_adoption"], launcher_transition=plan["launcher_transition"])
     for binding in bindings:
         context = context_for(config, plan, binding, runtime)
         schedule_for(config, manifest, context)
@@ -712,8 +875,7 @@ def run_master(run_root, plan):
         run_root.mkdir()
         (run_root / "launch").mkdir()
     else:
-        require(load(run_root / "waves/0/artifact-manifest.json")["status"] == "COMPLETE", "Wave 0 incomplete")
-        require(load(run_root / "launch/0/status.json")["status"] == "COMPLETE", "Wave 0 master incomplete")
+        check_prior_wave(run_root, plan, campaign_identity(plan, manifest))
     launch = run_root / "launch" / str(plan["wave"])
     launch.mkdir()
     (launch / "observations").mkdir()
@@ -724,6 +886,7 @@ def run_master(run_root, plan):
     code = 1
     try:
         clean_source(processes, manifest, plan.get("source_revision"))
+        check_tool_transition(processes, plan)
         processes.run(mpi_command(plan, frozen_plan, "observe"), os.environ, "mpi-preflight")
         observations = [load(launch / "observations" / (str(rank) + ".json")) for rank in range(NODES)]
         wave = prepare_wave(run_root, plan, bindings, observations)
@@ -731,6 +894,7 @@ def run_master(run_root, plan):
         try:
             measured = processes.run(mpi_command(plan, frozen_plan, "worker", digest(wave)), os.environ, "mpi-measurement")
             clean_source(processes, manifest, plan.get("source_revision"))
+            check_tool_transition(processes, plan)
             mpi_exit = measured.returncode
         finally:
             report = collect_wave(run_root, plan, mpi_exit)
@@ -748,13 +912,27 @@ def run_master(run_root, plan):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("collect-runtime", "master", "observe", "worker"))
-    parser.add_argument("--plan", type=Path, required=True)
-    parser.add_argument("--plan-sha256", required=True)
+    parser.add_argument("action", choices=("adopt-wave0", "collect-runtime", "master", "observe", "worker"))
+    parser.add_argument("--plan", type=Path)
+    parser.add_argument("--plan-sha256")
+    parser.add_argument("--run-root", type=Path)
+    parser.add_argument("--accept-hosts", nargs=5)
     parser.add_argument("--wave-sha256")
     parser.add_argument("--output-directory", type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.action == "adopt-wave0":
+            require(args.run_root is not None and args.run_root.is_absolute()
+                    and args.run_root.parent.resolve() == (ROOT / "runs").resolve(), "Expected a retained run under runs/")
+            document = review_wave0_adoption(args.run_root)
+            require(sorted(args.accept_hosts or []) == sorted(n["hostname"] for n in document["accepted"]),
+                    "Explicit accepted hosts do not match the five complete nodes")
+            directory = args.run_root / "adoptions"
+            directory.mkdir()
+            save(directory / "wave-0-adoption.json", document)
+            print(digest(document))
+            return 0
+        require(args.plan is not None and args.plan_sha256 is not None, "A hashed plan is required")
         require(sys.platform.startswith("linux") and os.environ.get("PBS_ENVIRONMENT") == "PBS_BATCH"
                 and re.fullmatch(r"[0-9]+\.[A-Za-z0-9_.-]+", os.environ.get("PBS_JOBID", "")),
                 "An approved Sirius PBS batch allocation is required")

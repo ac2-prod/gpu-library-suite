@@ -676,9 +676,29 @@ against both those paths and its bounded `TOOL_REVISION_PATHS` list (site launch
 collection code, its tests and documentation only). Benchmark sources, common
 code, build definitions and configurations are outside that list. A change to
 any such input cannot use this exemption. Both source identities and the exact
-tool revision must match across waves. An uncommitted patch is never accepted
+tool revision must match across waves, except for the explicit, hashed Sirius
+continuation described below. An uncommitted patch is never accepted
 as production launcher provenance. This does not relax clean-build requirements
 or change NVIDIA record/schema handling.
+
+For an owner-accepted five-node failed wave 0, a separate
+`adoptions/wave-0-adoption.json` preserves the original `FAILED` evidence and
+selects complete blocks as defined in the benchmark protocol. It pins the
+original run/launch/wave metadata, collection report, raw files, node completion
+records and failed-command logs by SHA-256. Wave 1's plan and wave metadata bind
+that adoption file's identity and a `launcher_transition`: exact `from` and `to`
+launcher identities, sorted `changed_paths`, and the SHA-256 of the Git binary
+diff between their clean launcher commits. The launcher revalidates the adopted
+evidence and the exact transition, without rewriting immutable run metadata.
+
+This transition is limited to the adoption/continuation site code, its related
+test and owned documentation (`CONTINUATION_REVISION_PATHS`). Build source commit,
+all 18 artifact/binary/build-metadata identities, config, manifest, runtime,
+MPI executable and one-rank-per-host policy remain identical. The change is
+explicitly recorded rather than ignored in comparison. Missing approval evidence,
+changed hashes, unknown outcomes, unrelated tool edits or uncommitted source
+stop continuation before MPI. Numerical inputs, verification, timing, common
+runner/schema/aggregation code and build conditions are not exempted.
 
 The existing AMD rows may have null GPU UUIDs. These stay null; a supplied
 placement record must not be copied into a raw observation. A non-null raw
