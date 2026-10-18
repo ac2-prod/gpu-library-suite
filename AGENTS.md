@@ -24,6 +24,7 @@ authority order is:
 | `docs/BENCHMARK_PROTOCOL.md` | CLI, workloads, timing, warm-up, verification, CPU backends, ordering, and statistics. |
 | `docs/RESULT_SCHEMA.md` | Raw/aggregate formats, configuration, executable manifests, and run/wave/node metadata. |
 | `docs/PEGASUS_EXECUTION.md` | Pegasus-specific PBS, scratch, telemetry, build, and run operations. |
+| `jobs/sirius/README.md` | Sirius-specific approval, probe, connection budgets, execution records, and stopping rules. |
 | `docs/IMPLEMENTATION_PLAN.md` | Phases, dependencies, acceptance criteria, validation, risks, and unresolved decisions. |
 | `docs/DECISIONS.md` | Decision status, concise rationale, and links to authoritative specifications. |
 | `README.md` | Non-normative user-facing summary. |
@@ -34,10 +35,22 @@ Do not redefine an owned specification elsewhere. Link to its owner.
 
 - Read and write only inside the current repository workspace, except for small
   local validation artifacts under `/tmp/gpu-library-suite-local-build`.
-- Do not use `ssh`, `scp`, `sftp`, or `rsync`; do not connect to a supercomputer
-  or other remote host.
-- Do not execute scheduler or site-accounting commands such as `qsub`, `qstat`,
-  `qdel`, `qlogin`, `sstat`, `pegasusinfo`, or `rbudgetcheck`.
+- Use the local Shell tool for commands. Do not operate a terminal through
+  Computer Use. Remote operations require explicit approval for the host and
+  scope and use noninteractive SSH commands; never collect authentication input.
+- On login nodes perform only file/lightweight environment checks, approved job
+  submission/queue observation, and log collection. Computational builds,
+  tests, benchmarks, and GPU execution must use the system scheduler.
+- Local syntax and fixture checks do not establish remote launch readiness.
+  Before presenting an operation for approval, check its exact noninteractive
+  invocation against target-specific evidence. Report unresolved command-path
+  or environment prerequisites explicitly; follow the system operating document.
+- Report the SSH argv, stdout, stderr, exit code and, after submission, job ID.
+  Deletion, overwriting existing run artifacts, job cancellation, and bulk
+  resubmission require prior approval. Preserve historical runs and auth state.
+- The current development task authorizes editing through the existing SSHFS
+  mount and Mac-local validation only; it does not authorize a new SSH or
+  scheduler operation. Pegasus-specific restrictions remain in force.
 - Do not access `/work`, `/scr`, or `/pmem` from a local development host.
 - Do not request network access or install packages with Homebrew, pip, conda,
   apt, or similar tools.
@@ -69,21 +82,30 @@ purpose (`examples/` or `benchmarks/`). Principal top-level areas are
 `nvidia/`, `amd/`, `common/`, `configs/`, `tools/`, `jobs/`, `docs/`, and
 `tests/`.
 
-The initial `nvidia/c-cpp` implementation is extended by the approved
-`nvidia/fortran` implementation and common Fortran support. AMD areas are future
-work. Do not create empty
-future directories, dummy targets, or placeholder implementations. Miyabi,
-TSUBAME4.0, and Sirius may be documented as future job targets. Initial
-system-specific implementation is only `jobs/pegasus`; do not create Furo job
-directories or scripts.
+The NVIDIA C/C++ and approved NVIDIA Fortran implementations coexist with the
+AMD C/C++ development family: rocFFT, rocBLAS, rocSPARSE, rocSOLVER, rocRAND,
+and rocThrust. rocFFT's recorded Sirius build and 96-case basic smoke form the
+baseline for the remaining five libraries. AMD basic numerical coverage and the
+subsequent NVIDIA local/fixture plus Pegasus build/smoke coexistence review are
+recorded in `docs/VALIDATION_REPORT.md`, with their distinct source snapshots.
+Performance preparation follows `docs/IMPLEMENTATION_PLAN.md` and requires
+separate execution approval; a passed baseline does not validate later edits.
+AMD Fortran, Miyabi, and TSUBAME4.0 remain future scope. Do not create empty
+future directories or dummy implementations. System support belongs under
+`jobs/pegasus` and `jobs/sirius`; do not create Furo job directories.
+Preserve historical authentication state and unused transport source; do not
+resume SSH transport development.
 
 ## Teaching examples
 
 - `examples/` is the source of truth for code printed in the teaching material.
 - Filenames must exactly match the canonical material.
 - Each C/C++ example is a complete, independently compilable single-source
-  program. Fortran helpers and the Thrust interop object are explicit link inputs
-  as specified in `docs/PROJECT_SPECIFICATION.md`.
+  program, except that rocThrust OpenMP interoperation uses two translation
+  units: its OpenMP source and the canonical `rocthrust_wrapper.hip`.
+  Both are explicit compile/link inputs. This is the only C/C++ teaching
+  exception. Fortran helpers and the Thrust interop object remain explicit
+  link inputs as specified in `docs/PROJECT_SPECIFICATION.md`.
 - Do not use ellipses, pseudocode, hidden helper source, benchmark CLI, repeated
   trials, machine-readable result output, or environment metadata.
 - Preserve teaching clarity; avoid abstraction that hides the library-call flow.
@@ -154,6 +176,10 @@ defaults, and OpenACC data-management rules.
   `sm_90`, `cc90`, H100, or Pegasus values in portable source.
 - The build must support CPU-only configure.
 - Configure CUDA and OpenACC in separate build trees.
+- AMD teaching instructions may use `hipcc` for manual builds. Native CMake HIP
+  uses a supported Clang compiler, not the `hipcc` wrapper fixed as
+  `CMAKE_HIP_COMPILER`. Do not choose Sirius compiler paths, ROCm versions, or
+  GPU targets before environment evidence and the corresponding approval.
 - Do not enable fast math, TF32, Tensor Core modes, or architecture-specific
   numerical changes without an explicit approved option.
 - Missing optional dependencies disable only affected targets with a clear
@@ -181,6 +207,9 @@ creation.
 - At the end of every task, report changed files, commands run, passed tests,
   unexecuted tests, and manual Pegasus checks still required.
 - Do not commit or push changes without explicit owner authorization.
+- Approval to commit a fixed measurement version is separate from approval to
+  push, create a PR, or merge. The current AMD development approval authorizes
+  none of these publication operations or additional real build/smoke runs.
 - For an explicitly approved publication, completion includes the PR, required
   CI, main integration, current public usage guidance, and local synchronization.
   Do not leave completed, approved implementation work only on a work branch;

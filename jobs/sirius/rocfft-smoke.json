@@ -1,0 +1,85 @@
+{
+  "benchmarks": {
+    "rocfft": {
+      "cases": [
+        {
+          "parameters": {
+            "nfft": 32,
+            "batch": 2,
+            "transform": "c2c-forward"
+          },
+          "scopes": {
+            "compute": {
+              "warmup": 1,
+              "repeat": 2,
+              "trials": 2
+            },
+            "end-to-end": {
+              "warmup": 1,
+              "repeat": 2,
+              "trials": 2
+            }
+          }
+        },
+        {
+          "parameters": {
+            "nfft": 256,
+            "batch": 3,
+            "transform": "c2c-forward"
+          },
+          "scopes": {
+            "compute": {
+              "warmup": 1,
+              "repeat": 2,
+              "trials": 2
+            },
+            "end-to-end": {
+              "warmup": 1,
+              "repeat": 2,
+              "trials": 2
+            }
+          }
+        }
+      ],
+      "default_speedup_cpu_backend": "cpu-fftw-serial",
+      "enabled": true,
+      "precision": "fp32",
+      "series": [
+        {
+          "cpu_backend": "cpu-fftw-serial",
+          "cpu_backend_role": "production",
+          "cpu_parallelism": "serial",
+          "cpu_threads_effective": 1,
+          "implementation": "cpu",
+          "series_role": "primary"
+        },
+        {
+          "cpu_backend": null,
+          "cpu_backend_role": null,
+          "cpu_parallelism": null,
+          "cpu_threads_effective": null,
+          "implementation": "hip",
+          "series_role": "primary"
+        },
+        {
+          "cpu_backend": null,
+          "cpu_backend_role": null,
+          "cpu_parallelism": null,
+          "cpu_threads_effective": null,
+          "implementation": "openmp",
+          "series_role": "primary"
+        }
+      ],
+      "verification": {
+        "abs_tolerance": 0.0001,
+        "rel_tolerance": 1e-05
+      }
+    }
+  },
+  "config_schema_version": 1,
+  "continue_on_failure": false,
+  "cpu_threads": 1,
+  "output_format": "jsonl",
+  "run_mode": "smoke",
+  "vendor": "amd"
+}

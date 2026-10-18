@@ -55,6 +55,17 @@ add_test(NAME test_verification_nonfinite COMMAND test_verification_nonfinite)
 set_tests_properties(test_verification_nonfinite PROPERTIES
   LABELS profile-independent)
 
+add_executable(test_rocfft_verification cpp/test_rocfft_verification.cpp)
+target_link_libraries(test_rocfft_verification PRIVATE gpu_suite::common)
+set_target_properties(test_rocfft_verification PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES CXX_EXTENSIONS NO)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+  target_compile_options(test_rocfft_verification PRIVATE
+    -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+endif()
+add_test(NAME test_rocfft_verification COMMAND test_rocfft_verification)
+set_tests_properties(test_rocfft_verification PROPERTIES LABELS profile-independent)
+
 set(_gpu_suite_fixture_root "${CMAKE_BINARY_DIR}/test-fixtures")
 set(_gpu_suite_fixture_pycache "${_gpu_suite_fixture_root}/pycache")
 set(_gpu_suite_cpu_only_test_names
@@ -135,6 +146,13 @@ set_target_properties(fake_fftw3f_threads PROPERTIES
   C_STANDARD 17
   C_STANDARD_REQUIRED YES
   C_EXTENSIONS NO)
+
+# Reuse the small FFTW fixture for AMD CPU behavior; this is not ROCm execution.
+add_executable(rocfft_fftw_fixture_bench
+  "${CMAKE_SOURCE_DIR}/amd/c-cpp/rocfft/benchmarks/fft_cpu_bench.c")
+target_link_libraries(rocfft_fftw_fixture_bench PRIVATE
+  gpu_suite::common fake_fftw3f_threads fake_fftw3f)
+target_compile_definitions(rocfft_fftw_fixture_bench PRIVATE GPU_SUITE_HAVE_FFTW_THREADS=1)
 
 add_library(fake_cpu_providers STATIC
   fixtures/cpu_libs/fake_cpu_providers.c)
@@ -777,6 +795,7 @@ if(Python3_Interpreter_FOUND)
               --profile cpu-fixture)
     set(_gpu_suite_cpu_fixture_test_environment
       ${_gpu_suite_python_test_environment}
+      "GPU_SUITE_ROCFFT_FFTW_FIXTURE_BENCH=$<TARGET_FILE:rocfft_fftw_fixture_bench>"
       "GPU_SUITE_FFTW_FIXTURE_BENCH=${_fftw_positive_build}/nvidia/c-cpp/cufft/fft_cpu_bench"
       "GPU_SUITE_FFTW_FIXTURE_MANIFEST=${_fftw_positive_build}/partial-manifest.json"
       "GPU_SUITE_FFTW_FIXTURE_METADATA=${_fftw_positive_build}/build-metadata.json"

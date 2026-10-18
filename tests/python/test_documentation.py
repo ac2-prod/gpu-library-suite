@@ -170,8 +170,8 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("RNG algorithms differ", readme)
         self.assertIn("only writer of the node-level raw-result file", readme)
         self.assertIn("one-node Pegasus", readme)
-        self.assertIn("data-resident compute panel", readme)
-        self.assertIn("one-shot host-input-to-host-output panel", readme)
+        self.assertIn("data-resident library panel", readme)
+        self.assertIn("one-shot end-to-end panel", readme)
         self.assertIn("No speedup, throughput, reuse-count, amortized", readme)
         self.assertIn("No real CUDA GPU", readme)
 
@@ -250,10 +250,25 @@ class DocumentationTests(unittest.TestCase):
             if versioned.search(path.name)
         ]
         self.assertEqual(bad_paths, [])
-        # NVIDIA/common Fortran are now owner-approved implementations, not
-        # future placeholders. Their source inventory is tested separately.
-        for relative in ("amd", "jobs/furo"):
-            self.assertFalse((REPOSITORY_ROOT / relative).exists())
+        # All approved AMD families contain complete canonical entry points,
+        # never empty future placeholders.
+        self.assertFalse((REPOSITORY_ROOT / "jobs/furo").exists())
+        self.assertEqual({path.name for path in (REPOSITORY_ROOT / "amd").iterdir()}, {"c-cpp"})
+        amd_stems = {"rocfft": "fft", "rocblas": "blas", "rocsparse": "sparse",
+                     "rocsolver": "solver", "rocrand": "rand", "rocthrust": "reduce"}
+        self.assertEqual({path.name for path in (REPOSITORY_ROOT / "amd/c-cpp").iterdir()}, set(amd_stems))
+        for library, stem in amd_stems.items():
+            directory = REPOSITORY_ROOT / "amd/c-cpp" / library
+            cpu_extension = ".cpp" if library in {"rocrand", "rocthrust"} else ".c"
+            for role, suffix in (("examples", ""), ("benchmarks", "_bench")):
+                for filename in (stem + "_cpu" + suffix + cpu_extension,
+                                 stem + "_gpu" + suffix + ".cpp",
+                                 "openmp_" + library + suffix + ".cpp"):
+                    self.assertTrue((directory / role / filename).is_file(), filename)
+        self.assertTrue((REPOSITORY_ROOT / "amd/c-cpp/rocthrust/examples/rocthrust_wrapper.hip").is_file())
+        for path in (REPOSITORY_ROOT / "amd").rglob("*"):
+            if path.is_dir():
+                self.assertTrue(any(path.iterdir()), str(path))
 
     def test_portable_files_have_no_embedded_gpu_architecture(self):
         architecture_re = re.compile(r"(?:sm_[0-9]+|cc[0-9]{2,})")
@@ -263,6 +278,7 @@ class DocumentationTests(unittest.TestCase):
             REPOSITORY_ROOT / "cmake",
             REPOSITORY_ROOT / "common",
             REPOSITORY_ROOT / "nvidia",
+            REPOSITORY_ROOT / "amd",
             REPOSITORY_ROOT / "configs",
             REPOSITORY_ROOT / "tools",
         )

@@ -89,6 +89,18 @@ void fftwf_execute(const fftwf_plan plan) {
   }
   if (plan->batch > 0 && plan->n > 1)
     (void)fixture_nonfinite(&plan->output[plan->output_stride][0]);
+  /* Opt-in adversarial fixture for rocFFT-style destructive input. It is not
+     a claim about real FFTW behavior and does not affect existing tests. */
+  if (getenv("GPU_SUITE_TEST_DESTRUCTIVE_FFT_INPUT") != NULL) {
+    for (transform = 0; transform < plan->batch; ++transform) {
+      int sample;
+      for (sample = 0; sample < plan->n; ++sample) {
+        const int index = transform * plan->input_distance + sample * plan->input_stride;
+        plan->input[index][0] = -1.0F;
+        plan->input[index][1] = 1.0F;
+      }
+    }
+  }
 }
 
 void fftwf_destroy_plan(fftwf_plan plan) { free(plan); }

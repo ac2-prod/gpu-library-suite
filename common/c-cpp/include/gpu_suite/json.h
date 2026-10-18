@@ -23,6 +23,12 @@ int gpu_suite_json_object_set(gpu_suite_json_value *object, const char *key,
                               gpu_suite_json_value *value);
 bool gpu_suite_json_is_array(const gpu_suite_json_value *value);
 bool gpu_suite_json_is_object(const gpu_suite_json_value *value);
+/* Return an existing object-valued member, or NULL for a missing key, a
+ * non-object member/parent, or a NULL key. The returned pointer is borrowed:
+ * the parent retains ownership and the pointer is valid until the parent is freed.
+ * Do not free it or transfer it to another container. */
+gpu_suite_json_value *gpu_suite_json_object_get_object(
+    gpu_suite_json_value *object, const char *key);
 bool gpu_suite_json_object_has(const gpu_suite_json_value *object,
                                const char *key);
 bool gpu_suite_json_object_value_is_null(const gpu_suite_json_value *object,

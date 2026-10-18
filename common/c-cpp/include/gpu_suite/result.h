@@ -92,7 +92,7 @@ typedef struct {
   char gpu_uuid_storage[64];
   char cuda_driver_version_storage[32];
   char cuda_runtime_version_storage[32];
-  char library_version_storage[32];
+  char library_version_storage[256];
 } gpu_suite_result;
 
 int gpu_suite_result_init(gpu_suite_result *result);

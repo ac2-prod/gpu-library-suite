@@ -6,6 +6,11 @@ architecture, GPU target, and shared paths are human-supplied values. The
 normative operating rules are in
 [`docs/PEGASUS_EXECUTION.md`](../../docs/PEGASUS_EXECUTION.md).
 
+For the NVIDIA coexistence check after AMD integration, follow the
+[Git handoff procedure](../../docs/PEGASUS_EXECUTION.md#git経由の検証版反映).
+The Sirius and Pegasus checkouts are separate; validate the same approved Git
+commit on Pegasus and retain its existing private configuration and run logs.
+
 ## Configuration and separate builds
 
 Copy `pegasus.json.example` to a private, repository-local or otherwise

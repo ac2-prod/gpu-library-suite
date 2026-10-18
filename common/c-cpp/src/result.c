@@ -218,6 +218,7 @@ static int build_parameters(const gpu_suite_options *options,
   *secondary_size = gpu_suite_optional_int_null();
   switch (options->benchmark) {
   case GPU_SUITE_BENCHMARK_CUFFT:
+  case GPU_SUITE_BENCHMARK_ROCFFT:
     PARAMETER_INT("nfft", options->size);
     PARAMETER_INT("batch", options->batch);
     PARAMETER_TAKE("transform", gpu_suite_json_string(options->transform));
@@ -233,6 +234,7 @@ static int build_parameters(const gpu_suite_options *options,
     *secondary_size = gpu_suite_optional_int_value(converted);
     break;
   case GPU_SUITE_BENCHMARK_CUBLAS:
+  case GPU_SUITE_BENCHMARK_ROCBLAS:
     m = options->size_set ? options->size : options->m;
     n = options->size_set ? options->size : options->n;
     k = options->size_set ? options->size : options->k;
@@ -250,6 +252,7 @@ static int build_parameters(const gpu_suite_options *options,
     }
     break;
   case GPU_SUITE_BENCHMARK_CUSPARSE:
+  case GPU_SUITE_BENCHMARK_ROCSPARSE:
     status = sparse_sizes(options, &nx, &ny, &count, &nnz);
     if (status != GPU_SUITE_OK) {
       goto fail;
@@ -270,6 +273,7 @@ static int build_parameters(const gpu_suite_options *options,
     *secondary_size = gpu_suite_optional_int_value(converted);
     break;
   case GPU_SUITE_BENCHMARK_CUSOLVER:
+  case GPU_SUITE_BENCHMARK_ROCSOLVER:
     PARAMETER_INT("n", options->size);
     PARAMETER_INT("nrhs", options->nrhs);
     if (u64_to_i64(options->size, &converted) != GPU_SUITE_OK) {
@@ -284,6 +288,7 @@ static int build_parameters(const gpu_suite_options *options,
     *secondary_size = gpu_suite_optional_int_value(converted);
     break;
   case GPU_SUITE_BENCHMARK_CURAND:
+  case GPU_SUITE_BENCHMARK_ROCRAND:
     PARAMETER_INT("size", options->size);
     PARAMETER_TAKE("generator", gpu_suite_json_string(options->generator));
     PARAMETER_TAKE("distribution",
@@ -298,6 +303,7 @@ static int build_parameters(const gpu_suite_options *options,
     *problem_size = gpu_suite_optional_int_value(converted);
     break;
   case GPU_SUITE_BENCHMARK_THRUST:
+  case GPU_SUITE_BENCHMARK_ROCTHRUST:
     PARAMETER_INT("size", options->size);
     PARAMETER_TAKE("operation", gpu_suite_json_string(options->operation));
     if (u64_to_i64(options->size, &converted) != GPU_SUITE_OK) {
@@ -451,7 +457,8 @@ int gpu_suite_result_apply_options(gpu_suite_result *result,
   result->problem_size = problem_size;
   result->secondary_size = secondary_size;
   result->precision =
-      options->benchmark == GPU_SUITE_BENCHMARK_CUFFT ? "fp32" : "fp64";
+      (options->benchmark == GPU_SUITE_BENCHMARK_CUFFT ||
+       options->benchmark == GPU_SUITE_BENCHMARK_ROCFFT) ? "fp32" : "fp64";
   result->warmup = options->warmup;
   result->repeat = options->repeat;
   result->trial = 0;
@@ -483,6 +490,43 @@ int gpu_suite_result_apply_options(gpu_suite_result *result,
   }
   gpu_suite_result_apply_build_metadata(result, options->implementation);
   gpu_suite_result_apply_provenance_environment(result);
+  if (gpu_suite_benchmark_is_amd(options->benchmark)) {
+    gpu_suite_json_value *runtime = gpu_suite_json_object();
+    if (runtime == NULL) return GPU_SUITE_ERROR_NOMEM;
+    if (object_take(runtime, "build_metadata_sha256",
+                    gpu_suite_json_string(gpu_suite_build_metadata_sha256())) != GPU_SUITE_OK) {
+      gpu_suite_json_free(runtime);
+      return GPU_SUITE_ERROR_NOMEM;
+    }
+    if (options->benchmark == GPU_SUITE_BENCHMARK_ROCSPARSE &&
+        options->implementation == GPU_SUITE_IMPLEMENTATION_CPU &&
+        strcmp(options->cpu_backend, "cpu-aocl-sparse") == 0) {
+      static const char *const names[] = {
+          "AOCLSPARSE_NUM_THREADS", "OMP_NUM_THREADS", "OMP_DYNAMIC",
+          "AOCL_ENABLE_INSTRUCTIONS"};
+      gpu_suite_json_value *environment = gpu_suite_json_object();
+      if (environment == NULL) {
+        gpu_suite_json_free(runtime);
+        return GPU_SUITE_ERROR_NOMEM;
+      }
+      for (size_t index = 0; index < sizeof(names) / sizeof(names[0]); ++index) {
+        const char *value = getenv(names[index]);
+        if (object_take(environment, names[index],
+                        value == NULL ? gpu_suite_json_null()
+                                      : gpu_suite_json_string(value)) != GPU_SUITE_OK) {
+          gpu_suite_json_free(environment);
+          gpu_suite_json_free(runtime);
+          return GPU_SUITE_ERROR_NOMEM;
+        }
+      }
+      if (object_take(runtime, "aocl_sparse_environment", environment) != GPU_SUITE_OK) {
+        gpu_suite_json_free(runtime);
+        return GPU_SUITE_ERROR_NOMEM;
+      }
+    }
+    if (object_take(result->parameters, "runtime", runtime) != GPU_SUITE_OK)
+      return GPU_SUITE_ERROR_NOMEM;
+  }
   return GPU_SUITE_OK;
 }
 
@@ -685,7 +729,8 @@ int gpu_suite_result_validate(const gpu_suite_result *result, char *error,
     set_error(error, error_size, "GPU result contains CPU metadata");
     return GPU_SUITE_ERROR_INVALID;
   }
-  if (strcmp(result->implementation, "cpu") != 0 &&
+  if ((strcmp(result->implementation, "cuda") == 0 ||
+       strcmp(result->implementation, "openacc") == 0) &&
       strcmp(result->status, "success") == 0 &&
       (result->gpu_name == NULL || result->gpu_name[0] == '\0' ||
        result->gpu_uuid == NULL || result->gpu_uuid[0] == '\0' ||
@@ -696,6 +741,17 @@ int gpu_suite_result_validate(const gpu_suite_result *result, char *error,
        result->library_version == NULL || result->library_version[0] == '\0')) {
     set_error(error, error_size,
               "successful GPU result lacks runtime identity metadata");
+    return GPU_SUITE_ERROR_INVALID;
+  }
+  if ((strcmp(result->benchmark, "rocfft") == 0 ||
+       strcmp(result->benchmark, "rocblas") == 0 ||
+       strcmp(result->benchmark, "rocsparse") == 0 ||
+       strcmp(result->benchmark, "rocsolver") == 0 ||
+       strcmp(result->benchmark, "rocrand") == 0 ||
+       strcmp(result->benchmark, "rocthrust") == 0) &&
+      (result->cuda_driver_version != NULL || result->cuda_runtime_version != NULL ||
+       !gpu_suite_json_object_has(result->parameters, "runtime"))) {
+    set_error(error, error_size, "AMD runtime metadata must be separate from CUDA");
     return GPU_SUITE_ERROR_INVALID;
   }
   if (result->git_diff_sha256 != NULL &&

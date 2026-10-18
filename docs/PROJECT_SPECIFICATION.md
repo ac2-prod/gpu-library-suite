@@ -8,7 +8,8 @@ parameters, and example-level data-management rules. Benchmark CLI behavior,
 timing, verification thresholds, and statistics are owned by
 [`BENCHMARK_PROTOCOL.md`](BENCHMARK_PROTOCOL.md). Machine-readable formats are
 owned by [`RESULT_SCHEMA.md`](RESULT_SCHEMA.md). Pegasus operations are owned by
-[`PEGASUS_EXECUTION.md`](PEGASUS_EXECUTION.md).
+[`PEGASUS_EXECUTION.md`](PEGASUS_EXECUTION.md); Sirius operations are owned by
+[`jobs/sirius/README.md`](../jobs/sirius/README.md).
 
 The canonical source for teaching code, filenames, and default problem settings
 is the 2026-07-13 edition of *Library Edition (NVIDIA GPU, C/C++)* (「ライブラリ
@@ -73,7 +74,13 @@ gpu-library-suite/
         CMakeLists.txt
     fortran/                 same six library/purpose subdirectories
   amd/
-    c-cpp/                   future; do not create as an empty placeholder
+    c-cpp/
+      rocfft/                first approved local implementation
+        examples/
+        benchmarks/
+        README.md
+        README.ja.md
+        CMakeLists.txt
     fortran/                 future; do not create as an empty placeholder
   common/
     c-cpp/
@@ -88,15 +95,20 @@ gpu-library-suite/
   tools/
   jobs/
     pegasus/
+    sirius/                  approved probe history; future build/smoke body
   docs/
   tests/
 ```
 
 This tree is a target architecture, not permission to create empty directories.
-The initial implementation was limited to `nvidia/c-cpp`; the approved addition
-is `nvidia/fortran` and its common support. AMD C/C++ and Fortran remain future work.
-Do not create empty future-area directories, dummy targets, or placeholder
-implementations.
+The initial implementation was limited to `nvidia/c-cpp`; the implemented addition
+is `nvidia/fortran` and its common support. AMD C/C++ and Sirius are formally
+approved development targets. rocFFT has completed a recorded Sirius build and
+basic CPU/HIP/OpenMP smoke; see `VALIDATION_REPORT.md` for the exact source and
+limits. The remaining five C/C++ libraries are in local implementation and
+validation. Their real GPU execution is not implied by rocFFT's success.
+AMD Fortran remains future work. Do not create empty future-area directories,
+dummy targets, or placeholder implementations.
 
 Fortran uses the same library directories and stems as the table below, with
 the `.f90` extension for all 18 examples and 18 benchmark entry points.
@@ -122,13 +134,109 @@ revision, or release suffixes. Schema versions belong inside machine-readable
 documents. An upstream-mandated spelling such as `cublas_v2.h` is not a
 repository-owned filename and must remain unchanged.
 
+### Approved AMD filename and teaching exception
+
+The canonical HIP wrapper filename for rocThrust OpenMP interoperation is
+`rocthrust_wrapper.hip`. Teaching material, distributed sources, CMake inputs,
+tests, and documentation must use this same name. The owner explicitly selected
+the rocFFT inventory and workload below. The owner subsequently requested expansion of the successful rocFFT implementation
+to all six AMD C/C++ libraries. The development inventory below fixes names and
+workloads for that expansion; it does not claim an existing published AMD edition.
+
+Only the rocThrust OpenMP C/C++ teaching example may use two translation units:
+the OpenMP caller and `rocthrust_wrapper.hip`. The complete caller and wrapper
+must both be distributed and printed/documented as explicit compile/link
+inputs, including the wrapper object in the final link. There is no hidden
+helper source. The OpenMP caller owns its mapped arrays and passes their device
+pointers to the HIP wrapper; the wrapper must not allocate/free those mapped
+arrays or let a C++ exception escape its C ABI boundary. This exception does
+not apply to another C/C++ teaching example, and does not alter the approved
+Fortran helper model.
+
+Manual teaching builds may use `hipcc`. CMake native HIP builds use supported
+Clang rather than fixing the `hipcc` wrapper as `CMAKE_HIP_COMPILER`. Compiler
+paths, ROCm versions, and GPU targets remain external inputs until the Sirius
+environment is confirmed. Both translation units' compile conditions and final
+link inputs must be recorded by the eventual build integration. Stage 1
+records this contract without creating the wrapper or AMD targets.
+
+### rocFFT C/C++ inventory and teaching workload
+
+The owner-approved first AMD library lives in `amd/c-cpp/rocfft/`:
+
+| Implementation | Teaching source | Benchmark source |
+| --- | --- | --- |
+| CPU / FFTW3f | `examples/fft_cpu.c` | `benchmarks/fft_cpu_bench.c` |
+| HIP / rocFFT | `examples/fft_gpu.cpp` | `benchmarks/fft_gpu_bench.cpp` |
+| OpenMP target / rocFFT | `examples/openmp_rocfft.cpp` | `benchmarks/openmp_rocfft_bench.cpp` |
+
+Every teaching program is one complete source: FP32 interleaved complex,
+batched one-dimensional C2C forward, out-of-place, `nfft=1024`, `batch=4096`,
+all input elements `1+0i`. CPU directly uses `fftwf_plan_many_dft` with
+`FFTW_ESTIMATE`; HIP directly uses HIP Runtime and rocFFT. OpenMP uses
+`target data map(to:...) map(from:...)` and `use_device_ptr`, waits for rocFFT
+completion before reading output or leaving the data region, and never frees
+OpenMP-owned arrays through HIP. Each batch expects DC `nfft+0i` and zero at
+all other frequencies. These defaults do not prescribe benchmark thread counts.
+CMake target/executable names match source stems; vendor-specific build trees
+avoid collisions with the existing NVIDIA names. The additional AMD development inventory follows below; no placeholder targets
+or empty examples are used.
+
+### Additional AMD C/C++ development inventory
+
+This expansion carries forward the mathematical teaching problems specified
+below, with direct AMD library APIs and OpenMP target interoperability. It does
+not change the NVIDIA source inventory. All filenames below are relative to
+`amd/c-cpp/<library>/`; executable targets retain the source stem.
+
+| Library | CPU teaching | HIP teaching | OpenMP teaching |
+| --- | --- | --- | --- |
+| rocblas | `examples/blas_cpu.c` | `examples/blas_gpu.cpp` | `examples/openmp_rocblas.cpp` |
+| rocsparse | `examples/sparse_cpu.c` | `examples/sparse_gpu.cpp` | `examples/openmp_rocsparse.cpp` |
+| rocsolver | `examples/solver_cpu.c` | `examples/solver_gpu.cpp` | `examples/openmp_rocsolver.cpp` |
+| rocrand | `examples/rand_cpu.cpp` | `examples/rand_gpu.cpp` | `examples/openmp_rocrand.cpp` |
+| rocthrust | `examples/reduce_cpu.cpp` | `examples/reduce_gpu.cpp` | `examples/openmp_rocthrust.cpp` |
+
+Benchmark filenames use the same stems with `_bench` under `benchmarks/`.
+rocThrust OpenMP additionally links `examples/rocthrust_wrapper.hip`; its C ABI
+contains exceptions and does not allocate or free caller-managed arrays.
+
+- rocBLAS: FP64 column-major DGEMM, m=n=k=1024, alpha=beta=1, A/B/C all ones;
+  CPU CBLAS and HIP `rocblas_dgemm`.
+- rocSPARSE: the identical zero-based FP64 1024x1024-grid Poisson CSR problem
+  below; generic `rocsparse_spmv`, CSR adaptive algorithm, buffer-size,
+  preprocessing and compute stages. CPU oneMKL, explicitly selected AOCL Sparse,
+  and explicitly selected reference CSR backends remain distinct; an unavailable
+  production provider never falls back to reference code. The AMD CPU teaching
+  file remains `sparse_cpu.c`, independently compiled with its selected provider.
+  AOCL uses direct descriptor/CSR, hint/optimize, SpMV and destruction calls in
+  that file, without hidden helper translation units. NVIDIA's oneMKL teaching
+  source is unchanged. Backend/build and thread semantics belong to
+  [BENCHMARK_PROTOCOL](BENCHMARK_PROTOCOL.md#cpu-backends-and-parallelism).
+- rocSOLVER: the identical FP64 n=1024, nrhs=16 dense system below; CPU teaching
+  uses LAPACKE_dgesv, GPU uses rocsolver_dgetrf then rocsolver_dgetrs. Benchmark
+  CPU uses staged LAPACKE getrf/getrs. Solver repeat remains one.
+- rocRAND: 2^24 uniform doubles, seed 1234, offset zero,
+  ROCRAND_RNG_PSEUDO_DEFAULT and default ordering. CPU std::mt19937_64 and GPU
+  generators solve the same statistical task, not an identical bit sequence.
+- rocThrust: FP64 transform_reduce of squared ones, 2^24 elements, synchronous
+  HIP execution policy. CPU STL and explicitly configured OpenMP backends have
+  distinct identities.
+
+OpenMP target owns its mapped arrays and passes translated device pointers to
+HIP libraries; actual offload and device agreement must be verified. Separate
+library workspaces are explicit allocations and are never freed through two
+owners. Only rocThrust uses the two-translation-unit teaching exception.
+
 ## Teaching-example policy
 
 `examples/` is the source of truth for code printed in the teaching material.
 Each example must:
 
 - match its canonical teaching filename exactly;
-- be a complete program (C/C++ examples are independently compilable single sources);
+- be a complete program (C/C++ examples are independently compilable single
+  sources, with only the explicit rocThrust OpenMP two-translation-unit exception
+  above);
 - contain no ellipses, pseudocode, hidden helper source, benchmark CLI, repeated
   trials, CSV/JSON output, or environment metadata;
 - preserve a direct, readable library-call sequence and avoid excessive

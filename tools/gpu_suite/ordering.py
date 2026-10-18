@@ -19,8 +19,13 @@ def permutation_index(node_index: int, wave: int) -> int:
     return (node_index + wave) % len(IMPLEMENTATION_PERMUTATIONS)
 
 
-def implementation_order(node_index: int, wave: int) -> Tuple[str, str, str]:
-    return IMPLEMENTATION_PERMUTATIONS[permutation_index(node_index, wave)]
+def implementation_order(node_index: int, wave: int, vendor: str = "nvidia") -> Tuple[str, str, str]:
+    if vendor not in {"nvidia", "amd"}:
+        raise ValueError("unknown vendor")
+    order = IMPLEMENTATION_PERMUTATIONS[permutation_index(node_index, wave)]
+    if vendor == "amd":
+        return tuple({"cpu": "cpu", "cuda": "hip", "openacc": "openmp"}[item] for item in order)
+    return order
 
 
 def size_order_index(node_index: int) -> int:

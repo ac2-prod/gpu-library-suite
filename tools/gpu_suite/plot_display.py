@@ -12,6 +12,7 @@ BACKEND_LABELS = {
     "cpu-fftw-threaded": "FFTW",
     "cpu-fftw-serial": "FFTW serial",
     "cpu-onemkl": "oneMKL",
+    "cpu-aocl-sparse": "AOCL Sparse",
     "cpu-openblas": "OpenBLAS",
     "cpu-generic-cblas": "CBLAS",
     "cpu-generic-lapacke": "LAPACKE",
@@ -100,7 +101,7 @@ def build_display_context(
     hosts = {row.get("hostname") for row in raw_records}
     cpu_names = [by_host.get(host) for host in hosts]
     gpu_names = [row.get("gpu_name") for row in raw_records
-                 if row.get("implementation") in {"cuda", "openacc"}
+                 if row.get("implementation") in {"cuda", "openacc", "hip", "openmp"}
                  and row.get("status") == "success"]
     context = {
         "cpu_model": _model(cpu_names, cpu_model, "node-metadata"),
@@ -140,9 +141,9 @@ def series_display(
 ) -> Dict[str, Any]:
     implementation = record["implementation"]
     language_suffix = " / Fortran" if record.get("parameters", {}).get("source_language") == "fortran" else ""
-    if implementation in {"cuda", "openacc"}:
+    if implementation in {"cuda", "openacc", "hip", "openmp"}:
         model = context["gpu_model"]["value"] or "GPU model unknown"
-        return {"label": model + ", " + ("CUDA" if implementation == "cuda" else "OpenACC") + language_suffix}
+        return {"label": model + ", " + {"cuda": "CUDA", "openacc": "OpenACC", "hip": "HIP", "openmp": "OpenMP target"}[implementation] + language_suffix}
     if implementation != "cpu":
         raise ValueError("publication plots accept only CPU, CUDA, and OpenACC")
     backend = record.get("cpu_backend")

@@ -9,15 +9,56 @@ cuSPARSE, cuSOLVER, cuRAND, and Thrust.
 The source tree includes `nvidia/c-cpp` and the
 [NVIDIA Fortran implementation](nvidia/fortran/README.md). Fortran CPU/CUDA/OpenACC
 builds, real-machine checks and production measurements were completed on Pegasus;
-see the [recorded coverage and limits](docs/VALIDATION_REPORT.md#fortran-production-validation). AMD and additional
-systems are intentionally deferred; the repository does not contain empty
-placeholder implementations for them. The project is maintained under
-`ac2-prod` and is not an official HAIRDESC repository.
+see the [recorded coverage and limits](docs/VALIDATION_REPORT.md#fortran-production-validation).
+The AMD C/C++ family covers rocFFT, rocBLAS, rocSPARSE, rocSOLVER, rocRAND,
+and rocThrust. Sirius verified all 36 teaching/benchmark build artifacts,
+including the explicit [AOCL Sparse CPU backend](amd/c-cpp/rocsparse/README.md).
+The separate rocFFT and focused five-family runs passed 18 teaching examples
+and 576 numerical records across their recorded source snapshots.
+After AMD addition, NVIDIA C/C++ and Fortran passed the local/fixture
+coexistence checks and a clean-commit Pegasus build of 36 benchmarks followed
+by 72/72 numerical smoke cases, including Fortran Thrust interoperation.
+The [validation report](docs/VALIDATION_REPORT.md#current-coexistence-status)
+separates these source identities and evidence limits. Effective CPU worker
+counts and complete loaded-library identity remain unverified where noted;
+basic smoke does not establish performance. AMD production measurement is now
+closed: the CPU/GPU comparison selects 3,960 retained FFT/Sparse/RAND/Thrust
+rows and 2,160 newly measured BLAS/Solver rows after the parallel-BLIS link
+correction. These remain two separately aggregated campaigns. See the
+[audit, results and remaining limits](docs/VALIDATION_REPORT.md#amd-production-comparison).
+Historical results and the failed wave/node evidence are preserved. The accepted
+FFT timing difference is
+[documented](amd/c-cpp/rocfft/README.md); it does not require repeating NVIDIA
+measurements. The project is maintained
+under `ac2-prod` and is not an official HAIRDESC repository.
 
 This is the source repository for the **Library Edition (NVIDIA GPU)**
 C/C++ and Fortran teaching material. You do not need Pegasus access or the
 authors' conversation history to read or build the examples. Running a GPU
 example does require a suitable NVIDIA GPU and the dependencies below.
+
+## AMD C/C++ development
+
+| Family | Sources and dependencies |
+| --- | --- |
+| rocFFT | [CPU / HIP / OpenMP](amd/c-cpp/rocfft/README.md) |
+| rocBLAS | [CPU / HIP / OpenMP](amd/c-cpp/rocblas/README.md) |
+| rocSPARSE | [CPU / HIP / OpenMP](amd/c-cpp/rocsparse/README.md) |
+| rocSOLVER | [CPU / HIP / OpenMP](amd/c-cpp/rocsolver/README.md) |
+| rocRAND | [CPU / HIP / OpenMP](amd/c-cpp/rocrand/README.md) |
+| rocThrust | [CPU / HIP / OpenMP and explicit HIP wrapper](amd/c-cpp/rocthrust/README.md) |
+
+Select `GPU_SUITE_VENDOR=amd` in a separate build tree. The default
+`GPU_SUITE_AMD_LIBRARIES` selects all six; an explicit semicolon-separated subset
+such as `-DGPU_SUITE_AMD_LIBRARIES=rocfft` limits both discovery and targets.
+Keep CPU, HIP and OpenMP in separate trees. Native HIP uses Clang with an
+explicit architecture; manual teaching builds may use `hipcc`. Missing optional
+providers disable their affected targets with a reason. The small
+[AMD smoke configuration](configs/amd/smoke.json) specifies workloads and CPU
+backends; it does not grant execution permission or silently replace providers.
+The rocThrust OpenMP caller explicitly links `rocthrust_wrapper.hip`, compiled
+as its own HIP translation unit. Sirius execution follows the
+[site-specific approval and scheduler rules](jobs/sirius/README.md).
 
 ## Publication scope
 
@@ -61,7 +102,7 @@ If you know CPU C/C++ but are new to CUDA, follow this route:
    Your own figures use observed or explicitly supplied machine identities,
    without assuming the teaching machine or requiring its saved data.
 5. Use [reading the figures](docs/BENCHMARK_PROTOCOL.md#reading-the-figures-and-applying-the-results)
-   to relate compute/E2E costs to your application. Other libraries have their
+   to relate library/end-to-end costs to your application. Other libraries have their
    own source, dependency, build, and verification notes in the table below.
 
 | Read this area | What it helps you understand |
@@ -196,8 +237,8 @@ are in [`docs/BENCHMARK_PROTOCOL.md`](docs/BENCHMARK_PROTOCOL.md) and
 [`docs/RESULT_SCHEMA.md`](docs/RESULT_SCHEMA.md).
 
 Publication output is six library-specific elapsed-time figures. Each has a
-data-resident compute panel and a one-shot host-input-to-host-output panel, uses
-milliseconds, and places CPU, CUDA, and OpenACC together. Compute repeat only
+data-resident library panel and a one-shot end-to-end panel, uses
+milliseconds, and places CPU, CUDA, and OpenACC together. Repetition for library only
 amplifies the measured interval; the plotted value remains one operation's
 elapsed time. No speedup, throughput, reuse-count, amortized, or extra generic
 figure is produced. Plotting reads performance values only from cross-wave

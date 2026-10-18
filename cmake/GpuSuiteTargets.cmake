@@ -19,18 +19,31 @@ function(gpu_suite_configure_executable target source)
     target_link_options(${target} PRIVATE
       ${GPU_SUITE_OPENACC_LINK_OPTIONS})
   endif()
+  if(TARGET_IMPLEMENTATION STREQUAL "openmp")
+    target_compile_options(${target} PRIVATE ${GPU_SUITE_OPENMP_COMPILE_OPTIONS})
+    target_link_options(${target} PRIVATE ${GPU_SUITE_OPENMP_LINK_OPTIONS})
+  endif()
   if(TARGET_ROLE STREQUAL "benchmark" AND
      NOT TARGET_IMPLEMENTATION STREQUAL "cpu")
+    if(GPU_SUITE_VENDOR STREQUAL "amd")
+      string(TOUPPER "${TARGET_LIBRARY}" _hip_library_macro)
+      target_compile_definitions(${target} PRIVATE
+        GPU_SUITE_HAVE_HIP_RUNTIME_METADATA=1
+        "GPU_SUITE_HIP_LIBRARY_${_hip_library_macro}=1")
+    else()
     string(TOUPPER "${TARGET_LIBRARY}" _cuda_library_macro)
     string(MAKE_C_IDENTIFIER "${_cuda_library_macro}" _cuda_library_macro)
     target_compile_definitions(${target} PRIVATE
       GPU_SUITE_HAVE_CUDA_RUNTIME_METADATA=1
       "GPU_SUITE_CUDA_LIBRARY_${_cuda_library_macro}=1")
+    endif()
   endif()
   get_filename_component(_extension "${source}" EXT)
   if(_extension STREQUAL ".c")
     set(_compiler_language "c")
     target_link_libraries(${target} PRIVATE gpu_suite::math)
+  elseif(TARGET_IMPLEMENTATION STREQUAL "hip")
+    set(_compiler_language "hip")
   elseif(_extension STREQUAL ".cu")
     set(_compiler_language "cuda")
   elseif(_extension MATCHES "^\\.[fF]90$")

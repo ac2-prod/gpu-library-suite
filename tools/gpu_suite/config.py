@@ -5,13 +5,16 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Set, Tuple, Union
 
 from .strict_json import dumps, load
+from .families import AMD_BENCHMARKS, AMD_COUNTERPARTS
 
 
 class ConfigError(ValueError):
     pass
 
 
+# Public legacy inventory is also consumed by NVIDIA-only site tooling.
 BENCHMARKS = ("cufft", "cublas", "cusparse", "cusolver", "curand", "thrust")
+SUPPORTED_BENCHMARKS = BENCHMARKS + AMD_BENCHMARKS
 TOP_LEVEL_KEYS = {
     "config_schema_version",
     "run_mode",
@@ -38,6 +41,7 @@ SERIES_KEYS = {
 }
 PARAMETER_KEYS = {
     "cufft": {"nfft", "batch", "transform"},
+    "rocfft": {"nfft", "batch", "transform"},
     "cublas": {"size", "alpha", "beta"},
     "cusparse": {"size", "alpha", "beta"},
     "cusolver": {"size", "nrhs"},
@@ -46,6 +50,7 @@ PARAMETER_KEYS = {
 }
 VERIFICATION_KEYS = {
     "cufft": {"abs_tolerance", "rel_tolerance"},
+    "rocfft": {"abs_tolerance", "rel_tolerance"},
     "cublas": {"abs_tolerance", "rel_tolerance"},
     "cusparse": {"abs_tolerance", "rel_tolerance"},
     "cusolver": {"abs_tolerance", "rel_tolerance"},
@@ -56,6 +61,11 @@ VERIFICATION_KEYS = {
     },
     "thrust": {"abs_tolerance", "rel_tolerance"},
 }
+
+
+for _amd, _counterpart in AMD_COUNTERPARTS.items():
+    PARAMETER_KEYS[_amd] = set(PARAMETER_KEYS[_counterpart])
+    VERIFICATION_KEYS[_amd] = set(VERIFICATION_KEYS[_counterpart])
 
 
 def _require(condition: bool, message: str) -> None:
@@ -85,7 +95,7 @@ def _finite_number(value: Any) -> bool:
 
 def _validate_parameters(benchmark: str, parameters: Mapping[str, Any]) -> None:
     _exact_keys(parameters, PARAMETER_KEYS[benchmark], benchmark + " parameters")
-    primary_name = "nfft" if benchmark == "cufft" else "size"
+    primary_name = "nfft" if benchmark in {"cufft", "rocfft"} else "size"
     _require(_positive_integer(parameters[primary_name]), "invalid primary size")
     for name in ("batch", "nrhs", "seed"):
         if name in parameters:
@@ -106,7 +116,18 @@ def _validate_parameters(benchmark: str, parameters: Mapping[str, Any]) -> None:
                 isinstance(parameters[name], str) and parameters[name] != "",
                 "invalid " + name,
             )
-    if benchmark == "cusparse":
+    if benchmark == "rocfft":
+        _require(parameters["transform"] == "c2c-forward", "rocFFT requires c2c-forward")
+    if benchmark == "rocrand":
+        for name, expected in (("generator", "pseudo-default"),
+                               ("distribution", "uniform-double"),
+                               ("order", "default")):
+            _require(parameters[name] == expected,
+                     "rocRAND requires {0}={1}".format(name, expected))
+    if benchmark == "rocthrust":
+        _require(parameters["operation"] == "transform-reduce-square-sum",
+                 "rocThrust requires transform-reduce-square-sum")
+    if benchmark in {"cusparse", "rocsparse"}:
         root = math.isqrt(parameters["size"])
         _require(root * root == parameters["size"], "cuSPARSE size must be square")
 
@@ -117,7 +138,7 @@ def _validate_verification(benchmark: str, verification: Mapping[str, Any]) -> N
     )
     for name, value in verification.items():
         _require(_finite_number(value) and float(value) >= 0.0, "invalid " + name)
-    if benchmark == "curand":
+    if benchmark in {"curand", "rocrand"}:
         _require(verification["sigma_multiplier"] > 0.0, "invalid sigma multiplier")
 
 
@@ -125,7 +146,8 @@ def _validate_series(benchmark: str, definition: Mapping[str, Any]) -> None:
     series = definition["series"]
     _require(isinstance(series, list) and series, benchmark + " requires series")
     seen = set()  # type: Set[Tuple[str, Any]]
-    primary_implementations = {"cpu": 0, "cuda": 0, "openacc": 0}
+    family = ("cpu", "hip", "openmp") if benchmark in AMD_BENCHMARKS else ("cpu", "cuda", "openacc")
+    primary_implementations = dict.fromkeys(family, 0)
     primary_production_cpu = []
     for index, item in enumerate(series):
         _require(isinstance(item, Mapping), "series entry must be an object")
@@ -151,6 +173,12 @@ def _validate_series(benchmark: str, definition: Mapping[str, Any]) -> None:
                 effective is None or _positive_integer(effective),
                 "CPU effective threads must be positive or null",
             )
+            if item["cpu_backend"] == "cpu-aocl-sparse":
+                _require(benchmark == "rocsparse" and
+                         item["cpu_backend_role"] == "production",
+                         "AOCL Sparse is an explicit AMD rocsparse production backend")
+                _require(effective is None,
+                         "AOCL Sparse worker count is unobserved; effective threads must be null")
         else:
             _require(
                 item["cpu_backend"] is None
@@ -167,8 +195,8 @@ def _validate_series(benchmark: str, definition: Mapping[str, Any]) -> None:
             if implementation == "cpu" and item["cpu_backend_role"] == "production":
                 primary_production_cpu.append(item["cpu_backend"])
     _require(
-        primary_implementations == {"cpu": 1, "cuda": 1, "openacc": 1},
-        benchmark + " requires one primary CPU/CUDA/OpenACC series",
+        primary_implementations == dict.fromkeys(family, 1),
+        benchmark + " requires one primary series for each of " + "/".join(family),
     )
     _require(
         len(primary_production_cpu) == 1,
@@ -184,10 +212,15 @@ def validate_config(config: Mapping[str, Any]) -> Dict[str, Any]:
     if not isinstance(config, Mapping):
         raise ConfigError("configuration must be an object")
     keys = TOP_LEVEL_KEYS | ({"source_language"} if "source_language" in config else set())
+    keys |= {"vendor"} if "vendor" in config else set()
     _exact_keys(config, keys, "configuration")
     _require(isinstance(config.get("source_language", "c-cpp"), str) and
              config.get("source_language", "c-cpp") in {"c-cpp", "fortran"},
              "invalid source_language")
+    vendor = config.get("vendor", "nvidia")
+    _require(vendor in {"nvidia", "amd"}, "invalid vendor")
+    _require(vendor != "amd" or config.get("source_language", "c-cpp") == "c-cpp",
+             "AMD Fortran is not implemented")
     if config.get("config_schema_version") != 1:
         raise ConfigError("unsupported config_schema_version")
     _require(config["run_mode"] in {"smoke", "pilot", "production"}, "invalid run_mode")
@@ -197,8 +230,10 @@ def validate_config(config: Mapping[str, Any]) -> Dict[str, Any]:
     benchmarks = config.get("benchmarks")
     if not isinstance(benchmarks, Mapping):
         raise ConfigError("benchmarks must be an object")
-    _require(set(benchmarks.keys()) == set(BENCHMARKS), "configuration requires six benchmarks")
-    for benchmark in BENCHMARKS:
+    expected = set(AMD_BENCHMARKS) if vendor == "amd" else set(BENCHMARKS)
+    valid_inventory = bool(benchmarks) and set(benchmarks).issubset(expected) if vendor == "amd" else set(benchmarks) == expected
+    _require(valid_inventory, "configuration benchmark family differs from vendor")
+    for benchmark in benchmarks:
         definition = benchmarks[benchmark]
         if not isinstance(definition, Mapping):
             raise ConfigError("benchmark {0} must be an object".format(benchmark))
@@ -214,6 +249,9 @@ def validate_config(config: Mapping[str, Any]) -> Dict[str, Any]:
             "invalid speedup backend",
         )
         _require(isinstance(definition["verification"], Mapping), "invalid verification")
+        if benchmark in AMD_BENCHMARKS:
+            precision = "fp32" if benchmark == "rocfft" else "fp64"
+            _require(definition["precision"] == precision, benchmark + " requires " + precision)
         _validate_verification(benchmark, definition["verification"])
         _validate_series(benchmark, definition)
         cases = definition.get("cases")
@@ -250,7 +288,7 @@ def validate_config(config: Mapping[str, Any]) -> Dict[str, Any]:
                     minimum = 0 if name == "warmup" else 1
                     if value < minimum:
                         raise ConfigError("invalid scope count")
-                if benchmark == "cusolver" and scope["repeat"] != 1:
+                if benchmark in {"cusolver", "rocsolver"} and scope["repeat"] != 1:
                     raise ConfigError("cuSOLVER repeat must be one in every scope")
     return dict(config)
 
