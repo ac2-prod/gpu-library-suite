@@ -310,7 +310,7 @@ is a prerequisite. This is not proof that a custom one-rank-per-host launch
 selects the allocated physical APU, particularly with partial-host allocation
 or remapped device indices. Do not blindly overwrite an inherited scheduler GPU
 mask or force device 0 based only on local rank. Preflight and the worker must
-agree on physical hostname, rank/local rank, allocated vnode, 24-CPU affinity,
+agree on physical hostname, rank/local rank, full-host allocation, 24-CPU affinity,
 visible-device identity and OpenMP/HIP device correspondence. Stop before any
 benchmark if that mapping is unproved or the default core binding gives one
 CPU. Set `ompthreads=24` in the resource request and verify the resulting worker
@@ -327,8 +327,9 @@ set and requires the inherited visibility to match placement evidence. MPI
 leaves CPU binding to this step; full-host allocation alone would otherwise
 permit all 96 CPUs. No topology, NUMA memory policy, GPU index or UUID is guessed.
 
-Confirm the correspondence between **one selected vnode/APU, its 24 CPU IDs,
-and GPU visibility/device identity** in the clean-build job described below.
+Confirm the correspondence between **the selected physical APU, its 24 CPU IDs,
+and GPU visibility/device identity** in each allocation. With the whole host
+reserved, a PBS vnode index is not needed and must not be inferred from NUMA.
 The owner need not supply six hostnames or hand-write a mapping before PBS
 assigns them. Each measurement job needs a mapping for its actual allocation;
 the build job's hostnames, job ID and GPU UUID must not be copied into it.
@@ -340,19 +341,21 @@ older `_amdflang_afar` example and its `HSA_XNACK=1` are not new requirements
 for these artifacts. Use only the XNACK/target conditions actually recorded for
 the chosen build. Apply GCC library precedence after all module loads.
 
-**Remaining production gates.** Fix a clean measurement version after separate
-Git authorization, then build only the 18 selected benchmarks in a separately
-approved allocated build. All existing pilot binaries report dirty build
-provenance and must not be relabelled as clean. Bind the resulting manifests,
-binaries and compiler/library identities before forming the final run packet.
-Do not rebuild during measurement or overwrite the earlier build/run paths.
+**Remaining production gates.** The 18 clean benchmarks and normalized runtime
+are now available (recorded below); no rebuild is needed for the tool-only
+changes. Commit the reviewed launch/collection fixes only after separate Git
+authorization, then seal the packet with that clean launcher commit. Preserve
+the artifacts' original commit and runtime bytes. The production source check
+rejects a dirty launcher tree, an unsealed commit, or any change outside the
+explicit tool/document/test path list. See the provenance rule in
+[`RESULT_SCHEMA.md`](../../docs/RESULT_SCHEMA.md). Do not reuse the historical
+dirty pilot binaries or overwrite earlier build/run paths.
 
 #### Clean build with a minimal CPU/APU correspondence check
 
-The local implementation is available; its first real allocated execution still
-requires a separately approved clean Git version and job packet. It ends with
-build/preparation results, not a measurement wave. There is no standalone
-topology/diagnostic job.
+The following describes the clean-build preparation, now executed as recorded
+below. It ends with build/preparation results, not a measurement wave. There is
+no standalone topology/diagnostic job.
 
 | Item | Preparation plan |
 | --- | --- |
@@ -447,14 +450,57 @@ No failure causes an automatic retry or wave launch. The final clean commit,
 hashes, explicit version-file path and timeouts remain execution-approval inputs;
 local fixture checks are not an executed Sirius clean build.
 
+The clean build `sirius-amd-clean18-20261018T052357Z-3cd568ea` produced all
+18 benchmarks at commit `e00328df028b8ff75b9275593a14bbf62f868ecd`, and its
+one-host CPU/APU check passed. Runtime collection stopped before `ldd`: four
+HIP build logs contain `-Xlinker --dependency-file=CMakeFiles/<target>.dir/link.d`
+while their saved `link.txt` does not. The comparator now allows only this exact
+target-local pair, at most once in either command. It retains both raw argument
+lists and their comparison form. Compiler, output, flags, input order, log hashes
+and the unique successful build marker remain checked; no depfile or resolved
+library evidence is inferred from that option.
+
+A separately approved runtime-only recovery may reuse these 18 clean artifacts
+and the unchanged runtime request in a fresh `runs/<RUN_ID>/`. Use the same four
+modules and library-order correction, then `amd_production.py collect-runtime`;
+do not rebuild, repeat the CPU/APU probe, run MPI workers or execute benchmarks.
+The collector validates original clean build metadata/binary hashes and records
+its own Git status, diff hash and imported source hashes separately in
+`runtime-environment-evidence.json`, checking them again before completion.
+Tool repairs do not change the artifacts' commit or rewrite the failed run.
+This permits collection with reviewed tool edits; production still requires a
+clean, approved launcher revision and unchanged clean artifact inputs.
+
+Runtime recovery `sirius-amd-runtime-20261018T064856Z-0d93c43b` completed in PBS
+job 45891: 18 artifact resolutions and 43 unique resolved objects. Its
+`runtime/runtime-environment.json` has SHA-256
+`60e1be5d07409e47def1a3b4c806386ed15ffd16887d33dee5c2a34fdf4122f6`.
+The clean-build job 45889 proved device 0 / PCI / NUMA / 24-CPU correspondence
+and HIP/OpenMP interoperation on one full host. Neither result proves the next
+six-host allocation. Actual loaded libraries and CPU worker counts remain
+unverified; RAND/Thrust CPU implementations remain serial.
+
 The one-rank `pilot.py` remains historical. The six-worker implementation below
 uses existing suite functions without changing Pegasus or its NVIDIA runtime
-collector. Clean artifacts, a confirmed placement/binding method, normalized
-runtime collection on Sirius and a separately approved job packet are still prerequisites.
-There is no submission-ready multi-node packet yet. No production RUN_ID or SSH
-allowance is consumed by this preparation.
+collector. A draft wave-0 packet now reuses those artifacts/runtime and the
+existing `apu_probe` binary. It is not submission-ready until the tool revision
+is committed and the final packet sealed; no SSH allowance is consumed by
+preparation.
 
 #### Six-worker launch and output management
+
+[`amd_wave.py`](amd_wave.py) first prepares the actual wave-0 allocation inside
+the approved job. It uses `amd_prepare.py` with six ranks and requires 24 PBS
+slots, exactly four on each of six hosts, and at least 96 inherited CPUs per
+host. Each rank runs the retained helper's `identity`, derives the selected
+device-0 PCI/NUMA CPU set, binds exactly those 24 CPUs, then runs `verify` to
+prove HIP/OpenMP use the same APU. All four reserved APUs may remain visible;
+no GPU mask is changed. The six selected UUIDs must be distinct. The master
+freezes the six proofs with the new job ID; `allocated_vnode` stays null rather
+than guessing a PBS-index/NUMA relationship. Any missing proof stops before
+measurement. This is 12 bounded helper calls in the measurement job, no compile
+and no separate diagnostic job. A fresh packet/preparation directory and the
+campaign directory are separate under `runs/`; neither overwrites old outputs.
 
 [`amd_production.py`](amd_production.py) runs **inside an already approved PBS
 batch allocation**. It does not open SSH, submit/query/cancel jobs, load modules,

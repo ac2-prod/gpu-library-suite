@@ -666,6 +666,20 @@ Recollection in another wave must produce identical canonical bytes; different
 ROCm, compiler/binary, config, resolved-library or software controls require
 a different campaign. The old job-specific pilot identity is not a substitute.
 
+Sirius may reuse clean artifacts after a separately committed, tool-only repair.
+Raw rows, manifest entries and run-level `git_commit` retain the original build
+commit; binary/build-metadata/runtime hashes are not rewritten. The immutable
+`launcher.source_revision` records `artifact_commit`, `launcher_commit` and the
+exact `changed_paths` between them. The current launcher worktree must be clean
+and match its approved commit. The site launcher checks the actual Git diff
+against both those paths and its bounded `TOOL_REVISION_PATHS` list (site launch/
+collection code, its tests and documentation only). Benchmark sources, common
+code, build definitions and configurations are outside that list. A change to
+any such input cannot use this exemption. Both source identities and the exact
+tool revision must match across waves. An uncommitted patch is never accepted
+as production launcher provenance. This does not relax clean-build requirements
+or change NVIDIA record/schema handling.
+
 The existing AMD rows may have null GPU UUIDs. These stay null; a supplied
 placement record must not be copied into a raw observation. A non-null raw
 UUID must match the allocation/device evidence. The node validation report

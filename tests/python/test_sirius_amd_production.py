@@ -264,9 +264,11 @@ class SiriusProductionTests(unittest.TestCase):
             return dict(resolved_objects={str(library): sha256_file(library)},
                         normalized_lines=["fixture.so => " + str(library)])
         env = dict(PATH="/bin:/usr/bin:/bin", LD_LIBRARY_PATH="/lib:/usr/lib:/lib", PBS_JOBID="42.fixture")
+        collector = dict(git_commit="1" * 40, git_status=" M jobs/sirius/amd_smoke_evidence.py\n",
+                         git_diff_sha256="2" * 64, files=[])
         with mock.patch.object(production, "artifact_inputs", return_value=(self.config, self.manifest, metadata)), \
                 mock.patch.object(production, "preflight_link_evidence"), \
-                mock.patch.object(production, "clean_source"), \
+                mock.patch.object(production, "collector_source", return_value=collector), \
                 mock.patch.object(production, "Processes", return_value=processes), \
                 mock.patch.object(production.amd_smoke_evidence, "validate_artifact_resolution", side_effect=resolution), \
                 mock.patch.dict(os.environ, env, clear=True):
@@ -285,6 +287,8 @@ class SiriusProductionTests(unittest.TestCase):
             self.assertEqual(first, second)
             evidence = load(self.work / "runtime-wave1/runtime-environment-evidence.json")
             self.assertEqual((evidence["hostname"], evidence["scheduler_job_id"]), ("different-host", "43.fixture"))
+            self.assertEqual(evidence["collector_source"], collector)
+            self.assertNotIn("collector_source", second)
             os.environ["LD_LIBRARY_PATH"] = "/different/library:/lib:/usr/lib"
             third = production.collect_runtime(request, self.work / "runtime-changed")
             self.assertNotEqual(production.digest(first), production.digest(third))
@@ -298,11 +302,67 @@ class SiriusProductionTests(unittest.TestCase):
             self.assertEqual(len(commands), count + 1)
             self.assertFalse((self.work / "runtime-failed/runtime-environment.json").exists())
             self.assertEqual(load(self.work / "runtime-failed/runtime-environment-evidence.json")["status"], "FAILED")
+            with mock.patch.object(production, "collector_source", side_effect=[collector, dict(collector, files=["changed"])]):
+                with self.assertRaisesRegex(ValueError, "source changed"):
+                    production.collect_runtime(request, self.work / "runtime-source-changed")
+            self.assertFalse((self.work / "runtime-source-changed/runtime-environment.json").exists())
             version.write_text("changed\n")
             count = len(commands)
             with self.assertRaisesRegex(ValueError, "Missing or changed"):
                 production.collect_runtime(request, self.work / "runtime-wrong-version")
             self.assertEqual(len(commands), count)
+
+    def test_collection_records_tool_edits_but_measurement_still_requires_clean_source(self):
+        def run(argv, environment, label):
+            values = {"collector-head": "1" * 40 + "\n", "collector-status": " M jobs/sirius/amd_smoke_evidence.py\n",
+                      "collector-diff": "fixture patch\n", "git-head": "1" * 40 + "\n",
+                      "git-status": " M jobs/sirius/amd_smoke_evidence.py\n"}
+            return SimpleNamespace(stdout=values[label])
+        processes = SimpleNamespace(run=run)
+        result = production.collector_source(processes)
+        self.assertEqual(result["git_commit"], "1" * 40)
+        self.assertTrue(result["git_status"].startswith(" M "))
+        self.assertEqual(len(result["git_diff_sha256"]), 64)
+        self.assertIn(str(ROOT / "jobs/sirius/amd_production.py"), [f["path"] for f in result["files"]])
+        with self.assertRaisesRegex(ValueError, "must be clean"):
+            production.clean_source(processes, self.manifest)
+
+    def test_clean_tool_revision_reuses_unchanged_artifacts_without_relabelling(self):
+        base = "1" * 40
+        for entry in self.manifest["entries"]:
+            entry["git_commit"] = base
+            entry["artifact_id"] = artifact_id(entry)
+        Path(self.plan["manifest"]["path"]).write_bytes(dump_bytes(self.manifest))
+        self.plan["manifest"]["sha256"] = production.digest(self.manifest)
+        self.runtime["executables_manifest_sha256"] = self.plan["manifest"]["sha256"]
+        Path(self.plan["runtime"]["path"]).write_bytes(dump_bytes(self.runtime))
+        self.plan["runtime"]["sha256"] = production.digest(self.runtime)
+        revision = dict(artifact_commit=base, launcher_commit="a" * 40,
+                        changed_paths=["jobs/sirius/amd_production.py"])
+        outputs = {"git-head": "a" * 40 + "\n", "git-status": "",
+                   "git-tool-revision": "jobs/sirius/amd_production.py\n"}
+        processes = SimpleNamespace(run=lambda argv, env, label: SimpleNamespace(stdout=outputs[label]))
+        production.clean_source(processes, self.manifest, revision)
+        self.assertEqual({e["git_commit"] for e in self.manifest["entries"]}, {base})
+        for changed in (dict(revision, launcher_commit=None),
+                        dict(revision, artifact_commit="b" * 40),
+                        dict(revision, changed_paths=["amd/c-cpp/rocfft/benchmarks/rocfft_hip.cpp"]),
+                        dict(revision, changed_paths=[])):
+            with self.subTest(revision=changed), self.assertRaises(ValueError):
+                production.clean_source(processes, self.manifest, changed)
+        outputs["git-status"] = " M jobs/sirius/amd_production.py\n"
+        with self.assertRaisesRegex(ValueError, "must be clean"):
+            production.clean_source(processes, self.manifest, revision)
+        outputs["git-status"] = ""
+        self.run_root.mkdir()
+        self.plan["source_revision"] = revision
+        production.prepare_wave(self.run_root, self.plan, self.bindings, self.observations())
+        saved = load(self.run_root / "run-metadata.json")
+        self.assertEqual(saved["git_commit"], base)
+        self.assertEqual(saved["launcher"]["source_revision"], revision)
+        changed = dict(self.plan, wave=1, source_revision=dict(revision, launcher_commit="c" * 40))
+        with self.assertRaisesRegex(ValueError, "provenance"):
+            production.prepare_wave(self.run_root, changed, self.bindings, self.observations())
 
     def test_input_inventory_hashes_and_clean_artifact_gate(self):
         self.input_patch.stop()

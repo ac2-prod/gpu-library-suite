@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "jobs/sirius"))
 import amd_prepare as prepare
 import amd_production as production
+import amd_wave as wave
 
 
 class SiriusPreparationTests(unittest.TestCase):
@@ -81,6 +82,78 @@ class SiriusPreparationTests(unittest.TestCase):
             prepare.check_worker(self.request, output, mismatch, self.sysfs)
         self.assertEqual(production.load(output / "placement.json")["status"], "FAILED")
         self.assertEqual(len(self.calls), 2)
+
+    def test_six_full_hosts_freeze_actual_apu_proofs_without_changing_masks(self):
+        self.nodefile.write_text("".join(("node" + str(i) + "\n") * 4 for i in range(6)))
+        request = dict(self.request, world_size=6, nodefile=prepare.identity(self.nodefile))
+        output = self.root / "six-ranks"
+        output.mkdir()
+        os.environ["OMPI_COMM_WORLD_SIZE"] = "6"
+        for rank in range(6):
+            self.affinity = set(range(96))
+            self.observation["gpu_uuid"] = format(rank + 1, "032x")
+            os.environ["OMPI_COMM_WORLD_RANK"] = str(rank)
+            with mock.patch.object(prepare.socket, "gethostname", return_value="node" + str(rank)):
+                prepare.check_worker(request, output / str(rank), self.fake_probe, self.sysfs)
+        result = wave.assemble_placement(request, output)
+        self.assertEqual(len(result["rank_bindings"]), 6)
+        self.assertTrue(all(r["allocated_vnode"] is None and r["affinity_cpus"] == list(range(48, 72))
+                            and r["visibility"]["ROCR_VISIBLE_DEVICES"] == "0,1,2,3"
+                            for r in result["rank_bindings"]))
+        self.assertEqual(len(self.calls), 12)
+        result["rank_bindings"][0]["gpu_uuid"] = "f" * 32
+        with self.assertRaisesRegex(ValueError, "physical APU"):
+            production.validate_placement(result, "42.fixture")
+        self.nodefile.write_text("node0\n" * 5 + "node1\n" * 3 +
+                                 "".join(("node" + str(i) + "\n") * 4 for i in range(2, 6)))
+        with self.assertRaisesRegex(ValueError, "four slots"):
+            prepare.full_host(self.nodefile, "node0", set(range(96)), 6)
+
+    def test_wave_preparation_stops_before_mpi_for_unsealed_source_or_failed_placement(self):
+        self.probe.chmod(0o700)
+        self.nodefile.write_text("".join(("node" + str(i) + "\n") * 4 for i in range(6)))
+        request = dict(wave=0, run_id="fixture-wave", source_revision={"launcher_commit": None},
+                       apu_probe=prepare.identity(self.probe), mpirun=prepare.identity(self.probe))
+        calls = []
+        runtime = {"sirius_execution_checks": {"environment": production.environment_controls(
+            production.worker_environment(os.environ, self.root))}}
+        processes = SimpleNamespace(records=[], run=lambda argv, env, label: calls.append((argv, label)))
+        (self.root / "runs").mkdir()
+        with mock.patch.object(production, "ROOT", self.root), \
+             mock.patch.object(wave.sys, "platform", "linux"), \
+             mock.patch.dict(os.environ, PBS_ENVIRONMENT="PBS_BATCH", PBS_NODEFILE=str(self.nodefile)), \
+             mock.patch.object(production, "inputs", return_value=({}, {}, {}, runtime)), \
+             mock.patch.object(production, "Processes", return_value=processes), \
+             mock.patch.object(production, "clean_source", side_effect=ValueError("Unsealed source")) as clean, \
+             mock.patch.object(production, "run_master") as master, \
+             mock.patch.object(wave, "assemble_placement", side_effect=ValueError("Missing rank proof")) as assemble:
+            self.assertEqual(wave.run(request, self.root / "runs/unsealed"), 1)
+            self.assertFalse(calls)
+            assemble.assert_not_called()
+            master.assert_not_called()
+            clean.side_effect = None
+            self.assertEqual(wave.run(request, self.root / "runs/missing-rank"), 1)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][1], "mpi-placement")
+            argv = calls[0][0]
+            self.assertEqual(argv[argv.index("-np") + 1], "6")
+            self.assertEqual(argv[argv.index("-npernode") + 1], "1")
+            self.assertEqual(argv[argv.index("--bind-to") + 1], "none")
+            master.assert_not_called()
+            assemble.side_effect = None
+            assemble.return_value = {"status": "fixture placement"}
+            def measure(root, plan):
+                self.assertEqual(production.checked_json(plan["placement"]), assemble.return_value)
+                self.assertEqual(production.checked_file(plan["allocation_nodefile"]).read_bytes(),
+                                 self.nodefile.read_bytes())
+                target = root / "launch/0"
+                target.mkdir(parents=True)
+                production.save(target / "status.json", {"status": "COMPLETE"})
+                return 0
+            master.side_effect = measure
+            self.assertEqual(wave.run(request, self.root / "runs/ready"), 0)
+            master.assert_called_once()
+            self.assertEqual(len(calls), 2)
 
     def test_same_job_handoff_shares_budget_and_stops_on_runtime_failure(self):
         metadata = dict(cxx=dict(compiler_path="/fixture/clang++"),

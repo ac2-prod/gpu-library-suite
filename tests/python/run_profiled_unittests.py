@@ -26,11 +26,11 @@ CPU_FIXTURE_TEST_IDS = frozenset({
 
 # Audited IDs, not counts. Update a digest only after reviewing every new/removed
 # case. Checked before unittest discovery imports any test modules.
-AUDITED_MODULE_IDS = {'test_sirius_amd_prepare': 'bb12a02bc05940a4b89c45a88579af529b4bebc5aa106bbc30ec55ca3275c18c',
- 'test_sirius_amd_production': '0dd0044591fd7e07e2bf98ed7c61f420f6a550a784fb1aac816e8ef6105003ef',
+AUDITED_MODULE_IDS = {'test_sirius_amd_prepare': 'ac683d636a4ed5c4cc2869c2405869c35dbc32c35d76ac3a807d0562c808dea5',
+ 'test_sirius_amd_production': 'c1904ca8e8d1d2a33b3156f5fa76bdce0776871ac920eea5550401db5438d80a',
  'test_sirius_amd_smoke': '13f91475ce925b866ddf4739eb4b2610d04629fd20e6f00ab849fae4aa9c23e5',
  'test_sirius_amd_smoke_campaign': '760c2e71e6fa834acda03826cc9c0a23bff15d0ea7dbbd908e63415e82ef4c8b',
- 'test_sirius_amd_smoke_evidence': '91179b71a8937de1781d3476374e3a4c622ac53017aa9a472621e5e982f1fe16',
+ 'test_sirius_amd_smoke_evidence': 'aacef55694427cf7102c35348091e8786e82aa28347c5fe922b9dee711cec142',
  'test_sirius_amd_smoke_job': 'c84d9cbfb58685ca691023abab1ece3ff5de476543d557dbd4aa8d5b4517b978',
  'test_sirius_amd_smoke_source': '46f16b03b845cb3599fe37faadd6eb8f061a2838b54487525794b97318c178e0',
  'test_amd_blas_sparse': '37174c27361c2216335373c9d34fb134dc9c5ebfe5e137460c13fd5d04c8b6e2',

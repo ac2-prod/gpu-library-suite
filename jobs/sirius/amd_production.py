@@ -50,6 +50,15 @@ ENVIRONMENT = (
     "ROCBLAS_TENSILE_LIBPATH", "ROCBLAS_USE_HIPBLASLT", "HIPBLASLT_TENSILE_LIBPATH",
 )
 HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,253}\Z")
+# This bounded tool-only revision cannot change any benchmark/build input.
+# Both the artifact commit and the later clean launcher commit remain recorded.
+TOOL_REVISION_PATHS = frozenset({
+    "jobs/sirius/README.md", "jobs/sirius/amd_prepare.py", "jobs/sirius/amd_wave.py",
+    "jobs/sirius/amd_production.py", "jobs/sirius/amd_smoke_evidence.py",
+    "tests/python/run_profiled_unittests.py", "tests/python/test_sirius_amd_prepare.py",
+    "tests/python/test_sirius_amd_production.py", "tests/python/test_sirius_amd_smoke_evidence.py",
+    "docs/RESULT_SCHEMA.md",
+})
 
 
 def require(condition, message):
@@ -99,15 +108,35 @@ def validate_placement(placement, job_id):
         cpus = row["affinity_cpus"]
         require(len(cpus) == 24 and cpus == sorted(set(cpus))
                 and all(type(c) is int and c >= 0 for c in cpus), "Expected 24 bound CPUs")
-        require(row.get("local_rank") == 0 and row.get("allocated_vnode")
-                and row.get("gpu_uuid"), "Missing physical APU mapping evidence")
+        require(row.get("local_rank") == 0 and row.get("gpu_uuid"), "Missing physical APU mapping evidence")
         visibility = row["visibility"]
         require(set(visibility) == set(VISIBILITY)
                 and all(v is None or isinstance(v, str) for v in visibility.values()),
                 "Incomplete GPU visibility evidence")
         mask = visibility["ROCR_VISIBLE_DEVICES"]
-        require(isinstance(mask, str) and mask.strip() and "," not in mask
-                and visibility["OMP_DEFAULT_DEVICE"] == "0", "Expected one visible APU")
+        if placement.get("method") == "full-host-device0-numa":
+            proof = checked_json(row["proof"])
+            require(proof["status"] == "COMPLETE" and proof["world_size"] == NODES
+                    and proof["scheduler_job_id"] == job_id and proof["rank"] == row["rank"]
+                    and proof["local_rank"] == 0 and proof["allocation"]["hostname"] == host
+                    and proof["allocation"]["slots"] == 4
+                    and proof["allocation"]["nodefile"] == placement["evidence"]
+                    and set(cpus) <= set(proof["allocation"]["inherited_cpus"])
+                    and len(proof["allocation"]["inherited_cpus"]) >= 96
+                    and proof["binding"]["affinity_cpus"] == cpus
+                    and proof["visibility"] == visibility and proof["gpu_mask_modified"] is False
+                    and proof["allocated_vnode"] is None and row.get("allocated_vnode") is None,
+                    "Incomplete exclusive-host CPU/APU proof")
+            observations = proof["observations"]
+            require(len(observations) == 2 and all(
+                o["hip_device"] == 0 and o["visible_hip_devices"] == 4
+                and o["gpu_uuid"] == row["gpu_uuid"]
+                and o["pci_bus_id"].lower() == proof["binding"]["pci_bus_id"]
+                for o in observations) and observations[1]["hip_openmp_same_device"] is True
+                and visibility["OMP_DEFAULT_DEVICE"] == "0", "Unverified HIP/OpenMP physical APU")
+        else:
+            require(row.get("allocated_vnode") and isinstance(mask, str) and mask.strip()
+                    and "," not in mask and visibility["OMP_DEFAULT_DEVICE"] == "0", "Expected one visible APU")
     require(len(set(hosts)) == NODES, "Six distinct physical hosts are required")
     return sorted(records, key=lambda row: row["rank"])
 
@@ -210,7 +239,9 @@ def collect_runtime(request, output, *, processes=None, environment=None):
                     scheduler_job_id=environment["PBS_JOBID"], request=request,
                     started=runner.utc_timestamp(), resolution={})
     try:
-        clean_source(processes, manifest)
+        # The binaries retain their verified clean build provenance. Collection
+        # tooling may be repaired independently; never relabel the artifacts.
+        evidence["collector_source"] = collector_source(processes)
         for entry in manifest["entries"]:
             result = processes.run([request["ldd"]["path"], entry["executable_path"]],
                                    environment, "ldd-" + entry["target_name"])
@@ -222,6 +253,8 @@ def collect_runtime(request, output, *, processes=None, environment=None):
         checked_file(request["link_evidence"])
         for item in files:
             checked_file(item)
+        require(collector_source(processes) == evidence["collector_source"],
+                "Runtime collection source changed during collection")
         resolution = evidence["resolution"]
         document = dict(runtime_environment_schema_version=1,
             executables_manifest_sha256=request["manifest"]["sha256"],
@@ -371,7 +404,8 @@ def prepare_wave(run_root, plan, bindings, observations):
                     executables_manifest_sha256=plan["manifest"]["sha256"],
                     runtime_environment_sha256=plan["runtime"]["sha256"],
                     launcher={"name": "amd_production.py", "sha256": plan["launcher_sha256"],
-                              "mpirun": plan["mpirun"], "ranks_per_host": 1})
+                              "mpirun": plan["mpirun"], "ranks_per_host": 1,
+                              "source_revision": plan.get("source_revision")})
     frozen = {"effective-config.json": "config", "executables-manifest.json": "manifest",
               "runtime-environment.json": "runtime"}
     if plan["wave"] == 0:
@@ -591,14 +625,48 @@ def mpi_command(plan, frozen_plan, action, wave_hash=None):
     return argv
 
 
-def clean_source(processes, manifest):
+def collector_source(processes):
+    """Record collection-tool provenance separately from the clean binaries."""
+    git = shutil.which("git")
+    require(git is not None, "Git unavailable")
+    prefix = [git, "--no-optional-locks", "-C", str(ROOT), "-c", "core.fsmonitor=false"]
+    commands = {"head": ["rev-parse", "HEAD"],
+                "status": ["status", "--porcelain", "--untracked-files=all"],
+                "diff": ["diff", "--no-ext-diff", "--binary", "HEAD"]}
+    state = {key: processes.run(prefix + argv, os.environ, "collector-" + key).stdout
+             for key, argv in commands.items()}
+    paths = {Path(module.__file__).resolve() for module in list(sys.modules.values())
+             if getattr(module, "__file__", None) and str(module.__file__).endswith(".py")}
+    return dict(git_commit=state["head"].strip(), git_status=state["status"],
+                git_diff_sha256=hashlib.sha256(state["diff"].encode("utf-8")).hexdigest(),
+                files=[dict(path=str(path), sha256=sha256_file(path))
+                       for path in sorted(paths) if ROOT in path.parents])
+
+
+def clean_source(processes, manifest, revision=None):
     git = shutil.which("git")
     require(git is not None, "Git unavailable")
     head = processes.run([git, "--no-optional-locks", "-C", str(ROOT), "rev-parse", "HEAD"], os.environ, "git-head")
     status = processes.run([git, "--no-optional-locks", "-C", str(ROOT), "-c", "core.fsmonitor=false",
                             "status", "--porcelain", "--untracked-files=all"], os.environ, "git-status")
-    require(not status.stdout.strip() and {head.stdout.strip()} == {e["git_commit"] for e in manifest["entries"]},
-            "Production source must be clean and match the binaries")
+    require(not status.stdout.strip(), "Production source must be clean")
+    commits = {e["git_commit"] for e in manifest["entries"]}
+    if revision is None:
+        require({head.stdout.strip()} == commits, "Production source must match the binaries")
+        return
+    require(set(revision) == {"artifact_commit", "launcher_commit", "changed_paths"}
+            and all(isinstance(revision[k], str) and re.fullmatch(r"[0-9a-f]{40}", revision[k])
+                    for k in ("artifact_commit", "launcher_commit"))
+            and commits == {revision["artifact_commit"]}
+            and head.stdout.strip() == revision["launcher_commit"], "Unsealed or mismatched source revision")
+    paths = revision["changed_paths"]
+    require(isinstance(paths, list) and all(isinstance(p, str) for p in paths)
+            and paths == sorted(set(paths)) and set(paths) <= TOOL_REVISION_PATHS,
+            "Source revision contains a benchmark/build input")
+    changed = processes.run([git, "--no-optional-locks", "-C", str(ROOT), "diff", "--no-ext-diff",
+                             "--no-renames", "--name-only", revision["artifact_commit"],
+                             revision["launcher_commit"], "--"], os.environ, "git-tool-revision")
+    require(sorted(changed.stdout.splitlines()) == paths, "Unapproved source revision paths")
 
 
 def run_master(run_root, plan):
@@ -619,14 +687,14 @@ def run_master(run_root, plan):
     result = dict(status="FAILED", started=runner.utc_timestamp(), wave=plan["wave"])
     code = 1
     try:
-        clean_source(processes, manifest)
+        clean_source(processes, manifest, plan.get("source_revision"))
         processes.run(mpi_command(plan, frozen_plan, "observe"), os.environ, "mpi-preflight")
         observations = [load(launch / "observations" / (str(rank) + ".json")) for rank in range(NODES)]
         wave = prepare_wave(run_root, plan, bindings, observations)
         mpi_exit = None
         try:
             measured = processes.run(mpi_command(plan, frozen_plan, "worker", digest(wave)), os.environ, "mpi-measurement")
-            clean_source(processes, manifest)
+            clean_source(processes, manifest, plan.get("source_revision"))
             mpi_exit = measured.returncode
         finally:
             report = collect_wave(run_root, plan, mpi_exit)

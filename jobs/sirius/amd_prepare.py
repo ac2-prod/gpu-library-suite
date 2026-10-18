@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Same-allocation preparation after the 18-benchmark clean build; never submit."""
 import argparse
+from collections import Counter
 import os
 from pathlib import Path
 import re
@@ -21,12 +22,16 @@ def identity(path):
     return {key: item[key] for key in ("path", "sha256")}
 
 
-def full_host(nodefile, hostname, cpus):
+def full_host(nodefile, hostname, cpus, host_count=1):
     lines = nodefile.read_text(encoding="utf-8").splitlines()
     hosts = {line.split(".")[0].lower() for line in lines}
-    production.require(len(lines) == 4 and all(production.HOST.fullmatch(s) for s in lines)
-                       and hosts == {hostname.split(".")[0].lower()} and len(cpus) >= 96,
-                       "Expected select=4/place=exclhost: four slots on this host and at least 96 allocated CPUs")
+    slots = Counter(line.split(".")[0].lower() for line in lines)
+    production.require(host_count in (1, production.NODES)
+                       and len(lines) == 4 * host_count
+                       and all(production.HOST.fullmatch(s) for s in lines)
+                       and len(hosts) == host_count and set(slots.values()) == {4}
+                       and hostname.split(".")[0].lower() in hosts and len(cpus) >= 96,
+                       "Expected exclusive full hosts: four slots per host and at least 96 allocated CPUs")
     return dict(hostname=hostname, nodefile=identity(nodefile), slots=4, inherited_cpus=sorted(cpus))
 
 
@@ -86,13 +91,16 @@ def numa_binding(observation, allowed, sysfs=Path("/sys")):
 
 def check_worker(request, output, run=subprocess.run, sysfs=Path("/sys")):
     """One rank: identify device 0, bind its NUMA CPUs, then prove interop."""
-    production.require(os.environ.get("PBS_JOBID") == request["scheduler_job_id"]
-                       and os.environ.get("OMPI_COMM_WORLD_SIZE") == "1"
-                       and os.environ.get("OMPI_COMM_WORLD_RANK") == "0"
+    size = request.get("world_size", 1)
+    rank = int(os.environ.get("OMPI_COMM_WORLD_RANK", "-1"))
+    production.require(size in (1, production.NODES) and rank in range(size)
+                       and os.environ.get("PBS_JOBID") == request["scheduler_job_id"]
+                       and os.environ.get("OMPI_COMM_WORLD_SIZE") == str(size)
                        and os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK") == "0", "Unexpected MPI allocation/rank")
-    allocation = full_host(production.checked_file(request["nodefile"]), socket.gethostname(), os.sched_getaffinity(0))
+    allocation = full_host(production.checked_file(request["nodefile"]), socket.gethostname(), os.sched_getaffinity(0), size)
     output.mkdir()
     record = dict(status="FAILED", allocation=allocation, scheduler_job_id=os.environ["PBS_JOBID"],
+                  rank=rank, local_rank=0, world_size=size,
                   visibility={k: os.environ.get(k) for k in production.VISIBILITY}, commands=[])
     try:
         executable = production.checked_file(request["probe"])
@@ -113,6 +121,8 @@ def check_worker(request, output, run=subprocess.run, sysfs=Path("/sys")):
             observation = amd_build.load_json(output / (mode + ".stdout"))
             observations.append(observation)
             if mode == "identity":
+                production.require(observation.get("visible_hip_devices") == 4,
+                                   "Full-host preparation expects all four allocated APUs")
                 binding = numa_binding(observation, allocation["inherited_cpus"], sysfs)
                 os.sched_setaffinity(0, binding["affinity_cpus"])
                 production.require(sorted(os.sched_getaffinity(0)) == binding["affinity_cpus"], "CPU binding did not take effect")
@@ -232,7 +242,13 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
-        check_worker(production.load(args.worker_request), args.output)
+        request = production.load(args.worker_request)
+        output = args.output
+        if request.get("world_size") == production.NODES:
+            rank = int(os.environ.get("OMPI_COMM_WORLD_RANK", "-1"))
+            production.require(rank in range(production.NODES), "Unexpected MPI rank")
+            output = output / str(rank)
+        check_worker(request, output)
     except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
         print(str(error), file=sys.stderr)
         sys.exit(1)

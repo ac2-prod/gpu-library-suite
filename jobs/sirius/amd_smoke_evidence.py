@@ -220,6 +220,26 @@ def _link_argv(line):
     return tokens
 
 
+def _hip_link_comparison_argv(argv, program):
+    """Ignore only this target's optional dependency-output pair for equality.
+
+    Keep the original argv in the evidence. This does not read link.d or claim
+    that a depfile was produced; all code-generating/link-input options remain.
+    """
+    result, index, seen = [], 0, False
+    expected = "--dependency-file=CMakeFiles/" + program.name + ".dir/link.d"
+    while index < len(argv):
+        if argv[index] == "-Xlinker":
+            if seen or argv[index:index + 2] != ["-Xlinker", expected]:
+                raise ValueError("unreviewed or duplicate HIP linker dependency-output option")
+            seen = True
+            index += 2
+        else:
+            result.append(argv[index])
+            index += 1
+    return result
+
+
 def _hip_link_inputs(argv, compiler, program):
     """Validate current recorded HIP argv without opening a library or object."""
     if argv[0] != compiler or argv.count("-o") != 1 or "--hip-link" not in argv or "-c" in argv:
@@ -227,10 +247,11 @@ def _hip_link_inputs(argv, compiler, program):
     output_index = argv.index("-o") + 1
     if output_index == len(argv) or argv[output_index] not in {program.name, str(program)}:
         raise ValueError("recorded link output differs from artifact")
+    _hip_link_comparison_argv(argv, program)  # Validate any -Xlinker pair first.
     inputs, index = [], 1
     while index < len(argv):
         token = argv[index]
-        if token == "-o":
+        if token in {"-o", "-Xlinker"}:
             index += 2
             continue
         if token.startswith("-"):
@@ -282,9 +303,13 @@ def _native_hip_link_evidence(entry, metadata, selected, descriptor):
         if not candidate or candidate[0] != compiler or "-c" in candidate:
             continue
         matches.append((index, _link_argv(line)))
-    if (len(matches) != 1 or matches[0][1] != argv or len(completions) != 1
+    comparison_argv = _hip_link_comparison_argv(argv, program)
+    if (len(matches) != 1
+            or _hip_link_comparison_argv(matches[0][1], program) != comparison_argv
+            or len(completions) != 1
             or completions[0] <= matches[0][0]):
         raise ValueError("successful build stdout lacks one identical HIP link invocation")
+    _hip_link_inputs(matches[0][1], compiler, program)
     inputs, paths = [], set()
     for index, token in input_tokens:
         candidate = Path(token)
@@ -303,7 +328,10 @@ def _native_hip_link_evidence(entry, metadata, selected, descriptor):
     return paths, {"mode": "native-hip-link-command", "target": str(program),
                    "link_command": dict(descriptor["link_command"]),
                    "build_stdout": dict(descriptor["build_stdout"]),
-                   "build_directory": str(directory), "argv": argv, "ordered_inputs": inputs,
+                   "build_directory": str(directory), "argv": argv,
+                   "build_argv": matches[0][1], "comparison_argv": comparison_argv,
+                   "comparison_rule": "ignore only optional target-local -Xlinker --dependency-file pair",
+                   "ordered_inputs": inputs,
                    "scope": "explicit inputs of recorded successful link command; not linker depfile or inferred -l resolution"}
 
 

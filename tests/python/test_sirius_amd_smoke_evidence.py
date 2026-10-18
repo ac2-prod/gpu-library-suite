@@ -484,6 +484,43 @@ class SiriusAmdSmokeEvidenceTests(unittest.TestCase):
             with self.subTest(text=changed), self.assertRaises(ValueError):
                 evidence.validate_link_evidence(entry, metadata, descriptor)
 
+    def test_native_hip_optional_dependency_output_preserves_both_raw_commands(self):
+        entry, metadata, descriptor, argv = self.native_hip_inputs()
+        pair = ["-Xlinker", "--dependency-file=CMakeFiles/program.dir/link.d"]
+        extended = argv[:7] + pair + argv[7:]
+        for recorded, built in ((argv, extended), (extended, argv), (extended, extended)):
+            for key, command in (("link_command", recorded), ("build_stdout", built)):
+                path = Path(descriptor[key]["path"])
+                path.write_text(shlex.join(command) + "\n" +
+                                ("[100%] Built target program\n" if key == "build_stdout" else ""))
+                descriptor[key] = self.identity(path)
+            with self.subTest(recorded=recorded, built=built):
+                link = evidence.validate_link_evidence(entry, metadata, descriptor)["link_dependency_file"]
+                self.assertEqual(link["argv"], recorded)
+                self.assertEqual(link["build_argv"], built)
+                self.assertEqual(link["comparison_argv"], argv)
+                for item in link["ordered_inputs"]:
+                    self.assertEqual(recorded[item["argv_index"]], item["token"])
+
+    def test_native_hip_dependency_output_does_not_hide_other_changes(self):
+        entry, metadata, descriptor, argv = self.native_hip_inputs()
+        pair = ["-Xlinker", "--dependency-file=CMakeFiles/program.dir/link.d"]
+        variants = [pair + pair, ["-Xlinker"], ["-Xlinker", "--as-needed"],
+                    ["-Xlinker", "--dependency-file=CMakeFiles/other.dir/link.d"],
+                    ["-Xlinker", "--dependency-file=../link.d"],
+                    ["-Wl,--dependency-file=CMakeFiles/program.dir/link.d"]]
+        commands = [argv + extra for extra in variants]
+        commands += [["-O2" if arg == "-O3" else arg for arg in argv] + pair,
+                     argv[:-1] + pair, argv + pair + ["-lchanged"]]
+        output_index = argv.index("-o") + 1
+        commands.append(argv[:output_index] + pair + argv[output_index:])
+        stdout = Path(descriptor["build_stdout"]["path"])
+        for built in commands:
+            stdout.write_text(shlex.join(built) + "\n[100%] Built target program\n")
+            descriptor["build_stdout"] = self.identity(stdout)
+            with self.subTest(built=built), self.assertRaises(ValueError):
+                evidence.validate_link_evidence(entry, metadata, descriptor)
+
     def test_native_hip_response_shell_compiler_output_and_input_guesses_rejected(self):
         entry, metadata, descriptor, argv = self.native_hip_inputs()
         link, stdout = (Path(descriptor[key]["path"]) for key in ("link_command", "build_stdout"))
