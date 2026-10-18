@@ -1030,7 +1030,7 @@ above remains separate from this campaign and from CPU CI.
   block-level paired-speedup summaries with one ratio of block medians, not
   failed timing trials or missing production measurements.
 - Six library figures were generated and visually checked. Their left panel
-  is compute, right panel E2E, and vertical axis elapsed time in milliseconds;
+  is library, right panel end-to-end, and vertical axis elapsed time in milliseconds;
   values use `elapsed_sec * 1000`, without dividing by repeat again.
 
 The requested CPU thread count was 48. FFTW recorded effective 48, the Fortran
@@ -1194,3 +1194,139 @@ No profiling or additional diagnostic campaign is required merely to record
 this coexistence result. The next bounded work is planned in the
 [implementation plan](IMPLEMENTATION_PLAN.md#minimal-performance-evaluation-plan);
 new real execution and Git publication still require separate approval.
+
+<a id="amd-production-comparison"></a>
+
+## AMD本評価：BLIS修正後の比較と測定終了
+
+2026-10-18の再監査では、採用データについて追加の再測定を必要とする
+重大な不整合は見つかりませんでした。これは保存済みコード・生成済みbuild条件・
+ログ・raw結果の照合であり、新しいGPU実行や完全な障害原因の証明ではありません。
+測定を終了し、下記の6,120行をAMD CPU/HIP/OpenMP targetの比較に採用します。
+
+### 採用元と保持する履歴
+
+| 採用分野 | campaign | 採用行数・標本 |
+| --- | --- | --- |
+| FFT / Sparse / RAND / Thrust | `sirius-amd-production-20261018T085456Z-e00328df` | 3,960行。wave 0の5ノード＋wave 1の6ノード、各条件5 trial |
+| BLAS / Solver | `sirius-amd-blis-20261018T124826Z-1798941b` | 2,160行。各wave 6ノード×2 wave、各条件5 trial |
+
+前者の成果物commitは `e00328df028b8ff75b9275593a14bbf62f868ecd`、後者は
+`036387542e6e2db95c1193eb38efaa577ee3bb5f` です。この間のAMD benchmark・common・
+CMake依存探索・共通readerのソース差分はありません。後者ではサイトのbuild入力を
+修正し、CPU BLAS/SolverをAOCLの並列 `libblis-mt.so.5.1.0` にリンクし直しました。
+CPUだけを旧GPU時間と組み合わせず、HIP/OpenMPも同じ新campaignで再測定しています。
+
+修正後のbuildはPBS `45912.pbs`（18成果物、runtime収集、00:05:37）、
+wave 0/1は `45913.pbs`（00:24:01）/ `45914.pbs`（00:23:44）です。
+後者の2 waveは各1,080行すべて数値PASS。両campaignの物理ホストは
+a24/a01/a19/a23/a14/a15で重複しており、全体で6物理ホストです。
+各ホストの1 APUと対応する24 CPUを使用しています。
+
+旧datasetの5,940行と旧BLAS/Solver結果は削除・改変していません。旧wave 0とa01の
+`FAILED`、5ノード採用記録、a01の部分成功5行・未実施分もそのまま保持しています。
+a01の不完全block全体を除外し、欠落を補完していません。後のwave 1では同じa01が
+成功しましたが、原因の確定やハードウェア修復の証明とは扱いません。
+
+### 再監査した範囲
+
+- 旧5,940行＋修正後2,160行、計8,100行を既存 `validate_results.py` で再検証。
+  全行success/PASS、重複・不足・数学条件・manifestとの対応の検査を通過しました。
+  採用対象はそのうち6,120行です。
+- config/manifest/runtime、採用18 binaryとbuild metadataのhashを再照合。
+  23個の採用node/wave blockの完了・CPU affinity・NUMA/APU証拠・runtime一致も確認。
+  旧Sparseは並列BLISのみ、旧FFTはOpenMP FFTWを解決しており、今回の誤リンクの
+  横展開は見つかりませんでした。RAND/ThrustのCPUは意図した逐次backendです。
+- 18 targetの生成済みcompile flagsを確認し、追加のfast-math指定はありません。
+  CPUはGNU 14.2.1、HIP/OpenMPはClang 22.0.0、保存runtimeはROCm 7.2.0・AOCL 5.1.0。
+- 六分野の計測区間・GPU完了同期・warm-up後とtrial間の入力復元・検証処理を確認。
+  主時計は共通 `CLOCK_MONOTONIC`、時間は正の有限値で、総時間/repeatと1操作時間が一致。
+  FFTの復元を除く区間積算、Solverのrepeat=1、RANDの再初期化と逐次CPUの区別も維持。
+- NVIDIAの保存configと一致する現行 `configs/benchmark.json`（SHA-256
+  `8afd122b965f65400c94aaa3a3baa511e6d006908d6747bd6d21bdcebff461e9`）に対し、
+  六分野のサイズ・精度・warm-up/repeat/trials・検証閾値が一致。
+  CPU要求数はAMD 24 / NVIDIA 48であり、同一CPU条件とは称しません。
+- `aggregate.py --no-pooled` をcampaignごとに一度ずつ再実行。
+  以前の集計とバイト単位で一致し、rawから独立に算出した階層中央値とも一致しました。
+  CPU/GPUの速度比は同一node/wave block内で対応付けた値から集計します。
+
+集計はtrial中央値 → wave内ノード中央値 → 2 wave間中央値です。旧4分野は
+5/6 blockの不均等を明示したうえで各waveを同じ重みで扱います。2つのcampaignの
+rawを単一campaignへ混ぜず、4分野と2分野を別々に集計・描画します。
+ノードが遅いことを理由に除外していません。例えば新Solver/OpenMPの最大library条件では、
+wave 0/a15のtrial中央値219.119 msも採用しています。
+node/waveのQ1/Q3/IQR/min/maxは集計JSONLに保存し、2 wave間のばらつきを
+12独立ノードの分散とは解釈しません。
+
+### 比較値
+
+最大サイズでの1操作当たり時間（階層中央値、ms）を示します。速度比は
+対応付きblockの比を階層集計した値で、表示時間同士の単純な割算ではありません。
+全3サイズ・両scopeの数値と四分位点は下記の成果物に保存しています。
+表・図の表示名はlibrary／end-to-endです。内部scope値の`compute`／`end-to-end`との
+対応は[表示用語の規定](BENCHMARK_PROTOCOL.md#publication-figures)に従い、保存データの値は変更しません。
+
+| 分野・最大サイズ | 表示区間 | CPU ms | HIP ms | OpenMP target ms | CPU/HIP | CPU/OpenMP |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| FFT・16,384 × batch 4,096 | library | 11.777 | 0.641 | 0.676 | 18.38× | 17.84× |
+| FFT・16,384 × batch 4,096 | end-to-end | 12.333 | 86.984 | 79.352 | 0.14× | 0.16× |
+| BLAS・4,096 | library | 110.398 | 1.480 | 1.472 | 74.64× | 74.99× |
+| BLAS・4,096 | end-to-end | 110.674 | 29.932 | 26.900 | 3.70× | 4.12× |
+| Sparse・4,194,304 | library | 10.670 | 0.113 | 0.113 | 94.71× | 94.75× |
+| Sparse・4,194,304 | end-to-end | 139.950 | 42.632 | 46.574 | 3.28× | 3.00× |
+| Solver・12,288 | library | 2013.045 | 157.883 | 157.821 | 12.75× | 12.71× |
+| Solver・12,288 | end-to-end | 2000.595 | 232.428 | 213.845 | 8.62× | 9.38× |
+| RAND・67,108,864 | library | 487.224 | 0.176 | 0.177 | 2770.96× | 2753.75× |
+| RAND・67,108,864 | end-to-end | 477.423 | 30.538 | 21.430 | 15.65× | 22.31× |
+| Thrust・67,108,864 | library | 22.499 | 0.148 | 0.150 | 151.62× | 150.39× |
+| Thrust・67,108,864 | end-to-end | 22.326 | 26.748 | 18.566 | 0.83× | 1.20× |
+
+libraryではGPUが速くても、allocation・データ移動・結果回収を含むend-to-endでは
+逆転し得ます。RANDは異なる乱数生成器同士の同じ分布生成タスクであり、
+RAND/Thrustの逐次CPUとの速度比を24-worker CPUとの比較と読み替えないでください。
+
+### 成果物と図の状態
+
+今回の新しい報告ディレクトリは
+[`runs/amd-cpu-gpu-comparison-20261018T142831Z/`](../runs/amd-cpu-gpu-comparison-20261018T142831Z/) です。
+`selection.json` が採用campaignと分野を、`audit.json` が検査結果と実行コマンドを記録します。
+`retained/` と `corrected/` に検証結果、集計JSONL、表示条件、生成済みplot metadataを
+分けて保存しました。`selected-summary.json` は出典を保持した表示用の一覧であり、
+新しい測定campaignではありません。
+
+2026-10-19、所有者承認によりMacローカルの独立したPython 3.12.15環境へ
+matplotlib 3.11.2を導入し、NVIDIAと同じ `tools/plot.py` / `gpu_suite.plotting` を
+変更せず使用して、6図を生成しました。システムPythonは変更していません。
+1800×720、library／end-to-endの2パネル、横軸log2・K/M表記、縦軸ms、丸印・線・
+3列の共通凡例・配色・余白を維持しています。既存の描画呼出しfixture 1件のPASSに
+加え、実PNG全6枚の形式・寸法を確認し、全図を目視して文字切れや重なりがないことを
+確認しました。再測定・再集計は行っていません。
+
+| 分野 | 比較図 |
+| --- | --- |
+| FFT | [rocfft-elapsed-time.png](../runs/amd-cpu-gpu-comparison-20261018T142831Z/figures/rocfft-elapsed-time.png) |
+| BLAS | [rocblas-elapsed-time.png](../runs/amd-cpu-gpu-comparison-20261018T142831Z/figures/rocblas-elapsed-time.png) |
+| Sparse | [rocsparse-elapsed-time.png](../runs/amd-cpu-gpu-comparison-20261018T142831Z/figures/rocsparse-elapsed-time.png) |
+| Solver | [rocsolver-elapsed-time.png](../runs/amd-cpu-gpu-comparison-20261018T142831Z/figures/rocsolver-elapsed-time.png) |
+| RAND | [rocrand-elapsed-time.png](../runs/amd-cpu-gpu-comparison-20261018T142831Z/figures/rocrand-elapsed-time.png) |
+| Thrust | [rocthrust-elapsed-time.png](../runs/amd-cpu-gpu-comparison-20261018T142831Z/figures/rocthrust-elapsed-time.png) |
+
+`rendering.json` に描画コマンド・終了値・PNGのSHA-256を、
+`render-completion.json` に目視確認・依存パッケージ版・入力保持の確認を記録しました。
+以前の依存不足の記録は履歴として保持し、現在の描画完了状態は後者を参照します。
+
+CPU凡例の `24 C` は要求したCPU数で、実稼働worker数ではありません。
+`AMD MI300A CPU` はAPU構成を示す表示名であり、未収集のCPUID名称を観測値として
+補ったものではありません。RAND/Thrustは `single thread` と表記します。
+
+### 残す限界と終了範囲
+
+FFTのAMD/NVIDIA計測方式の差は[既承認の方針](DECISIONS.md)どおり維持します。
+FFTWの設定thread数、BLAS/Sparse/Solverの要求値は実稼働worker数の証明ではなく、
+link/ldd/hash証拠も実行中の全動的ロードを追跡した証明ではありません。
+`observed_cpu_worker_count=null` / `loaded_libraries_verified=false` を維持し、
+これらを解決済みとせず、追加のworker監視・profiling・DSO追跡を要求しません。
+
+今回の処理は既存ログの読取り、集計、ローカル描画環境の導入、描画、文書更新です。追加測定・実SSH・
+scheduler操作・再ビルド・commit・pushは0回。NVIDIA/Pegasusの新しい実機確認も
+実施しておらず、この文書・後処理変更のために追加する必要はありません。

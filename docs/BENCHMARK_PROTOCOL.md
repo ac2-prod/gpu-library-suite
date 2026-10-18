@@ -810,12 +810,16 @@ one two-panel elapsed-time figure per enabled publication library:
 - `curand-elapsed-time.png`; and
 - `thrust-elapsed-time.png`.
 
+The display names **library** and **end-to-end** correspond to the internal
+scope values `compute` and `end-to-end`. CLI arguments, configuration keys and
+saved records retain those internal values.
+
 The left panel is titled **Library kernel execution time** and represents
-data-resident compute. The right is titled **End-to-end execution time** and
+the data-resident library operation. The right is titled **End-to-end execution time** and
 represents the one-shot host-input-to-host-output pipeline. Both use the
 library-specific problem size on the
 x-axis and **Elapsed time [ms]** on the y-axis; lower is better. CPU, CUDA, and
-OpenACC appear together. The plotted compute value is the existing
+OpenACC appear together. The plotted library value is the existing
 per-operation `elapsed_sec` converted from seconds to milliseconds; it is not
 divided by repeat again. The one-shot value comes from `repeat=1` end-to-end
 records. Do not produce a speedup, throughput, bandwidth, FLOPS, sample-rate,
@@ -856,7 +860,7 @@ Each publication caption joins the plot's run ID and runtime-environment hash
 to the existing immutable run and node metadata; no result-schema field is
 added. It records the system label, CPU model, GPU model, precision, operation,
 six nodes by two waves, five trials per node block, block median to wave median
-to cross-wave median, both timing boundaries, compute repeat as measurement
+to cross-wave median, both timing boundaries, repetition for library as measurement
 amplification, end-to-end repeat 1, and that lower is better. It also records:
 
 - cuBLAS: FP64 DGEMM with the cuBLAS default math mode;
@@ -870,13 +874,13 @@ amplification, end-to-end repeat 1, and that lower is better. It also records:
 - Thrust: double `transform_reduce` with one common CCCL/Thrust version across
   CUDA and OpenACC.
 
-The two panels are also the teaching model. Data-resident compute represents an
+The two panels are also the teaching model. The data-resident library panel represents an
 application that keeps data on the device for a library operation. The one-shot
 pipeline includes setup, device allocation, H2D, one operation, completion, and
 D2H until the host result is available. Input generation, verification,
 serialization, file I/O, and protocol cleanup remain outside. Reusing
 device-resident data can move observed application cost from the one-shot side
-toward the compute side because transfer contributes relatively less. This is
+toward the library side because transfer contributes relatively less. This is
 an interpretation of the existing two scopes, not a third amortized scope. The
 workloads are one representative operation per library and do not characterize
 every algorithm in that library.
@@ -887,25 +891,25 @@ The figure is a comparison of two boundaries, not a promise of whole-application
 speedup. Read the x-axis as the configured problem size and the y-axis as
 milliseconds per operation; lower is better. Compare CPU, CUDA, and OpenACC
 only at the same size and within the same panel. Do not divide the plotted
-compute value by `repeat` again.
+library value by `repeat` again.
 
-| Work | Compute panel | One-shot E2E panel |
+| Work | Library panel | One-shot end-to-end panel |
 | --- | --- | --- |
 | Host input allocation/generation and canonical restoration | Outside | Outside |
 | GPU allocation, H2D, plan/handle/descriptor/workspace setup | Prepared before timing | Inside the per-repeat pipeline where the library requires it |
 | Library operation and synchronization that establishes its completion | Inside | Inside |
-| D2H/result retrieval | After compute timing | Inside, before the end timestamp |
+| D2H/result retrieval | After library timing | Inside, before the end timestamp |
 | OpenACC data entry/exit and required copyin/copyout | Outside | Inside |
 | Explicit post-result cleanup, numerical verification, serialization and file I/O | Outside | Outside |
 
 CPU implementations use their corresponding operation/setup boundary without
 inventing host-device copies. Library-specific resource details, especially
 cuSOLVER restoration and FFT plans, remain in the scope and workload sections
-above and each library README. E2E is **not** the entire program's wall time:
+above and each library README. End-to-end is **not** the entire program's wall time:
 input generation, verification, output, and post-result cleanup are excluded.
 
 Warm-up is untimed and follows the chosen scope. Each raw trial starts from
-restored state. Compute repetition amplifies the measurable interval; E2E
+restored state. Repetition for library amplifies the measurable interval; end-to-end
 publication repeat is 1, and cuSOLVER repeat is always 1. A block median is
 formed from valid trials, then a wave median from blocks, then a cross-wave
 median from wave medians. One block/wave is useful for checking the pipeline,
@@ -915,7 +919,7 @@ quartiles, failure counts, and provenance as well as the plotted median.
 Before applying a result to your program, check whether its data stays on the
 GPU, whether plans/handles can be reused, how often transfers and synchronization
 are needed, and what fraction of application time is in this operation. A
-shorter GPU compute time may coexist with a slower one-shot pipeline. Their
+shorter GPU library time may coexist with a slower one-shot pipeline. Their
 difference suggests costs to investigate; it is not a separately measured
 transfer-only time or proof of a particular bottleneck. Host work, I/O, other
 kernels, and contention can limit whole-application gains. No overlap or reuse
@@ -1029,7 +1033,7 @@ may use fewer workers for a particular operation; continuously proving exactly
 24 active workers or tracing every dynamically loaded object is not required.
 
 Compare direct CUDA/HIP elapsed times and separately label OpenACC/OpenMP
-interop results. Preserve compute and end-to-end panels: the latter includes
+interop results. Preserve library and end-to-end panels: the latter includes
 system-specific allocation, transfers and host result availability. CPU speedups
 remain paired within a node block, using that system's selected production CPU
 provider; differing CPU allocations/providers do not define an equal CPU

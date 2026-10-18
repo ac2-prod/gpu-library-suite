@@ -21,10 +21,13 @@ by 72/72 numerical smoke cases, including Fortran Thrust interoperation.
 The [validation report](docs/VALIDATION_REPORT.md#current-coexistence-status)
 separates these source identities and evidence limits. Effective CPU worker
 counts and complete loaded-library identity remain unverified where noted;
-basic smoke does not establish performance. The subsequent three-size AMD
-pilot passed all 108 numerical rows on one APU. The next step is
-[six-host/two-wave AMD production preparation](docs/IMPLEMENTATION_PLAN.md#minimal-performance-evaluation-plan),
-with execution separately approved. The accepted FFT timing difference is
+basic smoke does not establish performance. AMD production measurement is now
+closed: the CPU/GPU comparison selects 3,960 retained FFT/Sparse/RAND/Thrust
+rows and 2,160 newly measured BLAS/Solver rows after the parallel-BLIS link
+correction. These remain two separately aggregated campaigns. See the
+[audit, results and remaining limits](docs/VALIDATION_REPORT.md#amd-production-comparison).
+Historical results and the failed wave/node evidence are preserved. The accepted
+FFT timing difference is
 [documented](amd/c-cpp/rocfft/README.md); it does not require repeating NVIDIA
 measurements. The project is maintained
 under `ac2-prod` and is not an official HAIRDESC repository.
@@ -99,7 +102,7 @@ If you know CPU C/C++ but are new to CUDA, follow this route:
    Your own figures use observed or explicitly supplied machine identities,
    without assuming the teaching machine or requiring its saved data.
 5. Use [reading the figures](docs/BENCHMARK_PROTOCOL.md#reading-the-figures-and-applying-the-results)
-   to relate compute/E2E costs to your application. Other libraries have their
+   to relate library/end-to-end costs to your application. Other libraries have their
    own source, dependency, build, and verification notes in the table below.
 
 | Read this area | What it helps you understand |
@@ -234,8 +237,8 @@ are in [`docs/BENCHMARK_PROTOCOL.md`](docs/BENCHMARK_PROTOCOL.md) and
 [`docs/RESULT_SCHEMA.md`](docs/RESULT_SCHEMA.md).
 
 Publication output is six library-specific elapsed-time figures. Each has a
-data-resident compute panel and a one-shot host-input-to-host-output panel, uses
-milliseconds, and places CPU, CUDA, and OpenACC together. Compute repeat only
+data-resident library panel and a one-shot end-to-end panel, uses
+milliseconds, and places CPU, CUDA, and OpenACC together. Repetition for library only
 amplifies the measured interval; the plotted value remains one operation's
 elapsed time. No speedup, throughput, reuse-count, amortized, or extra generic
 figure is produced. Plotting reads performance values only from cross-wave

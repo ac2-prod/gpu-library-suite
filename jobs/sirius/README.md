@@ -702,6 +702,24 @@ after reviewing the preceding build or wave; never retry automatically.
 The [benchmark protocol](../../docs/BENCHMARK_PROTOCOL.md#matched-nvidiaamd-evaluation)
 owns pairing and treatment of the superseded performance series.
 
+The approved correction completed at commit
+`036387542e6e2db95c1193eb38efaa577ee3bb5f`: build job `45912.pbs` produced
+18 benchmarks and runtime input; `45913.pbs` and `45914.pbs` each passed
+1,080 numerical rows. Both wave jobs used a24/a01/a19/a23/a14/a15, one selected
+APU and its 24 CPUs per host. Their PBS walltimes were 00:24:01 and 00:23:44;
+the build/preparation took 00:05:37. Logs remain under
+`runs/sirius-amd-blis-build-20261018T124826Z-1798941b/` and
+`runs/sirius-amd-blis-20261018T124826Z-1798941b{,-wave0-job,-wave1-job}/`.
+The subsequent read-only audit confirmed that CPU BLAS/Solver resolve the
+parallel BLIS, and retained FFT/Sparse dependencies do not contain serial BLIS.
+
+Measurement is closed. The selected teaching comparison uses these 2,160 rows
+and 3,960 rows from the four unaffected families, without combining campaign
+identities. The original 5,940-row dataset, a01 failure, FAILED wave and its
+adoption record are preserved. See the [completed audit and comparison](../../docs/VALIDATION_REPORT.md#amd-production-comparison).
+No further measurement, worker profiling, complete DSO tracing, or automatic
+wave is required by this result. This record grants no new execution approval.
+
 ### Prepared six-family allocated build
 
 [amd_build_job.sh](amd_build_job.sh) and [amd_build.py](amd_build.py) support the

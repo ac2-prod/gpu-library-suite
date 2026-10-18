@@ -4,7 +4,9 @@
 
 cuFFT、cuBLAS、cuSPARSE、cuSOLVER、cuRAND、Thrustを対象とした、移植可能なNVIDIA C/C++・Fortran教材サンプル、再現可能なCPU/CUDA/OpenACCベンチマーク、厳密な結果処理ツール、Pegasus用ジョブ支援です。
 
-ソース範囲はNVIDIA C/C++・FortranとAMD C/C++です。AMDはSiriusで6分野の36成果物をbuildし、別々のsource snapshotに対応する実行で教材18本・数値576件が成功しました。AMD追加後のNVIDIA C/C++・Fortranは、ローカル／fixtureの共存確認に加え、Gitで固定した版をPegasusで36 benchmark build・72件smokeし、Fortran Thrust連携を含め全件成功しています。[検証記録](docs/VALIDATION_REPORT.md#current-coexistence-status)に版と確認範囲を分けて記録しています。続くAMDの3サイズpilotは1 APUで108件すべて成功しました。未観測のCPU実効worker数・完全な実ロードライブラリ来歴は未確認のままです。次は[6物理ノード×2waveのAMD本評価準備](docs/IMPLEMENTATION_PLAN.md#minimal-performance-evaluation-plan)を進め、実行は別途承認します。[FFTの計測方法の違い](amd/c-cpp/rocfft/README.md)は明記して現行方式を維持し、過去のNVIDIA測定をやり直しません。NVIDIA Fortranの過去の本測定は[既存記録](docs/VALIDATION_REPORT.md#fortran-production-validation)を参照してください。本プロジェクトは`ac2-prod`で管理し、HAIRDESCの公式リポジトリではありません。
+ソース範囲はNVIDIA C/C++・FortranとAMD C/C++です。AMDはSiriusで6分野の36成果物をbuildし、別々のsource snapshotに対応する実行で教材18本・数値576件が成功しました。AMD追加後のNVIDIA C/C++・Fortranは、ローカル／fixtureの共存確認に加え、Gitで固定した版をPegasusで36 benchmark build・72件smokeし、Fortran Thrust連携を含め全件成功しています。[検証記録](docs/VALIDATION_REPORT.md#current-coexistence-status)に版と確認範囲を分けて記録しています。続くAMDの3サイズpilotは1 APUで108件すべて成功しました。未観測のCPU実効worker数・完全な実ロードライブラリ来歴は未確認のままです。
+
+AMD本評価の測定は終了しました。FFT・Sparse・RAND・Thrustの既存3,960行と、並列BLISへのリンク修正後に再測定したBLAS・Solverの2,160行を採用し、来歴の異なる2つのcampaignを分けて集計しています。[監査・比較結果・残る制約](docs/VALIDATION_REPORT.md#amd-production-comparison)を参照してください。旧結果とFAILED記録は保持し、追加診断・追加測定を完了条件にはしません。[FFTの計測方法の違い](amd/c-cpp/rocfft/README.md)は明記して現行方式を維持し、過去のNVIDIA測定をやり直しません。NVIDIA Fortranの過去の本測定は[既存記録](docs/VALIDATION_REPORT.md#fortran-production-validation)を参照してください。本プロジェクトは`ac2-prod`で管理し、HAIRDESCの公式リポジトリではありません。
 
 本リポジトリは**Library Edition (NVIDIA GPU)**（ライブラリ編（NVIDIA GPU））のC/C++版・Fortran版教材のソースリポジトリです。サンプルを読んだりビルドしたりするために、Pegasusへのアクセスや著者との会話履歴は必要ありません。GPUサンプルの実行には、対応するNVIDIA GPUと以下の依存環境が必要です。
 
@@ -34,7 +36,7 @@ CPUのC/C++には慣れていてもCUDAは初めて、という場合は次の�
 2. [cuBLAS：最初のビルドと実行](nvidia/c-cpp/cublas/README.ja.md#first-build-and-run)に従います。CPUサンプルから始め、利用可能なGPU版を実行して終了ステータスと数値結果を確認します。教材サンプルそのものは時間測定の実験ではありません。
 3. [サンプルからベンチマークへの対応](nvidia/c-cpp/cublas/README.ja.md#from-example-to-benchmark)を読み、[自分のシステムで測定する手順](docs/PORTABILITY.ja.md#measuring-on-your-own-system)に沿って、小規模確認、設定、測定、検証、集計を行います。
 4. [自分の測定データから図を作成](docs/PORTABILITY.ja.md#figures-from-your-own-measurements)します。図には観測した、または明示的に指定したマシン識別情報を使います。教材のマシンを前提にせず、その保存データも必要としません。
-5. [図の読み方](docs/BENCHMARK_PROTOCOL.ja.md#reading-the-figures-and-applying-the-results)を参照し、compute/E2Eのコストを自分のアプリケーションと関連付けてください。他のライブラリのソース、依存環境、ビルド、検証の説明は、以下の表から参照できます。
+5. [図の読み方](docs/BENCHMARK_PROTOCOL.ja.md#reading-the-figures-and-applying-the-results)を参照し、library／end-to-endのコストを自分のアプリケーションと関連付けてください。他のライブラリのソース、依存環境、ビルド、検証の説明は、以下の表から参照できます。
 
 | 読む場所 | 分かること |
 | --- | --- |
@@ -122,7 +124,7 @@ productionスイートの各呼び出しでは、実効設定に含まれる完�
 
 実行時の次元、ライブラリAPIの整数引数、要素数の積、確保バイト数は、メモリ確保またはライブラリ呼び出しの前に確認します。対応範囲外は構造化されたprerequisite／ベンチマーク結果として報告し、小さいワークロードへ切り詰めることはありません。warm-upは選択したスコープに従います。computeは永続コンテキストを再利用し、end-to-endは完全な一時パイプラインを使い、warm-upのリソースを残しません。入力・中間値・指標のNaNや無限大は、明示的な`verification_status=nonfinite`の失敗として扱います。主要指標をJSONの`null`として保存し、非標準の`NaN`/`Infinity` tokenは出力しません。厳密な規則は[`docs/BENCHMARK_PROTOCOL.ja.md`](docs/BENCHMARK_PROTOCOL.ja.md)と[`docs/RESULT_SCHEMA.md`（英語）](docs/RESULT_SCHEMA.md)を参照してください。
 
-教材掲載用出力は、ライブラリごとの実行時間図6枚です。各図はデータ常駐のcomputeパネルと、ホスト入力からホスト出力までを1回で処理するパネルで構成し、単位はミリ秒、CPU・CUDA・OpenACCを同じ図に示します。compute repeatは測定区間を増幅するだけで、プロット値は常に1演算あたりの経過時間です。speedup、throughput、reuse-count、amortized、その他の汎用図は生成しません。描画の性能値はwave間要約レコードだけから読み取ります。raw結果は、Thrust図を出力する前にCUDA/OpenACCの`library_version`が一致する根拠を要求するためだけに使用します。図とキャプションの厳密な規則は[`docs/BENCHMARK_PROTOCOL.ja.md`](docs/BENCHMARK_PROTOCOL.ja.md)にあります。`tools/plot.py`の位置引数にaggregate JSONLを渡し、必須の`--raw-results`にはキャンペーンのノードraw JSONLファイルを渡します。
+教材掲載用出力は、ライブラリごとの実行時間図6枚です。各図はデータ常駐のlibraryパネルと、ホスト入力からホスト出力までを1回で処理するend-to-endパネルで構成し、単位はミリ秒、CPU・CUDA・OpenACCを同じ図に示します。library側のrepeatは測定区間を増幅するだけで、プロット値は常に1演算あたりの経過時間です。speedup、throughput、reuse-count、amortized、その他の汎用図は生成しません。描画の性能値はwave間要約レコードだけから読み取ります。raw結果は、Thrust図を出力する前にCUDA/OpenACCの`library_version`が一致する根拠を要求するためだけに使用します。図とキャプションの厳密な規則は[`docs/BENCHMARK_PROTOCOL.ja.md`](docs/BENCHMARK_PROTOCOL.ja.md)にあります。`tools/plot.py`の位置引数にaggregate JSONLを渡し、必須の`--raw-results`にはキャンペーンのノードraw JSONLファイルを渡します。
 
 <a id="cpu-baselines-and-verification-notes"></a>
 

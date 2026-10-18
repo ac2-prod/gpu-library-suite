@@ -1316,131 +1316,52 @@ counts remain unverified.
 
 ### Minimal performance evaluation plan
 
-Status: three-size pilot complete; AMD production preparation authorized;
-Git writes, real builds, SSH and submissions remain unapproved. The primary
-teaching objective is AMD CPU versus AMD GPU. The owner accepted the retained
-FFT methods in [D-076](DECISIONS.md): no benchmark timing rewrite or NVIDIA
-remeasurement is part of this work. Timing/sampling rules stay with
+Status: **measurement closed; saved results audited, aggregated and plotted**. The
+completed evidence and rendering status are recorded in
+[VALIDATION_REPORT](VALIDATION_REPORT.md#amd-production-comparison).
+The accepted FFT timing difference remains [D-076](DECISIONS.md); no timing
+rewrite, NVIDIA remeasurement, further AMD wave or diagnostic campaign is
+required. Sampling and statistical rules remain owned by
 [BENCHMARK_PROTOCOL](BENCHMARK_PROTOCOL.md#matched-nvidiaamd-evaluation),
-provenance with [RESULT_SCHEMA](RESULT_SCHEMA.md), and operating details with
-[the Sirius plan](../jobs/sirius/README.md#amd-production-preparation).
+provenance by [RESULT_SCHEMA](RESULT_SCHEMA.md), and site execution by
+[the Sirius document](../jobs/sirius/README.md#amd-production-preparation).
 
-1. **Completed pilot gate.** The earlier one-size pilot remains historical.
-   The three-size run `sirius-amd-pilot-20261017T183416Z-a3697cae` (PBS
-   `45781.pbs`) passed all 108 rows and completed in 00:12:59 PBS walltime.
-   Its four-module environment and one-rank MPI route worked. Preserve its
-   dirty snapshot and all recorded limits; one trial on one APU establishes
-   neither within-condition dispersion nor physical-node variation. See
-   [the exact evidence](VALIDATION_REPORT.md#amd-three-size-pilot-and-timing-review).
-2. **Concrete production configuration.**
-   [`jobs/sirius/amd-benchmark.json`](../jobs/sirius/amd-benchmark.json) selects
-   production mode and five trials, preserving the pilot's three sizes, repeats,
-   warm-up, verification, 24-core request and successful AMD CPU providers.
-   Cases and per-scope settings match the historical NVIDIA production config.
-   Stop on failure remains explicit. Preview all 12 node blocks with the
-   existing runner/order functions: 108 invocations and 540 rows per block,
-   3,240 rows per wave and 6,480 rows overall. This preview neither launches
-   a benchmark nor makes the historical dirty manifest production-eligible.
-3. **Freeze the measurement version and build only what is needed.**
-   Existing 18 benchmark binaries were built from dirty source and fail the
-   production clean-build gate. After separate approval, fix a clean Git version
-   and build CPU/HIP/OpenMP benchmarks (six per profile) in fresh directories
-   inside a Sirius allocation. Preserve older builds and logs. The measurement
-   job never rebuilds. Record exact source, manifest, binary and build hashes;
-   do not relabel old binaries. Verify the new 18-artifact inventory and numerical
-   behavior with a scoped check before approving the two-wave campaign; no new
-   six-family local regression or NVIDIA build is required by this preparation.
-   The owner requested that the minimal CPU/APU correspondence check share this
-   clean-build job. Use the [site-owned build/preparation sequence](../jobs/sirius/README.md#clean-build-with-a-minimal-cpuapu-correspondence-check):
-   build the 18 benchmarks once on one exclusive physical host, check one APU's
-   24-CPU/NUMA/device correspondence, collect runtime inputs, report and stop.
-   Do not reserve six hosts just to compile identical binaries six times.
-   The explicit `--clean-benchmarks` mode now requires 18 clean artifacts at an
-   approved commit and disables teaching targets; the default 36-artifact mode
-   remains available. The job wrapper adds the pilot MPI module only in this
-   mode, before the final GCC library-order correction. `amd_prepare.py` then
-   performs the one-worker PCI/NUMA/HIP/OpenMP check and collects runtime inputs
-   with the build's common deadline. Build and preparation failures are recorded
-   separately. Focused local fixtures validate this control flow, not real device
-   correspondence. The first allocated clean build, its explicit ROCm version
-   file, the clean-version commit and the later six-host placement evidence
-   remain required; no submission or measurement is authorized by implementation.
-4. **Six-host orchestration implemented; site prerequisites remain.**
-   The current pilot wrapper deliberately accepts only rank 0/world size 1 and
-   108 rows. Its job-specific runtime document is pilot evidence, not the
-   normalized cross-wave production identity. A replacement of `-np 1` by
-   `-np 6` alone is insufficient. `jobs/sirius/amd_production.py` now implements
-   the Sirius job-master/node-worker path using existing runner, ordering and
-   validation functions, following the NVIDIA launch ownership model. It uses
-   MPI preflight → master-only metadata → six independent runners → master
-   collection, with disjoint output subtrees. Keep each benchmark single-process.
-   Reject duplicate physical hosts, wrong affinity/APU visibility, missing ranks
-   or different required runtime identities before measurement. Host/job/rank/APU
-   observations belong in node/wave evidence, not in a shared hash whose value
-   would change just because wave or hostname changed. Required software/config/
-   compiler/library/binary identity must remain fixed across the two waves.
-   The owner-supplied guide does not establish `place=scatter`; the confirmed
-   `exclhost` constraint and resource alternatives are recorded in the Sirius
-   owner document. The launcher now fixes `-np 6 -npernode 1 --bind-to none`,
-   matching the saved NVIDIA and Sirius pilot routes, and requires six actual
-   hosts in the saved PBS nodefile. It applies the confirmed 24-CPU subset
-   itself, constrained by scheduler affinity, without rewriting GPU masks.
-   The owner selected 24 vnodes with `place=exclhost` for the six-host
-   measurement plan, accepting its larger reservation for preparation. Actual
-   execution remains unapproved. Settle the CPU/APU correspondence in the
-   clean-build job, then verify it against each wave's actual allocation;
-   neither a speculative scatter test nor a separate diagnostic job is planned.
-   A missing/unresolved job-bound placement record stops before MPI. The
-   allocation/device evidence must still identify the selected APU and its
-   24 CPUs in the actual allocation. No external binding wrapper is required.
-   `collect-runtime` now prepares normalized input using the existing link and
-   ldd checks on the new clean build's 18 artifacts, with raw job evidence kept
-   separate. Execute this only in a separately approved allocated job; compare
-   the canonical hash between waves. Modules and tool paths are grounded in
-   the successful pilot, but new binary/metadata hashes need the clean build.
-   Local fixtures check two waves of six writers (6,480 synthetic rows),
-   incomplete/failed output, immutable inputs and cross-wave rejection; they
-   do not certify the unexecuted MPI/device binding.
-5. **Two separate, sequential wave jobs.** Each wave must actually contain
-   six distinct physical hosts, with one active APU/24-core benchmark process
-   per host. Keep the same effective config, binaries and required runtime
-   identity. Use fresh per-wave output, validate wave 0 before advancing to
-   wave 1, and require explicit execution approval. Do not automatically retry,
-   cancel, change resources, drop a slow host or substitute CPU backends.
-   Record overlap between waves. NVIDIA's retained campaign used 12 distinct
-   hosts overall; do not label repeated AMD hosts as new independent devices.
-6. **Numerical and statistical acceptance.** Require all 6,480 expected rows,
-   numerical PASS and finite positive timings with valid provenance. Preserve
-   failed/missing rows and do not call an incomplete campaign complete. Use
-   block medians from five trials, then wave medians from six host blocks, then
-   a cross-wave summary of the two wave medians. Retain block/trial and within-
-   wave Q1/Q3/IQR/min/max/sample counts; do not pool all trials or portray two
-   wave medians as 12 independent host samples. Figures primarily compare AMD
-   CPU/HIP/OpenMP, with the retained FFT method explained. Optional NVIDIA
-   overlays preserve timing, CPU-provider/resource and compiler/RNG differences.
+1. **Completed measurement gates.** The three-size pilot passed 108 rows.
+   Approved clean builds supplied 18 benchmark artifacts; runtime collection
+   and per-allocation CPU/NUMA/APU checks completed. Production used six
+   exclusive physical hosts, one MPI worker/APU and 24 CPUs per host. The
+   originally planned 6,480 rows must not be reported as all successful:
+   wave 0 failed on a01; the owner accepted all five complete blocks, followed
+   by a complete six-node wave 1 (5,940 accepted rows).
+2. **Completed parallel-BLIS correction.** The original BLAS/Solver links were
+   unsuitable for the intended parallel CPU baseline. The new clean build
+   selects parallel BLIS without serial fallback; both families were measured
+   again with CPU/HIP/OpenMP paired within each new node block, two six-host
+   waves and 2,160 PASS rows. The older results and failure evidence remain.
+3. **Final selection.** Use 3,960 retained FFT/Sparse/RAND/Thrust rows and
+   2,160 corrected BLAS/Solver rows. Keep the two campaigns' source, binaries,
+   config, runtime identities and aggregation separate. Retain all successful
+   timings, including slow blocks. Both waves overlap in physical hosts; this
+   is six distinct hosts overall, not twelve independent hosts. No missing
+   trial or failed block is filled in.
+4. **Reporting gate.** Replay the existing strict readers, hierarchical
+   aggregation and NVIDIA figure renderer. Preserve library/end-to-end,
+   per-operation milliseconds, three sizes and requested/serial CPU labels.
+   Store exact inputs, selection, output hashes and rendering status in a new
+   report directory; keep the measured datasets unchanged. No new benchmark
+   framework or broad local test campaign is required.
 
-Local preparation checks are limited to strict config validation, counterpart
-case equality, the real runner's 12-block schedule/count/order preview, the
-existing dirty-artifact rejection, preservation of existing inputs/results and
-diff review. They do not exercise MPI, a GPU or scheduler. A clean measurement
-commit, selected production artifact hashes, actual physical-host/APU placement,
-production runtime input collection, site binding integration and execution approval remain gates;
-this preparation is not a claim that a multi-node job is ready to submit.
+The selected CPU providers are AOCL OpenMP FFTW, parallel BLIS, AOCL Sparse,
+libFLAME/parallel BLIS, serial standard RNG and serial STL. Configured limits
+are distinct from observed active workers. Complete actual loaded-DSO tracing
+and BLAS/Sparse/Solver active worker counts remain unverified, as accepted by
+the owner; do not silently mark them verified or add a campaign to obtain them.
+The earlier a01 error's root cause is unresolved; its later successful wave
+does not prove a hardware fix. Fortran/NVIDIA evidence remains unchanged.
 
-The CPU primary baseline remains AOCL OpenMP FFTW, BLIS, AOCL Sparse,
-libFLAME/BLIS, serial standard RNG and serial STL. Configured FFTW threads do
-not establish observed active workers. BLAS/Sparse/Solver effective counts and
-complete loaded-DSO identity remain unverified; keep those limits in the report
-and do not add a profiler, loader trace or diagnostic campaign to resolve them.
-Fortran coexistence evidence is preserved; no Fortran measurement change is
-part of this AMD preparation.
-
-The final execution packet, prepared after the remaining gates, must bind the
-source/config/manifest/binary/payload hashes and include resource limits,
-timeouts, bounded SSH/submission/observation counts and a fresh `runs/<RUN_ID>/`
-destination. Do not issue approval for a packet with placeholder artifacts or
-unresolved placement. No commit, push, SSH, build or submission is authorized
-by the present document/config preparation.
+No new build, measurement, SSH, scheduler action or Git publication is authorized
+by this completed reporting plan. Any later change to measured code or providers
+requires its own provenance and approved scope.
 
 ### Stage 1 deliverables
 
