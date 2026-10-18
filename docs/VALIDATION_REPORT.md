@@ -1288,7 +1288,8 @@ RAND/Thrustの逐次CPUとの速度比を24-worker CPUとの比較と読み替�
 ### 成果物と図の状態
 
 今回の新しい報告ディレクトリは
-[`runs/amd-cpu-gpu-comparison-20261018T142831Z/`](../runs/amd-cpu-gpu-comparison-20261018T142831Z/) です。
+`runs/amd-cpu-gpu-comparison-20261018T142831Z/` です。
+このディレクトリと下記の図は非配布の保存済み成果物で、Git checkoutには含まれません。
 `selection.json` が採用campaignと分野を、`audit.json` が検査結果と実行コマンドを記録します。
 `retained/` と `corrected/` に検証結果、集計JSONL、表示条件、生成済みplot metadataを
 分けて保存しました。`selected-summary.json` は出典を保持した表示用の一覧であり、
@@ -1302,14 +1303,14 @@ matplotlib 3.11.2を導入し、NVIDIAと同じ `tools/plot.py` / `gpu_suite.plo
 加え、実PNG全6枚の形式・寸法を確認し、全図を目視して文字切れや重なりがないことを
 確認しました。再測定・再集計は行っていません。
 
-| 分野 | 比較図 |
+| 分野 | 比較図（上記ディレクトリからの相対パス） |
 | --- | --- |
-| FFT | [rocfft-elapsed-time.png](../runs/amd-cpu-gpu-comparison-20261018T142831Z/figures/rocfft-elapsed-time.png) |
-| BLAS | [rocblas-elapsed-time.png](../runs/amd-cpu-gpu-comparison-20261018T142831Z/figures/rocblas-elapsed-time.png) |
-| Sparse | [rocsparse-elapsed-time.png](../runs/amd-cpu-gpu-comparison-20261018T142831Z/figures/rocsparse-elapsed-time.png) |
-| Solver | [rocsolver-elapsed-time.png](../runs/amd-cpu-gpu-comparison-20261018T142831Z/figures/rocsolver-elapsed-time.png) |
-| RAND | [rocrand-elapsed-time.png](../runs/amd-cpu-gpu-comparison-20261018T142831Z/figures/rocrand-elapsed-time.png) |
-| Thrust | [rocthrust-elapsed-time.png](../runs/amd-cpu-gpu-comparison-20261018T142831Z/figures/rocthrust-elapsed-time.png) |
+| FFT | `figures/rocfft-elapsed-time.png` |
+| BLAS | `figures/rocblas-elapsed-time.png` |
+| Sparse | `figures/rocsparse-elapsed-time.png` |
+| Solver | `figures/rocsolver-elapsed-time.png` |
+| RAND | `figures/rocrand-elapsed-time.png` |
+| Thrust | `figures/rocthrust-elapsed-time.png` |
 
 `rendering.json` に描画コマンド・終了値・PNGのSHA-256を、
 `render-completion.json` に目視確認・依存パッケージ版・入力保持の確認を記録しました。

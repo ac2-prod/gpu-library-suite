@@ -170,8 +170,8 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("RNG algorithms differ", readme)
         self.assertIn("only writer of the node-level raw-result file", readme)
         self.assertIn("one-node Pegasus", readme)
-        self.assertIn("data-resident compute panel", readme)
-        self.assertIn("one-shot host-input-to-host-output panel", readme)
+        self.assertIn("data-resident library panel", readme)
+        self.assertIn("one-shot end-to-end panel", readme)
         self.assertIn("No speedup, throughput, reuse-count, amortized", readme)
         self.assertIn("No real CUDA GPU", readme)
 
