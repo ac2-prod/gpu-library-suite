@@ -232,6 +232,17 @@ class SiriusProductionTests(unittest.TestCase):
 
     def test_one_rank_per_allocated_host_and_cpu_subset(self):
         production.validate_plan(self.plan, "42.fixture")
+        for action, wave_hash in (("observe", None), ("worker", "a" * 64)):
+            with self.subTest(action=action):
+                argv = production.mpi_command(self.plan, self.work / "plan.json", action, wave_hash)
+                python_index = argv.index(sys.executable)
+                self.assertEqual([argv[i + 1] for i, value in enumerate(argv) if value == "-x"],
+                                 ["PATH", "LD_LIBRARY_PATH"])
+                self.assertEqual(argv[python_index - 4:python_index],
+                                 ["-x", "PATH", "-x", "LD_LIBRARY_PATH"])
+                self.assertEqual(argv[python_index + 3], action)
+                if wave_hash is not None:
+                    self.assertEqual(argv[-2:], ["--wave-sha256", wave_hash])
         for options in (["-npernode", "2"], ["--map-by", "slot"], ["--bind-to", "core"],
                         ["--host", "other"], ["--oversubscribe"]):
             with self.subTest(options=options), self.assertRaisesRegex(ValueError, "policy is fixed"):

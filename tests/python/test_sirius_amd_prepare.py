@@ -139,6 +139,11 @@ class SiriusPreparationTests(unittest.TestCase):
             self.assertEqual(argv[argv.index("-np") + 1], "6")
             self.assertEqual(argv[argv.index("-npernode") + 1], "1")
             self.assertEqual(argv[argv.index("--bind-to") + 1], "none")
+            python_index = argv.index(sys.executable)
+            self.assertEqual([argv[i + 1] for i, value in enumerate(argv) if value == "-x"],
+                             ["PATH", "LD_LIBRARY_PATH"])
+            self.assertEqual(argv[python_index - 4:python_index],
+                             ["-x", "PATH", "-x", "LD_LIBRARY_PATH"])
             master.assert_not_called()
             assemble.side_effect = None
             assemble.return_value = {"status": "fixture placement"}

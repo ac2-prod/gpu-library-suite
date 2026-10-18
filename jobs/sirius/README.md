@@ -566,8 +566,14 @@ master creates that directory exclusively for wave 0 and saves its own frozen
 plan there. Normalize the effective config/manifest/runtime JSON with the
 shared serializer before computing their plan hashes.
 
-The launcher owns `--hostfile`, `-np 6 -npernode 1 --bind-to none` and the
-worker command. Other MPI mapping, host, count or oversubscription options are
+The launcher owns `--hostfile`, `-np 6 -npernode 1 --bind-to none`,
+`-x PATH -x LD_LIBRARY_PATH` and the worker command. Placement, preflight and
+measurement MPI launches explicitly export the master's search paths after
+module loading and GCC library-order restoration, following Sirius guide 7.5.5.
+This does not prove that MPI leaves the values unchanged: every measurement
+worker still requires exact normalized runtime equality, with mismatch evidence
+and no retry. The frozen runtime is not rewritten to accept a changed path.
+Other MPI mapping, host, count or oversubscription options are
 rejected. Both `observe` and `worker` apply the same confirmed 24-CPU subset
 before checking their environment. No external binding shell wrapper is needed.
 There is no scheduler template or GPU-mask rewrite; the site mapping rule must

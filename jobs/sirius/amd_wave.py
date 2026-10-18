@@ -74,7 +74,8 @@ def run(request, output):
         preparation_path = output / "placement-request.json"
         production.save(preparation_path, placement_request)
         argv = [request["mpirun"]["path"], "--display-map", "--hostfile", str(frozen_nodefile),
-                "-np", "6", "-npernode", "1", "--bind-to", "none", sys.executable, "-B",
+                "-np", "6", "-npernode", "1", "--bind-to", "none",
+                "-x", "PATH", "-x", "LD_LIBRARY_PATH", sys.executable, "-B",
                 str(Path(preparation.__file__).resolve()), "--worker-request", str(preparation_path),
                 "--output", str(output / "placement")]
         processes.run(argv, environment, "mpi-placement")

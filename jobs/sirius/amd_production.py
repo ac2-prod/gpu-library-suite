@@ -641,6 +641,7 @@ def mpi_command(plan, frozen_plan, action, wave_hash=None):
     argv = [plan["mpirun"]["path"], *plan["mpi_options"],
             "--hostfile", plan["allocation_nodefile"]["path"],
             "-np", str(NODES), "-npernode", "1", "--bind-to", "none",
+            "-x", "PATH", "-x", "LD_LIBRARY_PATH",
             sys.executable, "-B", str(Path(__file__).resolve()),
             action, "--plan", str(frozen_plan), "--plan-sha256", digest(plan)]
     if wave_hash is not None:
