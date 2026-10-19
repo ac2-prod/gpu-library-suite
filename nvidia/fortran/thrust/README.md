@@ -2,56 +2,102 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
-See the [shared Fortran guide](../README.md) for dependencies, separate CMake builds, numerical flags, and the scope and limits of completed Pegasus validation.
+Compute `sum(values[i]^2)` with transform-reduce. Combining the transform with reduction avoids storing an intermediate array of squared values.
 
-| Implementation | Example | Benchmark |
+<a id="problem"></a>
+
+## Problem and expected result
+
+Input is `2^24` FP64 ones; the expected square sum is `16777216`. CPU uses serial intrinsic `sum(values*values)`. The result returned to the host is one double.
+
+Fortran examples must exit 0 and print `verification PASS`. Teaching sizes are source constants.
+
+<a id="dependencies"></a>
+
+## Dependencies
+
+CPU needs only its Fortran compiler and intrinsic sum. GPU needs Thrust/CCCL, CUDA, and NVCC for the C++ wrapper.
+
+CPU supports GNU Fortran / NVHPC; GPU uses NVHPC `nvfortran` and CUDA Toolkit. Do not share `.mod` files between compilers or reuse a C/C++ tree. The [Fortran guide](../README.md) covers ABI and numerical requirements.
+
+<a id="select-a-minimal-build"></a>
+
+## Select a minimal build
+
+Set these variables in Bash, then follow only the CPU, direct GPU, or directive section you need in the [shared build guide](../../../docs/BUILDING.md#select). It builds the selected example; benchmarks and the full test suite are not needed.
+```bash
+VENDOR=nvidia
+SOURCE_LANGUAGE=fortran
+LIBRARY=thrust
+CPU_TARGET=reduce_cpu
+GPU_TARGET=reduce_gpu
+DIRECTIVE_TARGET=openacc_thrust
+CPU_OPTIONS=()
+```
+
+<a id="sources"></a>
+
+## Sources and explicit link inputs
+
+| Variant | Example | Benchmark |
 | --- | --- | --- |
-| CPU | [reduce_cpu.f90](examples/reduce_cpu.f90) | [reduce_cpu_bench.f90](benchmarks/reduce_cpu_bench.f90) |
-| CUDA | [reduce_gpu.f90](examples/reduce_gpu.f90) | [reduce_gpu_bench.f90](benchmarks/reduce_gpu_bench.f90) |
-| OpenACC | [openacc_thrust.f90](examples/openacc_thrust.f90) | [openacc_thrust_bench.f90](benchmarks/openacc_thrust_bench.f90) |
+| CPU | [reduce_cpu.f90](examples/reduce_cpu.f90) / `reduce_cpu` | [reduce_cpu_bench.f90](benchmarks/reduce_cpu_bench.f90) / `reduce_cpu_bench` |
+| CUDA | [reduce_gpu.f90](examples/reduce_gpu.f90) / `reduce_gpu` | [reduce_gpu_bench.f90](benchmarks/reduce_gpu_bench.f90) / `reduce_gpu_bench` |
+| OpenACC | [openacc_thrust.f90](examples/openacc_thrust.f90) / `openacc_thrust` | [openacc_thrust_bench.f90](benchmarks/openacc_thrust_bench.f90) / `openacc_thrust_bench` |
 
-FP64 sum of squares of all-ones input. CPU keeps Fortran sum(values*values), without an OpenMP loop, STL substitution or automatic GPU offload. Both GPU callers use the supplied extern-C thrust_square_sum through bind(C); the wrapper contains transform_reduce and is shared, not duplicated as a second algorithm. A thrown C++ exception is diagnosed and becomes NaN, which Fortran rejects. Benchmark synchronization is at timing boundaries. Teachings retain their original synchronization style; a host scalar return is not justification to remove benchmark completion checks.
+Both GPU callers share [thrust_wrapper.cu](examples/thrust_wrapper.cu). The `bind(C)` function is `double thrust_square_sum(const double*, size_t)`. C++ exceptions become NaN, rejected by the Fortran caller. This is a different ABI from the AMD rocThrust wrapper (three arguments, int return).
 
-## Direct compilation
+<a id="adapting-the-example"></a>
 
-Prefer the [shared CMake recipe](../README.md#separate-gpu-build-trees). These are NVHPC/Linux commands from the repository root in the same Toolkit environment, not a claim of an executed GPU build. Supply real provider include/library directories. Helpers/wrappers are explicit link inputs; no dependency installation is performed.
+## Adapt this example
+
+Replace the transform, associative reduction, and identity value together. Floating-point reductions can differ with order, so use a suitable tolerance for general inputs. Keep input resident when applying repeated GPU operations. A directive-managed device pointer must not be freed by a wrapper; the caller owns its allocation.
+
+Distinguish Fortran column-major arrays from C ABI types. CUDA Fortran uses device arrays; OpenACC manages a data region while calling the same GPU library. Include required helpers/wrappers in the application link.
+
+<a id="direct-compilation"></a>
+
+## Direct compilation (NVHPC alternative)
+
+Prefer the common CMake route. These optional commands run in Bash from the repository root with dependency search paths already configured. CPU and GPU blocks are separate; use only the variants you need.
 
 ```bash
-DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-fortran-example.XXXXXX")"
+DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-fortran-example.XXXXXX")" || exit 1
 F90FLAGS=(-O3 -Kieee -Mnoflushz -Mnodaz)
-GPUFLAGS=(-cuda "-gpu=${NVHPC_GPU_TARGET:?Set the actual target},mem:separate")
 unset NVCOMPILER_FPU_STATE
 nvfortran "${F90FLAGS[@]}" nvidia/fortran/thrust/examples/reduce_cpu.f90 \
-  -o "$DIRECT_BUILD/reduce_cpu"
-nvcc -std=c++17 -O3 -arch="${NVCC_ARCH:?Set the NVCC sm target}" \
+  -o "$DIRECT_BUILD/reduce_cpu" &&
+"$DIRECT_BUILD/reduce_cpu"
+```
+
+```bash
+DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-fortran-gpu.XXXXXX")" || exit 1
+F90FLAGS=(-O3 -Kieee -Mnoflushz -Mnodaz)
+: "${CUDA_TOOLKIT_ROOT:?Set your CUDA Toolkit prefix}"
+export NVHPC_CUDA_HOME="$CUDA_TOOLKIT_ROOT"
+GPUFLAGS=(-cuda "-gpu=${NVHPC_GPU_TARGET:?Set your NVHPC GPU target},mem:separate")
+unset NVCOMPILER_FPU_STATE
+"$CUDA_TOOLKIT_ROOT/bin/nvcc" -std=c++17 -O3 -arch="${NVCC_ARCH:?Set the nvcc architecture for your GPU}" \
   -I"${CUDA_CCCL_INCLUDE_DIR:?Set the external Toolkit directory containing thrust headers}" \
-  -c nvidia/fortran/thrust/examples/thrust_wrapper.cu -o "$DIRECT_BUILD/thrust_wrapper.o"
+  -c nvidia/fortran/thrust/examples/thrust_wrapper.cu -o "$DIRECT_BUILD/thrust_wrapper.o" &&
 nvfortran "${F90FLAGS[@]}" "${GPUFLAGS[@]}" -c++libs \
-  nvidia/fortran/thrust/examples/reduce_gpu.f90 "$DIRECT_BUILD/thrust_wrapper.o" -o "$DIRECT_BUILD/reduce_gpu"
+  nvidia/fortran/thrust/examples/reduce_gpu.f90 "$DIRECT_BUILD/thrust_wrapper.o" -o "$DIRECT_BUILD/reduce_gpu" &&
 nvfortran "${F90FLAGS[@]}" "${GPUFLAGS[@]}" -acc=gpu -c++libs \
-  nvidia/fortran/thrust/examples/openacc_thrust.f90 "$DIRECT_BUILD/thrust_wrapper.o" -o "$DIRECT_BUILD/openacc_thrust"
+  nvidia/fortran/thrust/examples/openacc_thrust.f90 "$DIRECT_BUILD/thrust_wrapper.o" -o "$DIRECT_BUILD/openacc_thrust" &&
+"$DIRECT_BUILD/reduce_gpu" &&
+"$DIRECT_BUILD/openacc_thrust"
 ```
 
-## Examples and a small benchmark
+<a id="examples-and-a-small-benchmark"></a>
 
-Use the two build variables from the CMake recipe. Require exit 0 and verification PASS for each example. For direct compilation use the same names inside DIRECT_BUILD.
+## After the example: optional measurement
 
-```bash
-"$CPU_CUDA_BUILD/nvidia/fortran/thrust/reduce_cpu"
-"$CPU_CUDA_BUILD/nvidia/fortran/thrust/reduce_gpu"
-"$OPENACC_BUILD/nvidia/fortran/thrust/openacc_thrust"
-```
+The minimal build excludes benchmarks. To measure, enable them using the [Fortran measurement workflow](../README.md#first-checks-and-own-measurements), with the language-specific config and manifest. Library uses internal CLI scope `compute`; the other scope is `end-to-end`. These intervals differ from timing the entire teaching program.
 
-RUN_DIR must be fresh. This standalone CPU diagnostic is not a campaign input:
+See the [problem specification](../../../docs/PROJECT_SPECIFICATION.md) and [timing protocol](../../../docs/BENCHMARK_PROTOCOL.md). Do not mix Fortran and C/C++ results; intrinsic CPU RNG / sum are serial series.
 
-```bash
-"$CPU_CUDA_BUILD/nvidia/fortran/thrust/reduce_cpu_bench" \
-  --size 4096 --warmup 1 --repeat 2 --trials 1 \
-  --scope compute --verify true --cpu-threads 1 --cpu-backend cpu-fortran-sum-serial \
-  --cpu-parallelism serial --cpu-threads-effective 1 \
-  --output "$RUN_DIR/standalone-thrust-cpu-compute.jsonl" --format jsonl
-```
+<a id="validation"></a>
 
-For E2E use --scope end-to-end and a fresh output name. For GPU diagnostics select the corresponding benchmark path in the table (CUDA under CPU_CUDA_BUILD, OpenACC under OPENACC_BUILD), remove CPU-only arguments and preserve the same problem/verification/repetition settings. Start E2E diagnostics with repeat=1.
+## Recorded validation
 
-[Own measurement → verification → aggregation → figures](../README.md#first-checks-and-own-measurements) uses the existing runner. The [benchmark protocol](../../../docs/BENCHMARK_PROTOCOL.md) owns scope, restoration and tolerances. Retain the Fortran language identity and do not mix in C/C++ measurements.
+Saved Pegasus evidence covers NVHPC builds, numerical smoke, and production measurements; see the [versions and limits](../../../docs/VALIDATION_REPORT.md#fortran-production-validation). This does not certify another compiler / GPU. Distinguish requested/effective CPU threads and linked-library evidence from complete actual load provenance.

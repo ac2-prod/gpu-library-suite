@@ -2,335 +2,122 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
-Portable NVIDIA C/C++ and Fortran teaching examples, reproducible CPU/CUDA/OpenACC
-benchmarks, strict result tooling, and Pegasus job support for cuFFT, cuBLAS,
-cuSPARSE, cuSOLVER, cuRAND, and Thrust.
+Learn how to use GPU libraries in your application by comparing CPU, direct GPU-library calls, and directive-managed GPU data. The examples cover FFTs, matrix multiplication, sparse matrix-vector multiplication, linear solves, random generation, and reductions.
 
-The source tree includes `nvidia/c-cpp` and the
-[NVIDIA Fortran implementation](nvidia/fortran/README.md). Fortran CPU/CUDA/OpenACC
-builds, real-machine checks and production measurements were completed on Pegasus;
-see the [recorded coverage and limits](docs/VALIDATION_REPORT.md#fortran-production-validation).
-The AMD C/C++ family covers rocFFT, rocBLAS, rocSPARSE, rocSOLVER, rocRAND,
-and rocThrust. Sirius verified all 36 teaching/benchmark build artifacts,
-including the explicit [AOCL Sparse CPU backend](amd/c-cpp/rocsparse/README.md).
-The separate rocFFT and focused five-family runs passed 18 teaching examples
-and 576 numerical records across their recorded source snapshots.
-After AMD addition, NVIDIA C/C++ and Fortran passed the local/fixture
-coexistence checks and a clean-commit Pegasus build of 36 benchmarks followed
-by 72/72 numerical smoke cases, including Fortran Thrust interoperation.
-The [validation report](docs/VALIDATION_REPORT.md#current-coexistence-status)
-separates these source identities and evidence limits. Effective CPU worker
-counts and complete loaded-library identity remain unverified where noted;
-basic smoke does not establish performance. AMD production measurement is now
-closed: the CPU/GPU comparison selects 3,960 retained FFT/Sparse/RAND/Thrust
-rows and 2,160 newly measured BLAS/Solver rows after the parallel-BLIS link
-correction. These remain two separately aggregated campaigns. See the
-[audit, results and remaining limits](docs/VALIDATION_REPORT.md#amd-production-comparison).
-Historical results and the failed wave/node evidence are preserved. The accepted
-FFT timing difference is
-[documented](amd/c-cpp/rocfft/README.md); it does not require repeating NVIDIA
-measurements. The project is maintained
-under `ac2-prod` and is not an official HAIRDESC repository.
+The repository includes NVIDIA C/C++, NVIDIA Fortran, and AMD C/C++. Start with `examples/`: small programs showing input preparation, library calls, and result checking. Use the separate `benchmarks/` when you need controlled performance measurements.
 
-This is the source repository for the **Library Edition (NVIDIA GPU)**
-C/C++ and Fortran teaching material. You do not need Pegasus access or the
-authors' conversation history to read or build the examples. Running a GPU
-example does require a suitable NVIDIA GPU and the dependencies below.
+<a id="start-here"></a>
 
-## AMD C/C++ development
+## Choose your implementation
 
-| Family | Sources and dependencies |
-| --- | --- |
-| rocFFT | [CPU / HIP / OpenMP](amd/c-cpp/rocfft/README.md) |
-| rocBLAS | [CPU / HIP / OpenMP](amd/c-cpp/rocblas/README.md) |
-| rocSPARSE | [CPU / HIP / OpenMP](amd/c-cpp/rocsparse/README.md) |
-| rocSOLVER | [CPU / HIP / OpenMP](amd/c-cpp/rocsolver/README.md) |
-| rocRAND | [CPU / HIP / OpenMP](amd/c-cpp/rocrand/README.md) |
-| rocThrust | [CPU / HIP / OpenMP and explicit HIP wrapper](amd/c-cpp/rocthrust/README.md) |
+Choose the column matching your GPU and language, then run one example. CPU-only examples need no GPU. General Linux usage does not require Pegasus or Sirius access. AMD Fortran is not implemented.
 
-Select `GPU_SUITE_VENDOR=amd` in a separate build tree. The default
-`GPU_SUITE_AMD_LIBRARIES` selects all six; an explicit semicolon-separated subset
-such as `-DGPU_SUITE_AMD_LIBRARIES=rocfft` limits both discovery and targets.
-Keep CPU, HIP and OpenMP in separate trees. Native HIP uses Clang with an
-explicit architecture; manual teaching builds may use `hipcc`. Missing optional
-providers disable their affected targets with a reason. The small
-[AMD smoke configuration](configs/amd/smoke.json) specifies workloads and CPU
-backends; it does not grant execution permission or silently replace providers.
-The rocThrust OpenMP caller explicitly links `rocthrust_wrapper.hip`, compiled
-as its own HIP translation unit. Sirius execution follows the
-[site-specific approval and scheduler rules](jobs/sirius/README.md).
+| Operation | NVIDIA C/C++: CUDA / OpenACC | NVIDIA Fortran: CUDA Fortran / OpenACC | AMD C/C++: HIP / OpenMP target |
+| --- | --- | --- | --- |
+| FFT | [cufft](nvidia/c-cpp/cufft/README.md) | [cufft](nvidia/fortran/cufft/README.md) | [rocfft](amd/c-cpp/rocfft/README.md) |
+| BLAS | [cublas](nvidia/c-cpp/cublas/README.md) | [cublas](nvidia/fortran/cublas/README.md) | [rocblas](amd/c-cpp/rocblas/README.md) |
+| Sparse | [cusparse](nvidia/c-cpp/cusparse/README.md) | [cusparse](nvidia/fortran/cusparse/README.md) | [rocsparse](amd/c-cpp/rocsparse/README.md) |
+| Solver | [cusolver](nvidia/c-cpp/cusolver/README.md) | [cusolver](nvidia/fortran/cusolver/README.md) | [rocsolver](amd/c-cpp/rocsolver/README.md) |
+| RAND | [curand](nvidia/c-cpp/curand/README.md) | [curand](nvidia/fortran/curand/README.md) | [rocrand](amd/c-cpp/rocrand/README.md) |
+| Thrust | [thrust](nvidia/c-cpp/thrust/README.md) | [thrust](nvidia/fortran/thrust/README.md) | [rocthrust](amd/c-cpp/rocthrust/README.md) |
 
-## Publication scope
+The [build and run guide](docs/BUILDING.md) builds only your chosen teaching target. See the [Fortran guide](nvidia/fortran/README.md) for language-specific requirements.
 
-The publication scope is the NVIDIA C/C++ and Fortran teaching and benchmark
-code, its existing common code/tools, configurations and tests, and the
-documentation for understanding, building, running and measuring it.
-Additional general-purpose measurement infrastructure is not a prerequisite
-for this code publication. Both language editions follow the same code-only
-boundary; completed measurements do not make their saved data part of the checkout.
+<a id="first-example"></a>
 
-Saved measurements, raw results, execution logs, metadata and prepared local
-distribution archives are **not included in this publication**. There is no
-teaching-data download supplied with the source. The
-[saved-data replay reference](docs/PORTABILITY.md#regenerating-the-teaching-figures-from-saved-data)
-is only for readers who separately hold those inputs; the normal route below
-uses the reader's own measurements.
+## Try one CPU example
 
-## Start here
+Run this in Bash from the repository root. It needs only a C++17 compiler and sums the squares of 2²⁴ ones. The input array uses 128 MiB.
+```bash
+EXAMPLE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-example.XXXXXX")" || exit 1
+c++ -std=c++17 -O2 nvidia/c-cpp/thrust/examples/reduce_cpu.cpp \
+  -o "$EXAMPLE_DIR/reduce_cpu" && "$EXAMPLE_DIR/reduce_cpu"
+```
+Success means a reported square sum of `16777216` and exit status 0. Stop on compilation failure or a nonzero exit. Choose GPU or Fortran examples from the table above. On a shared cluster, perform builds and execution inside a compute allocation as required by that site.
 
-For Fortran, start with the [Fortran source map, build and measurement guide](nvidia/fortran/README.md)
-([日本語](nvidia/fortran/README.ja.md)). The route, source table and build/config
-examples below describe the C/C++ edition; compiler requirements and source-family
-configurations are not interchangeable.
+<a id="using-the-examples"></a>
 
-If you know CPU C/C++ but are new to CUDA, follow this route:
+## Use the example in your application
 
-1. Read [the cuBLAS CPU example](nvidia/c-cpp/cublas/examples/blas_cpu.c) to
-   recognize allocation, all-ones input, DGEMM, and result checking. Then compare
-   [direct CUDA](nvidia/c-cpp/cublas/examples/blas_gpu.cu) with
-   [OpenACC-managed data](nvidia/c-cpp/cublas/examples/openacc_cublas.cpp): both
-   GPU programs call cuBLAS; they differ in who manages device storage/movement.
-2. Follow [cuBLAS: first build and run](nvidia/c-cpp/cublas/README.md#first-build-and-run).
-   Start with the CPU example, then run the available GPU variants and check
-   their exit status and numerical output. A teaching example is not a timing
-   experiment.
-3. Read [how the example becomes a benchmark](nvidia/c-cpp/cublas/README.md#from-example-to-benchmark),
-   then follow [measuring on your own system](docs/PORTABILITY.md#measuring-on-your-own-system)
-   for a small check, configuration, measurement, validation, and aggregation.
-4. Create figures from
-   [your own measurements](docs/PORTABILITY.md#figures-from-your-own-measurements).
-   Your own figures use observed or explicitly supplied machine identities,
-   without assuming the teaching machine or requiring its saved data.
-5. Use [reading the figures](docs/BENCHMARK_PROTOCOL.md#reading-the-figures-and-applying-the-results)
-   to relate library/end-to-end costs to your application. Other libraries have their
-   own source, dependency, build, and verification notes in the table below.
+1. Compare CPU and GPU `examples/` and identify the input format, precision, and operation.
+2. Replace the sample input with your own data; preserve the required array layout, dimensions, leading dimensions, and CSR index base.
+3. Decide who owns allocations and ensure completion before retrieving results. OpenACC / OpenMP target variants still call the GPU libraries; their main distinction is data management.
+4. For repeated operations with compatible shapes, reuse arrays, plans, handles, and descriptors where the API permits it.
+5. Check return codes, solver `info`, and numerical errors. The all-ones sample reference is not a reference for arbitrary application data.
 
-| Read this area | What it helps you understand |
-| --- | --- |
-| Each library's `examples/` | One complete library-call flow, without benchmark infrastructure |
-| Each library's `benchmarks/` | Runtime sizes, scope-specific resource lifetime, restoration, timing, and verification |
-| [`common/c-cpp`](common/c-cpp) | Shared [CLI](common/c-cpp/src/cli.c), [monotonic clock](common/c-cpp/src/clock.c), [result writing](common/c-cpp/src/result.c), and [GPU provenance](common/c-cpp/include/gpu_suite/cuda_metadata.hpp); read these after an example, not first |
-| [`configs/pilot.json`](configs/pilot.json), [`configs/benchmark.json`](configs/benchmark.json) | Workloads, CPU backends, verification thresholds, and per-scope repetitions/trials |
-| [`tools/run_suite.py`](tools/run_suite.py) | Interleaved execution and the sole node raw-result writer |
-| [`tools/validate_results.py`](tools/validate_results.py), [`tools/aggregate.py`](tools/aggregate.py), [`tools/plot.py`](tools/plot.py) | Check raw records, compute hierarchical summaries, and render the two-panel figures |
-| [`jobs/pegasus`](jobs/pegasus) | Site-specific modules, PBS, telemetry, and recovery; this is not the general workstation entry point |
+Each library README explains the application-specific choices. C/C++ examples normally use one source file; rocThrust OpenMP also needs `rocthrust_wrapper.hip`. Fortran matrix helpers and the Thrust wrapper are explicit compile/link inputs.
 
-## What is implemented
+<a id="requirements-and-cpu-only-build"></a>
 
-Each C/C++ library has three direct, single-source teaching examples and three
-measurement-oriented benchmarks. CMake target names and executable names equal
-their source stems.
+## Build requirements
+
+Use CMake 3.20+ (3.21+ for native HIP and rocThrust OpenMP), C17, and C++17. Fortran CPU supports GNU Fortran or NVHPC; CUDA Fortran requires NVHPC. GPU execution needs a compatible GPU, driver, and CUDA or ROCm installation; directive variants also need the corresponding offload compiler.
+
+CPU numerical dependencies depend on the operation. Serial RAND / Thrust CPU examples need no external numerical library. Missing optional dependencies disable affected targets, so check the target status and build result rather than configure exit alone. See [build instructions](docs/BUILDING.md) for dependencies and explicit CPU backend choices.
+
+<a id="benchmark-configuration-and-output"></a>
+
+## Measure after the example works
+
+Teaching examples have no benchmark CLI. `benchmarks/` controls size, warm-up, repeats, trials, and verification. Figures show a **data-resident library panel** and a **one-shot end-to-end panel**. The internal CLI/schema scope `compute` means library. End-to-end includes preparation, data management, and result retrieval, but does not necessarily include first runtime startup or every cleanup operation; consult the [timing boundaries](docs/BENCHMARK_PROTOCOL.md).
+
+Use the [NVIDIA measurement workflow](docs/PORTABILITY.md#measuring-on-your-own-system), [Fortran measurement inputs](nvidia/fortran/README.md#first-checks-and-own-measurements), or [AMD Sirius procedure](jobs/sirius/README.md) as appropriate. Adapt paths, modules, and GPU targets to your actual system.
+
+<a id="cpu-baselines-and-verification-notes"></a>
+
+## Interpret the comparison
+
+Check the CPU backend and actual parallelism. Requested threads do not prove effective worker count. C/C++ RAND / Thrust reference series use a **single thread**; Fortran uses serial intrinsic RNG / sum. RNG comparisons use the **same distribution and output type**, but **RNG algorithms differ**, so they are not identical-algorithm speedups.
+
+AMD FFT timing accommodates required input restoration and differs from NVIDIA FFT within the repeat loop; see [rocFFT timing](amd/c-cpp/rocfft/README.md#timing-scopes).
+
+<a id="validation-status"></a>
+<a id="publication-scope"></a>
+
+## What is included and verified
+
+Published material includes NVIDIA C/C++, NVIDIA Fortran, and AMD C/C++ sources, configurations, tools, tests, and documentation. Saved raw measurements, execution logs, PPTX files, and private review material are not part of the checkout. Using the examples does not require the authors’ saved data or conversation history.
+
+Builds, numerical checks, and measurements have been recorded for NVIDIA on Pegasus and AMD on Sirius. See the [validation report](docs/VALIDATION_REPORT.md) and each family’s recorded coverage. These establish evidence for those versions/environments, not a guarantee for another installation or later edits. Unobserved effective CPU workers and complete loaded-library identity remain explicit limitations.
+
+Maintained under `ac2-prod`; this is not an official HAIRDESC repository.
+
+<a id="documentation-map"></a>
+<a id="pegasus-execution-boundary"></a>
+<a id="reference"></a>
+
+## Further reading
+
+- [Build and run](docs/BUILDING.md): minimal examples, dependencies, and troubleshooting.
+- [Measurement workflow](docs/PORTABILITY.md), [benchmark protocol](docs/BENCHMARK_PROTOCOL.md): measure and interpret your own application costs.
+- [Problem/source specification](docs/PROJECT_SPECIFICATION.md), [result schema](docs/RESULT_SCHEMA.md): detailed references.
+- [Pegasus](jobs/pegasus/README.md), [Sirius](jobs/sirius/README.md): operations for users of those systems.
+- [Validation history](docs/VALIDATION_REPORT.md), [implementation plan](docs/IMPLEMENTATION_PLAN.md), [decisions](docs/DECISIONS.md): maintenance evidence.
+
+<a id="what-is-implemented"></a>
+
+<details>
+<summary>NVIDIA C/C++ source inventory</summary>
 
 | Library | CPU | CUDA | OpenACC | CPU benchmark | CUDA benchmark | OpenACC benchmark |
 | --- | --- | --- | --- | --- | --- | --- |
-| [cuFFT](nvidia/c-cpp/cufft/README.md) | [fft_cpu](nvidia/c-cpp/cufft/examples/fft_cpu.c) | [fft_gpu](nvidia/c-cpp/cufft/examples/fft_gpu.cu) | [openacc_cufft](nvidia/c-cpp/cufft/examples/openacc_cufft.cpp) | [fft_cpu_bench](nvidia/c-cpp/cufft/benchmarks/fft_cpu_bench.c) | [fft_gpu_bench](nvidia/c-cpp/cufft/benchmarks/fft_gpu_bench.cu) | [openacc_cufft_bench](nvidia/c-cpp/cufft/benchmarks/openacc_cufft_bench.cpp) |
-| [cuBLAS](nvidia/c-cpp/cublas/README.md) | [blas_cpu](nvidia/c-cpp/cublas/examples/blas_cpu.c) | [blas_gpu](nvidia/c-cpp/cublas/examples/blas_gpu.cu) | [openacc_cublas](nvidia/c-cpp/cublas/examples/openacc_cublas.cpp) | [blas_cpu_bench](nvidia/c-cpp/cublas/benchmarks/blas_cpu_bench.c) | [blas_gpu_bench](nvidia/c-cpp/cublas/benchmarks/blas_gpu_bench.cu) | [openacc_cublas_bench](nvidia/c-cpp/cublas/benchmarks/openacc_cublas_bench.cpp) |
-| [cuSPARSE](nvidia/c-cpp/cusparse/README.md) | [sparse_cpu](nvidia/c-cpp/cusparse/examples/sparse_cpu.c) | [sparse_gpu](nvidia/c-cpp/cusparse/examples/sparse_gpu.cu) | [openacc_cusparse](nvidia/c-cpp/cusparse/examples/openacc_cusparse.cpp) | [sparse_cpu_bench](nvidia/c-cpp/cusparse/benchmarks/sparse_cpu_bench.c) | [sparse_gpu_bench](nvidia/c-cpp/cusparse/benchmarks/sparse_gpu_bench.cu) | [openacc_cusparse_bench](nvidia/c-cpp/cusparse/benchmarks/openacc_cusparse_bench.cpp) |
-| [cuSOLVER](nvidia/c-cpp/cusolver/README.md) | [solver_cpu](nvidia/c-cpp/cusolver/examples/solver_cpu.c) | [solver_gpu](nvidia/c-cpp/cusolver/examples/solver_gpu.cu) | [openacc_cusolver](nvidia/c-cpp/cusolver/examples/openacc_cusolver.cpp) | [solver_cpu_bench](nvidia/c-cpp/cusolver/benchmarks/solver_cpu_bench.c) | [solver_gpu_bench](nvidia/c-cpp/cusolver/benchmarks/solver_gpu_bench.cu) | [openacc_cusolver_bench](nvidia/c-cpp/cusolver/benchmarks/openacc_cusolver_bench.cpp) |
-| [cuRAND](nvidia/c-cpp/curand/README.md) | [rand_cpu](nvidia/c-cpp/curand/examples/rand_cpu.cpp) | [rand_gpu](nvidia/c-cpp/curand/examples/rand_gpu.cu) | [openacc_curand](nvidia/c-cpp/curand/examples/openacc_curand.cpp) | [rand_cpu_bench](nvidia/c-cpp/curand/benchmarks/rand_cpu_bench.cpp) | [rand_gpu_bench](nvidia/c-cpp/curand/benchmarks/rand_gpu_bench.cu) | [openacc_curand_bench](nvidia/c-cpp/curand/benchmarks/openacc_curand_bench.cpp) |
-| [Thrust](nvidia/c-cpp/thrust/README.md) | [reduce_cpu](nvidia/c-cpp/thrust/examples/reduce_cpu.cpp) | [reduce_gpu](nvidia/c-cpp/thrust/examples/reduce_gpu.cu) | [openacc_thrust](nvidia/c-cpp/thrust/examples/openacc_thrust.cpp) | [reduce_cpu_bench](nvidia/c-cpp/thrust/benchmarks/reduce_cpu_bench.cpp) | [reduce_gpu_bench](nvidia/c-cpp/thrust/benchmarks/reduce_gpu_bench.cu) | [openacc_thrust_bench](nvidia/c-cpp/thrust/benchmarks/openacc_thrust_bench.cpp) |
+| cufft | [fft_cpu](nvidia/c-cpp/cufft/examples/fft_cpu.c) | [fft_gpu](nvidia/c-cpp/cufft/examples/fft_gpu.cu) | [openacc_cufft](nvidia/c-cpp/cufft/examples/openacc_cufft.cpp) | [fft_cpu_bench](nvidia/c-cpp/cufft/benchmarks/fft_cpu_bench.c) | [fft_gpu_bench](nvidia/c-cpp/cufft/benchmarks/fft_gpu_bench.cu) | [openacc_cufft_bench](nvidia/c-cpp/cufft/benchmarks/openacc_cufft_bench.cpp) |
+| cublas | [blas_cpu](nvidia/c-cpp/cublas/examples/blas_cpu.c) | [blas_gpu](nvidia/c-cpp/cublas/examples/blas_gpu.cu) | [openacc_cublas](nvidia/c-cpp/cublas/examples/openacc_cublas.cpp) | [blas_cpu_bench](nvidia/c-cpp/cublas/benchmarks/blas_cpu_bench.c) | [blas_gpu_bench](nvidia/c-cpp/cublas/benchmarks/blas_gpu_bench.cu) | [openacc_cublas_bench](nvidia/c-cpp/cublas/benchmarks/openacc_cublas_bench.cpp) |
+| cusparse | [sparse_cpu](nvidia/c-cpp/cusparse/examples/sparse_cpu.c) | [sparse_gpu](nvidia/c-cpp/cusparse/examples/sparse_gpu.cu) | [openacc_cusparse](nvidia/c-cpp/cusparse/examples/openacc_cusparse.cpp) | [sparse_cpu_bench](nvidia/c-cpp/cusparse/benchmarks/sparse_cpu_bench.c) | [sparse_gpu_bench](nvidia/c-cpp/cusparse/benchmarks/sparse_gpu_bench.cu) | [openacc_cusparse_bench](nvidia/c-cpp/cusparse/benchmarks/openacc_cusparse_bench.cpp) |
+| cusolver | [solver_cpu](nvidia/c-cpp/cusolver/examples/solver_cpu.c) | [solver_gpu](nvidia/c-cpp/cusolver/examples/solver_gpu.cu) | [openacc_cusolver](nvidia/c-cpp/cusolver/examples/openacc_cusolver.cpp) | [solver_cpu_bench](nvidia/c-cpp/cusolver/benchmarks/solver_cpu_bench.c) | [solver_gpu_bench](nvidia/c-cpp/cusolver/benchmarks/solver_gpu_bench.cu) | [openacc_cusolver_bench](nvidia/c-cpp/cusolver/benchmarks/openacc_cusolver_bench.cpp) |
+| curand | [rand_cpu](nvidia/c-cpp/curand/examples/rand_cpu.cpp) | [rand_gpu](nvidia/c-cpp/curand/examples/rand_gpu.cu) | [openacc_curand](nvidia/c-cpp/curand/examples/openacc_curand.cpp) | [rand_cpu_bench](nvidia/c-cpp/curand/benchmarks/rand_cpu_bench.cpp) | [rand_gpu_bench](nvidia/c-cpp/curand/benchmarks/rand_gpu_bench.cu) | [openacc_curand_bench](nvidia/c-cpp/curand/benchmarks/openacc_curand_bench.cpp) |
+| thrust | [reduce_cpu](nvidia/c-cpp/thrust/examples/reduce_cpu.cpp) | [reduce_gpu](nvidia/c-cpp/thrust/examples/reduce_gpu.cu) | [openacc_thrust](nvidia/c-cpp/thrust/examples/openacc_thrust.cpp) | [reduce_cpu_bench](nvidia/c-cpp/thrust/benchmarks/reduce_cpu_bench.cpp) | [reduce_gpu_bench](nvidia/c-cpp/thrust/benchmarks/reduce_gpu_bench.cu) | [openacc_thrust_bench](nvidia/c-cpp/thrust/benchmarks/openacc_thrust_bench.cpp) |
 
-`examples/` is the teaching-material source of truth. Those programs have no
-benchmark CLI or machine-readable output. `benchmarks/` adds two timing scopes,
-warm-up, repeat/trial control, verification, UTC timestamps, and strict JSONL or
-CSV records. The exact problems and filenames are in
-[`docs/PROJECT_SPECIFICATION.md`](docs/PROJECT_SPECIFICATION.md); measurement
-semantics are in [`docs/BENCHMARK_PROTOCOL.md`](docs/BENCHMARK_PROTOCOL.md).
+</details>
 
-## Requirements and CPU-only build
+<details>
+<summary>Reference details for existing measurements and tools</summary>
 
-The build requires CMake 3.20 or newer, a C17 compiler, and a C++17 compiler.
-Python tools support Python 3.9 or newer. CUDA, NVHPC, FFTW, oneMKL, OpenBLAS,
-and LAPACKE are optional: CMake compile-and-link probes disable only affected
-targets and print the reason. No dependency is installed automatically.
+The existing Pegasus CPU FFT series is `cpu-fftw-threaded`. The one-node Pegasus pilot and production conditions are recorded in the [operating specification](docs/PEGASUS_EXECUTION.md). `tools/run_suite.py` is the only writer of the node-level raw-result file. No speedup, throughput, reuse-count, amortized, or generic extra figure is produced by the existing publication plotter. No real CUDA GPU execution is established by Mac local/fixture checks; those checks are distinct from saved real-machine validation.
 
-A local CPU-only build does not probe or enable the CUDA language:
+</details>
 
-```bash
-cmake -S . -B /tmp/gpu-library-suite-local-build/cpu-only-validation \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DGPU_SUITE_BUILD_CPU=ON \
-  -DGPU_SUITE_BUILD_CUDA=OFF \
-  -DGPU_SUITE_BUILD_OPENACC=OFF
-cmake --build /tmp/gpu-library-suite-local-build/cpu-only-validation --parallel
-ctest --test-dir /tmp/gpu-library-suite-local-build/cpu-only-validation \
-  --output-on-failure
-```
-
-The dependency-free `rand_cpu`, `rand_cpu_bench`, `reduce_cpu`, and
-`reduce_cpu_bench` targets are always available in this profile. Library
-READMEs document direct teaching-example compile commands and optional provider
-requirements.
-
-Production artifacts use two non-overlapping build profiles:
-
-- `cpu-cuda`: CPU ON, CUDA ON, OpenACC OFF;
-- `openacc`: `nvc`/`nvc++`, CPU OFF, CUDA OFF, OpenACC ON.
-
-CUDA architecture and NVHPC GPU target values are external build inputs. The
-OpenACC tree requires its CMake CUDA Toolkit selection to match the Toolkit
-selected by NVHPC. See [`docs/PORTABILITY.md`](docs/PORTABILITY.md) and the
-[Pegasus job README](jobs/pegasus/README.md).
-
-CMake build metadata records `global_configure_flags` for each compiler
-language. That field is deliberately limited to global CMake configure flags;
-it does not claim target compile definitions/options, provider flags, OpenACC
-interoperation options, or link options. OpenACC and Thrust interoperation
-flags are stored separately in build metadata.
-
-A source copy without `.git` still produces valid metadata with
-`git_metadata_available=false`, `git_commit=null`, and `git_dirty=null`.
-Archive/local validation may build that source, but production execution
-rejects unknown Git provenance instead of treating it as clean.
-
-## Benchmark configuration and output
-
-[`configs/pilot.json`](configs/pilot.json) and
-[`configs/benchmark.json`](configs/benchmark.json) contain the same approved
-three-size publication workloads and compute-repeat candidates. Pilot uses one
-trial and production uses five; both retain independent `compute` and
-`end-to-end` settings with end-to-end repeat 1. After the one-node Pegasus
-pilot, a human may update these canonical files once for a demonstrated OOM,
-verification, walltime, or short-interval issue; do not create a dated or
-version-suffixed replacement.
-
-For an individual benchmark:
-
-- `--output -` emits only machine-readable records to stdout and diagnostics to
-  stderr;
-- `--output <path>` exclusively creates a new file and refuses overwrite or
-  implicit append.
-
-In a suite run, [`tools/run_suite.py`](tools/run_suite.py) starts every benchmark
-with `--output -`, validates its records, synthesizes failure/skipped rows when
-needed, and is the only writer of the node-level raw-result file. Its
-`--dry-run` prints deterministic resolved JSON without creating files,
-directories, metadata, or processes.
-
-The normal data flow is:
-
-```text
-partial manifests -> merge_manifests.py -> run_suite.py -> validate_results.py
-                                             |
-                                             +-> aggregate.py -> plot.py
-```
-
-All output paths are exclusive-create. Raw rows distinguish a trial that
-started and failed (`attempted=true`, `status=failure`) from a remaining trial
-that never started (`attempted=false`, `status=skipped`). The schema and exact
-provenance contract are in [`docs/RESULT_SCHEMA.md`](docs/RESULT_SCHEMA.md).
-
-Every production suite invocation passes the complete verification object from
-its effective configuration. Built-in CLI defaults exist only for standalone
-teaching/smoke use and are not an alternative source of production thresholds.
-
-Runtime dimensions, library API integer arguments, element-count products, and
-allocation byte counts are checked before allocation or library entry. An
-unsupported range is reported as a structured prerequisite/benchmark result;
-it is never truncated into a smaller workload. Warm-up follows the selected
-scope: compute reuses its persistent context, while end-to-end uses complete
-temporary pipelines and leaves no warm-up resources alive. Verification treats
-NaN or infinity in inputs, intermediates, or metrics as an explicit
-`verification_status=nonfinite` failure, stores the primary metric as JSON
-`null`, and never serializes non-standard `NaN`/`Infinity` tokens. Exact rules
-are in [`docs/BENCHMARK_PROTOCOL.md`](docs/BENCHMARK_PROTOCOL.md) and
-[`docs/RESULT_SCHEMA.md`](docs/RESULT_SCHEMA.md).
-
-Publication output is six library-specific elapsed-time figures. Each has a
-data-resident library panel and a one-shot end-to-end panel, uses
-milliseconds, and places CPU, CUDA, and OpenACC together. Repetition for library only
-amplifies the measured interval; the plotted value remains one operation's
-elapsed time. No speedup, throughput, reuse-count, amortized, or extra generic
-figure is produced. Plotting reads performance values only from cross-wave
-summary records and uses raw results only to require identical CUDA/OpenACC
-Thrust `library_version` evidence before writing a Thrust figure. Exact figure
-and caption rules are in
-[`docs/BENCHMARK_PROTOCOL.md`](docs/BENCHMARK_PROTOCOL.md).
-Pass the aggregate JSONL as the positional input to `tools/plot.py` and the
-campaign's node raw JSONL files through its required `--raw-results` option.
-
-## CPU baselines and verification notes
-
-The canonical Pegasus publication configuration contains only
-`cpu-fftw-threaded` for cuFFT. The serial FFTW executable remains available for
-separate teaching correspondence but is not a publication series and never
-replaces threaded FFTW.
-
-cuRAND's `cpu-std-random-serial` and Thrust's `cpu-stl-serial` are production
-serial implementations, displayed with **single thread** in the approved
-publication legends even when 48 CPU threads were requested. They are not
-called parallel or algorithm-equivalent
-baselines, and publication plotting computes no speedup from them. cuRAND
-compares the same distribution and output type task across CPU and GPU, but the
-RNG algorithms differ; element-by-element identity is not required.
-
-## Pegasus execution boundary
-
-The files under [`jobs/pegasus`](jobs/pegasus) render builds and jobs, collect a
-hashed runtime environment, prepare campaign/wave metadata, isolate node
-failures, correlate telemetry intervals, and collect node artifacts. They do
-not submit, query, cancel, or otherwise operate the scheduler. Account, queue,
-module versions, Toolkit selection, architecture, and output paths remain
-human-supplied.
-
-Each node obtains its own GPU name, UUID, NVIDIA package-driver identity, and
-CUDA Driver API/Runtime versions from node-local `libcudart`. GPU benchmarks
-independently query CUDA device/runtime and library APIs; successful rows must
-agree with that node metadata. One node's identity is never reused for all
-nodes. For prebuilt binaries, `nvcc`, `nvc`, and `nvc++` are
-optional provenance probes, while the driver, runtime, and resolved shared
-libraries are runtime prerequisites.
-
-A recovered node records benchmark or verification failure but normally exits
-zero so another node can finish artifact recovery. After the measurement
-launch, the job master collector checks every expected node and owns the final
-nonzero job decision. The authoritative procedure is
-[`docs/PEGASUS_EXECUTION.md`](docs/PEGASUS_EXECUTION.md); the human checklist is
-[`docs/PEGASUS_MANUAL_VALIDATION.md`](docs/PEGASUS_MANUAL_VALIDATION.md).
-
-## Validation status
-
-Local validation covers strict serialization, schemas, all source inventories,
-dependency probe fixtures, CPU benchmark fixtures, runner/aggregation/plot
-logic, Python 3.9 compatibility, shell syntax, ShellCheck when available, job
-rendering, telemetry parsing, and multi-node failure simulation. See
-[`docs/VALIDATION_REPORT.md`](docs/VALIDATION_REPORT.md).
-
-Clean Linux GCC and Clang CPU-only builds, including fake-provider fixtures and
-the `.git`-less source-copy test, are mandatory pre-merge gates. The minimal
-workflow is [`.github/workflows/cpu-linux.yml`](.github/workflows/cpu-linux.yml);
-a workflow definition is not itself evidence that either job executed.
-
-No real CUDA GPU, CUDA Toolkit, NVHPC compiler, Pegasus scheduler, or production
-CPU-library installation was exercised by that local validation. Those checks
-must not be inferred from syntax-only or fake-provider tests. Separately saved
-Pegasus records do contain real build, example, memcheck, and measurement
-results, and Linux CI ran on the approved plotting commit. See
-[saved execution evidence](docs/VALIDATION_REPORT.md#saved-execution-evidence-reviewed-for-publication)
-for the code versions, coverage, and remaining limits. The initial reader-guide
-checks were static; subsequent
-[reader-tool tests and private offline replay](docs/VALIDATION_REPORT.md#reader-tools-and-offline-replay-validation)
-were completed separately. Neither establishes GPU execution of the full reader
-workflow in an arbitrary environment, and the private replay inputs are not
-distributed with this code publication.
-
-## Documentation map
-
-- [`AGENTS.md`](AGENTS.md): permanent repository rules and authority routing.
-- [`docs/PROJECT_SPECIFICATION.md`](docs/PROJECT_SPECIFICATION.md): hierarchy,
-  canonical sources, teaching problems, and OpenACC data rules.
-- [`docs/BENCHMARK_PROTOCOL.md`](docs/BENCHMARK_PROTOCOL.md): CLI, timing,
-  verification, ordering, and statistics.
-- [`docs/RESULT_SCHEMA.md`](docs/RESULT_SCHEMA.md): configuration, raw and
-  aggregate records, manifests, metadata, and hashes.
-- [`docs/PEGASUS_EXECUTION.md`](docs/PEGASUS_EXECUTION.md): Pegasus build/run,
-  provenance, telemetry, and collection behavior.
-- [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md): phased gates and
-  acceptance criteria.
-- [`docs/DECISIONS.md`](docs/DECISIONS.md): accepted decisions and rationale.
-- [`docs/PORTABILITY.md`](docs/PORTABILITY.md): reuse and dependency boundaries.
-- [`docs/ADDING_A_NEW_VENDOR.md`](docs/ADDING_A_NEW_VENDOR.md): future vendor extension guide.
-- [`docs/ADDING_FORTRAN.md`](docs/ADDING_FORTRAN.md): requirements for the implemented Fortran integration.
+<a id="license"></a>
 
 ## License
 

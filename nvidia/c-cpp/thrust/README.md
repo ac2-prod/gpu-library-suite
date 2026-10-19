@@ -1,12 +1,39 @@
-# Thrust C/C++ examples and benchmarks
+# Thrust C/C++: build, run, and adapt
 
 [English](README.md) | [日本語](README.ja.md)
 
-This directory compares the canonical FP64 square-sum reduction through C++17
-STL, direct Thrust, and OpenACC/Thrust interoperation. Workload ownership belongs
-to [`docs/PROJECT_SPECIFICATION.md`](../../../docs/PROJECT_SPECIFICATION.md),
-and CLI, timing, restoration, and verification belong to
-[`docs/BENCHMARK_PROTOCOL.md`](../../../docs/BENCHMARK_PROTOCOL.md).
+Compute `sum(values[i]^2)` with transform-reduce. Combining the transform with reduction avoids storing an intermediate array of squared values.
+
+<a id="teaching-default"></a>
+
+## Teaching default
+
+Input is `2^24` FP64 ones; the expected square sum is `16777216`. CPU uses serial STL `std::transform_reduce`. The result returned to the host is one double.
+
+<a id="dependencies"></a>
+
+## Dependencies
+
+Serial CPU needs only C++17 and its standard library. GPU needs Thrust/CCCL and CUDA.
+
+GPU variants need a compatible NVIDIA GPU/driver and CUDA Toolkit; OpenACC additionally needs NVHPC nvc++.
+
+<a id="select-a-minimal-build"></a>
+
+## Select a minimal build
+
+Set these variables in Bash, then follow only the CPU, direct GPU, or directive section you need in the [shared build guide](../../../docs/BUILDING.md#select). It builds the selected example; benchmarks and the full test suite are not needed.
+```bash
+VENDOR=nvidia
+SOURCE_LANGUAGE=c-cpp
+LIBRARY=thrust
+CPU_TARGET=reduce_cpu
+GPU_TARGET=reduce_gpu
+DIRECTIVE_TARGET=openacc_thrust
+CPU_OPTIONS=(-DGPU_SUITE_CPU_THRUST_BACKEND=STL)
+```
+
+<a id="canonical-sources-and-targets"></a>
 
 ## Canonical sources and targets
 
@@ -19,87 +46,81 @@ and CLI, timing, restoration, and verification belong to
 | CUDA benchmark | `benchmarks/reduce_gpu_bench.cu` | `reduce_gpu_bench` |
 | OpenACC benchmark | `benchmarks/openacc_thrust_bench.cpp` | `openacc_thrust_bench` |
 
-## Teaching default
+<a id="adapting-the-example"></a>
 
-Each teaching program creates `2^24` FP64 values and evaluates
-`sum(values[i]^2)` using a transform-reduce flow. The programs remain direct,
-single-source examples without benchmark infrastructure.
+## Adapt this example
 
-## Dependencies
+Replace the transform, associative reduction, and identity value together. Floating-point reductions can differ with order, so use a suitable tolerance for general inputs. Keep input resident when applying repeated GPU operations. A directive-managed device pointer must not be freed by a wrapper; the caller owns its allocation.
 
-The serial CPU targets need only a C++17 standard library. An explicitly
-selected OpenMP CPU variant requires `OpenMP::OpenMP_CXX`. CUDA targets require
-CUDA Runtime and Thrust headers. OpenACC targets require NVHPC OpenACC C++, CUDA
-Runtime, and Thrust, including `-cuda`-equivalent flags at both compile and link
-time. CMake resolves `include/cccl/thrust/version.h` from
-`CUDAToolkit_INCLUDE_DIRS` and prepends that external Toolkit's `include/cccl`
-for both CUDA and OpenACC probes, examples, and benchmarks.
+Direct CUDA manages device arrays; OpenACC uses a data region and `host_data use_device` to call the same GPU library. Keep allocation ownership clear and ensure completion before reading results.
+
+<a id="direct-compile"></a>
 
 ## Direct compile
 
+An alternative to CMake, from the repository root in Bash with provider header/library search paths already configured. Choose the variant you need; run it only if compilation succeeds.
+
 ```bash
-mkdir -p /tmp/gpu-library-suite-local-build
-c++ -std=c++17 nvidia/c-cpp/thrust/examples/reduce_cpu.cpp \
-  -o /tmp/gpu-library-suite-local-build/reduce_cpu-direct
-nvcc -std=c++17 nvidia/c-cpp/thrust/examples/reduce_gpu.cu \
-  -o /tmp/gpu-library-suite-local-build/reduce_gpu-direct
-nvc++ -std=c++17 -acc -cuda \
-  nvidia/c-cpp/thrust/examples/openacc_thrust.cpp \
-  -o /tmp/gpu-library-suite-local-build/openacc_thrust-direct
+DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-direct.XXXXXX")" || exit 1
 ```
+
+```bash
+c++ -std=c++17 -O2 nvidia/c-cpp/thrust/examples/reduce_cpu.cpp -o "$DIRECT_BUILD/reduce_cpu" &&
+"$DIRECT_BUILD/reduce_cpu"
+```
+
+```bash
+: "${CUDA_TOOLKIT_ROOT:?Set your CUDA Toolkit prefix}"
+: "${NVCC_ARCH:?Set the nvcc architecture supported by your GPU}"
+"$CUDA_TOOLKIT_ROOT/bin/nvcc" -std=c++17 -O2 -arch="$NVCC_ARCH" -I"${CUDA_CCCL_INCLUDE_DIR:?Set the directory containing thrust headers}" \
+  nvidia/c-cpp/thrust/examples/reduce_gpu.cu \
+  -o "$DIRECT_BUILD/reduce_gpu" &&
+"$DIRECT_BUILD/reduce_gpu"
+```
+
+```bash
+: "${CUDA_TOOLKIT_ROOT:?Set your CUDA Toolkit prefix}"
+: "${NVHPC_GPU_TARGET:?Set your NVHPC GPU target}"
+NVHPC_CUDA_HOME="$CUDA_TOOLKIT_ROOT" \
+nvc++ -std=c++17 -O2 -acc -cuda -gpu="$NVHPC_GPU_TARGET" -I"${CUDA_CCCL_INCLUDE_DIR:?Set the directory containing thrust headers}" \
+  nvidia/c-cpp/thrust/examples/openacc_thrust.cpp \
+  -o "$DIRECT_BUILD/openacc_thrust" &&
+"$DIRECT_BUILD/openacc_thrust"
+```
+
+<a id="cmake-configure-and-build"></a>
 
 ## CMake configure and build
 
-The commands assume that `CUDA_TOOLKIT_ROOT`, `CUDA_ARCHITECTURES`, and
-`NVHPC_GPU_TARGET` were set to explicit site-approved values.
+Use the selection above with the [shared guide](../../../docs/BUILDING.md). It creates separate CPU, CUDA, and OpenACC trees and builds only the chosen target. Use the GPU sections alone if you do not need CPU numerical dependencies.
 
-```bash
-cmake -S . -B /tmp/gpu-library-suite-local-build/cpu-cuda \
-  -DCUDAToolkit_ROOT="${CUDA_TOOLKIT_ROOT}" \
-  -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
-  -DGPU_SUITE_BUILD_CPU=ON -DGPU_SUITE_BUILD_CUDA=ON \
-  -DGPU_SUITE_BUILD_OPENACC=OFF
-cmake --build /tmp/gpu-library-suite-local-build/cpu-cuda \
-  --target reduce_cpu reduce_gpu reduce_cpu_bench reduce_gpu_bench
+<a id="first-build-and-run"></a>
 
-NVHPC_CUDA_HOME="${CUDA_TOOLKIT_ROOT}" \
-cmake -S . -B /tmp/gpu-library-suite-local-build/openacc \
-  -DCMAKE_C_COMPILER=nvc -DCMAKE_CXX_COMPILER=nvc++ \
-  -DCUDAToolkit_ROOT="${CUDA_TOOLKIT_ROOT}" \
-  -DGPU_SUITE_NVHPC_GPU_TARGET="${NVHPC_GPU_TARGET}" \
-  -DGPU_SUITE_BUILD_CPU=OFF -DGPU_SUITE_BUILD_CUDA=OFF \
-  -DGPU_SUITE_BUILD_OPENACC=ON
-cmake --build /tmp/gpu-library-suite-local-build/openacc \
-  --target openacc_thrust openacc_thrust_bench
-```
+## First build and run
 
-## Run the examples
+Follow selection → build → run and require exit status 0 plus the expected result under Teaching default. A missing target or nonzero exit is not success. Use a compute allocation on shared clusters.
 
-From the repository root, after the corresponding targets above built:
+<a id="run-the-examples"></a>
+For Fortran, use the [separate guide](../../fortran/thrust/README.md).
 
-```bash
-CPU_CUDA_BUILD="${CPU_CUDA_BUILD:-/tmp/gpu-library-suite-local-build/cpu-cuda}"
-OPENACC_BUILD="${OPENACC_BUILD:-/tmp/gpu-library-suite-local-build/openacc}"
-"$CPU_CUDA_BUILD/nvidia/c-cpp/thrust/reduce_cpu"
-printf 'CPU exit status: %s\n' "$?"
-"$CPU_CUDA_BUILD/nvidia/c-cpp/thrust/reduce_gpu"
-printf 'CUDA exit status: %s\n' "$?"
-"$OPENACC_BUILD/nvidia/c-cpp/thrust/openacc_thrust"
-printf 'OpenACC exit status: %s\n' "$?"
-```
+<a id="from-example-to-benchmark"></a>
 
-Inspect the square-sum result against the all-ones input count and each exit
-status. A missing target or nonzero exit leaves the comparison incomplete.
-Continue with [measurement and result processing](../../../docs/PORTABILITY.md#measuring-on-your-own-system).
+## From example to benchmark
+
+Teaching examples have no timing CLI. For performance use the matching `_bench`, separating library (internal scope `compute`) from end-to-end. The sections below are benchmark reference material. Enable benchmarks using the [measurement workflow](../../../docs/PORTABILITY.md#measuring-on-your-own-system) and use its build paths; the minimal example build does not include benchmarks.
+
+<a id="benchmark-cli"></a>
 
 ## Benchmark CLI
 
+This small check requests one CPU thread and uses the build from the linked measurement workflow. BLAS / Sparse / Solver use its oneMKL configuration. If you built another provider, match `--cpu-backend` to that build.
+
 ```bash
-/tmp/gpu-library-suite-local-build/cpu-cuda/nvidia/c-cpp/thrust/reduce_cpu_bench \
+"$CPU_CUDA_BUILD/nvidia/c-cpp/thrust/reduce_cpu_bench" \
   --size 65536 --warmup 1 --repeat 2 --trials 1 --scope compute \
   --verify true --abs-tolerance 1e-12 --rel-tolerance 1e-10 \
   --output - --format jsonl --cpu-backend cpu-stl-serial \
-  --cpu-threads 48 --cpu-threads-effective 1 \
+  --cpu-threads 1 --cpu-threads-effective 1 \
   --cpu-backend-role production --series-role primary \
   --cpu-parallelism serial
 ```
@@ -107,7 +128,11 @@ Continue with [measurement and result processing](../../../docs/PORTABILITY.md#m
 Production runs obtain thresholds and roles from the effective configuration,
 and `tools/run_suite.py` remains the sole writer of node raw-result files.
 
+<a id="timing-scopes"></a>
+
 ## Timing scopes
+
+The display term library corresponds to internal scope `compute`.
 
 `compute` prepares input/device storage before timing and times only repeated
 transform-reduce operations. GPU `end-to-end` includes device storage creation,
@@ -116,20 +141,15 @@ cleanup follows the end timestamp. The CPU vector and canonical all-ones host
 input are prepared outside timing; the CPU path has no device transfer.
 Canonical restoration and verification stay outside timing.
 
+<a id="verification"></a>
+
 ## Verification
 
 The measured result is compared with the canonical analytical square sum using
 `abs_tolerance + rel_tolerance * reference_scale`. A verification failure is
 retained but does not become a fatal barrier to a restored later trial.
 
-## CPU backend and role
-
-`cpu-stl-serial` is the configured production primary serial CPU backend and is
-plotted as **Intel Xeon Platinum 8468, STL (single thread)** in the approved
-legend, not as a parallel baseline. Requested threads
-may be 48 while effective threads are 1. No speedup is plotted from this series.
-An optional `cpu-openmp` build is a separately named backend and is never a
-silent replacement.
+<a id="openacc-notes"></a>
 
 ## OpenACC notes
 
@@ -140,12 +160,14 @@ result retrieval; the teaching OpenACC example retains an explicit
 `cudaDeviceSynchronize` to show the interoperation boundary. Compile and link
 both carry NVHPC CUDA C++ interoperation flags.
 
+<a id="cpu-backend-and-role"></a>
+
+## CPU backend and role
+
+The recorded CPU series is serial. A larger requested thread count does not make it parallel. Label your own CPU/backend and distinguish requested from effective threads.
+
+<a id="known-limitations-and-local-validation"></a>
+
 ## Known limitations and local validation
 
-Reduction order may differ across implementations, so verification uses the
-declared floating-point tolerance rather than bitwise equality. Local tests run
-the serial CPU implementation and fake-header GPU syntax; real Thrust/CUDA,
-NVHPC, GPU, OpenMP production configuration, and Pegasus execution remain
-locally unverified.
-Later saved real execution records are distinguished from these local tests in
-[the validation report](../../../docs/VALIDATION_REPORT.md#saved-execution-evidence-reviewed-for-publication).
+Saved Pegasus evidence includes NVIDIA C/C++ builds, numerical smoke, and performance measurements; see the [versions and coverage](../../../docs/VALIDATION_REPORT.md#current-coexistence-status). GPU/toolchain behavior is locally unverified by host-only fixtures; saved real-machine runs are distinct evidence and do not certify another environment or later edits. See the [protocol](../../../docs/BENCHMARK_PROTOCOL.md) for numerical/statistical verification and CPU parallelism limits.

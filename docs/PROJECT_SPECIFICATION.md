@@ -75,12 +75,17 @@ gpu-library-suite/
     fortran/                 same six library/purpose subdirectories
   amd/
     c-cpp/
-      rocfft/                first approved local implementation
+      rocfft/                CPU / HIP / OpenMP teaching and benchmarks
         examples/
         benchmarks/
         README.md
         README.ja.md
         CMakeLists.txt
+      rocblas/               same examples/benchmarks layout
+      rocsparse/              same layout; v2/csr_rowsplit GPU API
+      rocsolver/              same examples/benchmarks layout
+      rocrand/                same examples/benchmarks layout
+      rocthrust/              OpenMP also links rocthrust_wrapper.hip
     fortran/                 future; do not create as an empty placeholder
   common/
     c-cpp/
@@ -95,18 +100,19 @@ gpu-library-suite/
   tools/
   jobs/
     pegasus/
-    sirius/                  approved probe history; future build/smoke body
+    sirius/                  build, smoke, measurement and preserved probe history
   docs/
   tests/
 ```
 
 This tree is a target architecture, not permission to create empty directories.
-The initial implementation was limited to `nvidia/c-cpp`; the implemented addition
-is `nvidia/fortran` and its common support. AMD C/C++ and Sirius are formally
-approved development targets. rocFFT has completed a recorded Sirius build and
-basic CPU/HIP/OpenMP smoke; see `VALIDATION_REPORT.md` for the exact source and
-limits. The remaining five C/C++ libraries are in local implementation and
-validation. Their real GPU execution is not implied by rocFFT's success.
+Implemented source families are NVIDIA C/C++, NVIDIA Fortran with its common
+support, and all six AMD C/C++ families. Recorded Pegasus and Sirius builds,
+numerical checks, and measurements have distinct source identities; see
+`VALIDATION_REPORT.md` and each library README for coverage and limits.
+In particular, current rocSPARSE v2/csr_rowsplit evidence is documented in
+`amd/c-cpp/rocsparse/README.md`; older adaptive measurements remain historical.
+Recorded success does not establish another environment or later source edits.
 AMD Fortran remains future work. Do not create empty future-area directories,
 dummy targets, or placeholder implementations.
 
@@ -138,10 +144,9 @@ repository-owned filename and must remain unchanged.
 
 The canonical HIP wrapper filename for rocThrust OpenMP interoperation is
 `rocthrust_wrapper.hip`. Teaching material, distributed sources, CMake inputs,
-tests, and documentation must use this same name. The owner explicitly selected
-the rocFFT inventory and workload below. The owner subsequently requested expansion of the successful rocFFT implementation
-to all six AMD C/C++ libraries. The development inventory below fixes names and
-workloads for that expansion; it does not claim an existing published AMD edition.
+tests, and documentation must use this same name. The inventory below fixes
+the names and workloads of the six implemented AMD C/C++ families. The README files describe how to build and use them;
+this document remains the authority for teaching filenames and problems.
 
 Only the rocThrust OpenMP C/C++ teaching example may use two translation units:
 the OpenMP caller and `rocthrust_wrapper.hip`. The complete caller and wrapper
@@ -155,10 +160,9 @@ Fortran helper model.
 
 Manual teaching builds may use `hipcc`. CMake native HIP builds use supported
 Clang rather than fixing the `hipcc` wrapper as `CMAKE_HIP_COMPILER`. Compiler
-paths, ROCm versions, and GPU targets remain external inputs until the Sirius
-environment is confirmed. Both translation units' compile conditions and final
-link inputs must be recorded by the eventual build integration. Stage 1
-records this contract without creating the wrapper or AMD targets.
+paths, ROCm versions, and GPU targets remain explicit installation inputs,
+not portable source constants. Both translation units' compile
+conditions and final link inputs are recorded by the build integration.
 
 ### rocFFT C/C++ inventory and teaching workload
 

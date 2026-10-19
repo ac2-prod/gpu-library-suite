@@ -2,6 +2,8 @@
 
 [English](PORTABILITY.md) | [日本語](PORTABILITY.ja.md)
 
+この文書の実行コマンドはNVIDIAの測定・集計を対象にしています。教材を1本動かす場合は[最小ビルド手順](BUILDING.ja.md)を先に使ってください。AMDのCPU／HIP／OpenMP教材も同じビルド案内から選べます。AMDの保存済み測定に対応する運用は[Sirius案内](../jobs/sirius/README.md)を参照します。
+
 <a id="purpose"></a>
 
 ## 目的

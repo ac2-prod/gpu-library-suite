@@ -1,8 +1,37 @@
-# cuBLAS C/C++のサンプルとベンチマーク
+# cuBLAS C/C++：ビルド・実行・使い方
 
 [English](README.md) | [日本語](README.ja.md)
 
-このディレクトリでは、列優先FP64 DGEMMの正本問題を、CBLAS、直接cuBLAS、OpenACC/cuBLASで比較します。問題の数学的定義は[`docs/PROJECT_SPECIFICATION.md`（英語）](../../../docs/PROJECT_SPECIFICATION.md)、CLI、時間測定、状態復元、検証は[`docs/BENCHMARK_PROTOCOL.ja.md`](../../../docs/BENCHMARK_PROTOCOL.ja.md)が定めます。
+FP64 DGEMMで密行列積`C = alpha*A*B + beta*C`を計算します。CPU BLASからGPU直接呼び出し・ディレクティブによる配列管理への対応を確認できます。
+
+<a id="teaching-default"></a>
+
+## 教材の既定問題
+
+列優先の正方行列で`m=n=k=1024`、`alpha=beta=1`、A/B/Cはすべて1です。出力は全要素`1025`となり、C/C++教材は最大誤差`1e-10`以下で成功します。
+
+<a id="dependencies"></a>
+
+## 依存環境
+
+CPUではoneMKL・OpenBLAS・generic CBLASのいずれかを明示選択します。以下の例はOpenBLAS（`cblas.h`・`libopenblas`）を選びます。
+
+GPUはCUDA Toolkitと対応GPU／ドライバ、OpenACCはさらにNVHPC nvc++が必要です。
+
+<a id="select-a-minimal-build"></a>
+
+## 最小ビルドの選択
+
+Bashで以下を設定してから、[共通ビルド手順](../../../docs/BUILDING.ja.md#select)のCPU・GPU直接版・ディレクティブ版のうち必要な節だけを実行します。教材targetだけを構築し、benchmarkや全件テストは不要です。
+```bash
+VENDOR=nvidia
+SOURCE_LANGUAGE=c-cpp
+LIBRARY=cublas
+CPU_TARGET=blas_cpu
+GPU_TARGET=blas_gpu
+DIRECTIVE_TARGET=openacc_cublas
+CPU_OPTIONS=(-DGPU_SUITE_CPU_BLAS_BACKEND=OPENBLAS)
+```
 
 <a id="canonical-sources-and-targets"></a>
 
@@ -17,108 +46,81 @@
 | CUDAベンチマーク | `benchmarks/blas_gpu_bench.cu` | `blas_gpu_bench` |
 | OpenACCベンチマーク | `benchmarks/openacc_cublas_bench.cpp` | `openacc_cublas_bench` |
 
-<a id="teaching-default"></a>
+<a id="adapting-the-example"></a>
 
-## 教材の既定問題
+## 自分のアプリケーションへ取り込む
 
-3本の教材プログラムはすべて、列優先FP64行列を使い、`alpha=1`、`beta=1`で1,024×1,024のDGEMMを計算します。ベンチマーク基盤を含まない、直接実行できる完全な単一ソースプログラムです。
+配列の格納順とleading dimension（`lda`、`ldb`、`ldc`）を合わせます。betaが0でないためCも入力です。A/Bだけをコピーしてはいけません。繰り返す場合は配列とhandleを適切な寿命で保持します。CPUの並列性は選択したBLAS providerが担い、要求スレッド数は実測worker数ではありません。
 
-<a id="dependencies"></a>
-
-## 依存環境
-
-CPUターゲットには、`cblas_dgemm`をコンパイル・リンクできるONEMKL、OPENBLAS、GENERIC_CBLASのいずれかを明示的に選択する必要があります。`BLAS_FOUND`だけでは十分としません。プロバイダごとのキャッシュキーと所定のヘッダ/ライブラリ名により、oneMKLヘッダとOpenBLASライブラリの混在を防ぎます。CUDAターゲットにはCUDA RuntimeとcuBLAS、OpenACCターゲットにはさらにNVHPC OpenACC C++が必要です。
+CUDA版はdevice配列を直接管理し、OpenACC版はdata領域と`host_data use_device`を使って同じGPUライブラリへ渡します。配列の所有権を混ぜず、結果を読む前に完了を保証してください。
 
 <a id="direct-compile"></a>
 
 ## 直接コンパイル
 
-CPUソースは、CMakeがプロバイダ指定を上書きしない限り、既定で`<cblas.h>`をincludeします。次の代表的なコマンドは、通常の検索パスが設定済みであることを前提とします。
+CMakeを使わない場合の代替手順です。リポジトリ直下のBashで、必要なheader・libraryの検索パスが設定済みであることを前提とします。各方式のblockを選び、成功した場合だけ実行します。
 
 ```bash
-mkdir -p /tmp/gpu-library-suite-local-build
-cc -std=c17 nvidia/c-cpp/cublas/examples/blas_cpu.c \
-  -lcblas -lm -o /tmp/gpu-library-suite-local-build/blas_cpu-direct
-nvcc -std=c++17 nvidia/c-cpp/cublas/examples/blas_gpu.cu \
-  -lcublas -o /tmp/gpu-library-suite-local-build/blas_gpu-direct
-nvc++ -std=c++17 -acc -cuda \
-  nvidia/c-cpp/cublas/examples/openacc_cublas.cpp -cudalib=cublas \
-  -o /tmp/gpu-library-suite-local-build/openacc_cublas-direct
+DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-direct.XXXXXX")" || exit 1
 ```
+
+```bash
+cc -std=c17 -O2 nvidia/c-cpp/cublas/examples/blas_cpu.c -lopenblas -lm -o "$DIRECT_BUILD/blas_cpu" &&
+"$DIRECT_BUILD/blas_cpu"
+```
+
+```bash
+: "${CUDA_TOOLKIT_ROOT:?Set your CUDA Toolkit prefix}"
+: "${NVCC_ARCH:?Set the nvcc architecture supported by your GPU}"
+"$CUDA_TOOLKIT_ROOT/bin/nvcc" -std=c++17 -O2 -arch="$NVCC_ARCH" \
+  nvidia/c-cpp/cublas/examples/blas_gpu.cu -lcublas \
+  -o "$DIRECT_BUILD/blas_gpu" &&
+"$DIRECT_BUILD/blas_gpu"
+```
+
+```bash
+: "${CUDA_TOOLKIT_ROOT:?Set your CUDA Toolkit prefix}"
+: "${NVHPC_GPU_TARGET:?Set your NVHPC GPU target}"
+NVHPC_CUDA_HOME="$CUDA_TOOLKIT_ROOT" \
+nvc++ -std=c++17 -O2 -acc -cuda -gpu="$NVHPC_GPU_TARGET" \
+  nvidia/c-cpp/cublas/examples/openacc_cublas.cpp -cudalib=cublas \
+  -o "$DIRECT_BUILD/openacc_cublas" &&
+"$DIRECT_BUILD/openacc_cublas"
+```
+
+<a id="cmake-configure-and-build"></a>
+
+## CMakeの構成とビルド
+
+上の選択値を[共通手順](../../../docs/BUILDING.ja.md)へ渡します。CPU、CUDA、OpenACCの新しいtreeを用い、選択したtargetだけを構築します。CPU数値ライブラリが不要ならGPUの節だけを利用できます。
 
 <a id="first-build-and-run"></a>
 
 ## 最初のビルドと実行
 
-リポジトリのルートを作業ディレクトリとするシェルを使ってください。CMake 3.20以降、C17/C++17ツールチェーン、コンパイラ／リンカから利用できるCBLAS実装が必要です。この最初のCPU実行にCUDAのインストールやPegasusアカウントは不要です。以下は`GENERIC_CBLAS`（`cblas.h`と`libcblas`）を選択します。oneMKLまたはOpenBLASを使う場合は、`ONEMKL`または`OPENBLAS`を明示的に選択してください。変更を記録せずプロバイダを置き換えないでください。oneMKLの検出はインストール済みの`MKLROOT`を使います。実際のプロバイダインストール環境を、通常のインクルード／ライブラリ検索パスまたはCMakeキャッシュエントリで示す必要があります。
+選択・build・実行の順に進み、終了値0と「教材の既定問題」の期待値を確認してください。欠落targetや非ゼロ終了を成功とは扱いません。共有計算機では計算ノードの割当内で実行します。
 
-```bash
-EXAMPLE_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-library-suite-example.XXXXXX")"
-cmake -S . -B "$EXAMPLE_BUILD" -DCMAKE_BUILD_TYPE=Release \
-  -DGPU_SUITE_BUILD_CPU=ON -DGPU_SUITE_BUILD_CUDA=OFF \
-  -DGPU_SUITE_BUILD_OPENACC=OFF -DGPU_SUITE_BUILD_TESTS=OFF \
-  -DGPU_SUITE_CPU_BLAS_BACKEND=GENERIC_CBLAS
-cmake --build "$EXAMPLE_BUILD" --target blas_cpu
-"$EXAMPLE_BUILD/nvidia/c-cpp/cublas/blas_cpu"
-printf 'example exit status: %s\n' "$?"
-```
+<a id="run-the-examples"></a>
+Fortran教材は[別の案内](../../fortran/cublas/README.ja.md)を使います。
 
-configureで`blas_cpu`が無効化された場合やビルドが失敗した場合は停止してください。任意依存の欠如をCPU/GPU比較の成功とは扱いません。成功時は`CBLAS DGEMM complete; max error = ...`と表示し、0で終了します。入力は全要素1なので、出力の全要素は`1025`（`k + 1`）になります。許容する最大絶対誤差は`1e-10`以下です。終了値が0以外、または誤差がこれを超える場合は調査が必要です。
+<a id="from-example-to-benchmark"></a>
 
-続いて、対応するNVIDIA GPU/ドライバ、CUDA Toolkit、およびOpenACC用のNVHPCを用意します。次節のToolkit/アーキテクチャ変数を明示的に設定し、2つのプロファイルをビルドします。コマンドの既定ディレクトリは以下のとおりです。一般的な利用手順に沿って進めた場合は、そこでexportしたディレクトリの値を維持してください。対応ターゲットのビルド成功後にだけ実行します。
+## サンプルからベンチマークへの対応
 
-```bash
-CPU_CUDA_BUILD="${CPU_CUDA_BUILD:-/tmp/gpu-library-suite-local-build/cpu-cuda}"
-OPENACC_BUILD="${OPENACC_BUILD:-/tmp/gpu-library-suite-local-build/openacc}"
-"$CPU_CUDA_BUILD/nvidia/c-cpp/cublas/blas_cpu"
-printf 'CPU exit status: %s\n' "$?"
-"$CPU_CUDA_BUILD/nvidia/c-cpp/cublas/blas_gpu"
-printf 'CUDA exit status: %s\n' "$?"
-"$OPENACC_BUILD/nvidia/c-cpp/cublas/openacc_cublas"
-printf 'OpenACC exit status: %s\n' "$?"
-```
-
-最後のコマンドだけでなく、各コマンドの終了ステータスを直後に確認してください。GPUプログラムでも同じ`max error`の条件を確認し、メッセージには`cuBLAS`または`OpenACC-managed cuBLAS`を表示します。ベンチマークの時間は表示しません。GPUの依存環境がない場合でもCPUサンプルは有用ですが、3実装の実行確認は未完了のままです。
-
-<a id="cmake-configure-and-build"></a>
-
-## CMakeのconfigureとビルド
-
-以下はgeneric CBLASを使うCPU/CUDAツリーと、別のOpenACCツリーの例です。`CUDA_TOOLKIT_ROOT`、`CUDA_ARCHITECTURES`、`NVHPC_GPU_TARGET`に、サイトで承認された具体値が設定済みであることを前提とします。
-
-```bash
-cmake -S . -B /tmp/gpu-library-suite-local-build/cpu-cuda \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCUDAToolkit_ROOT="${CUDA_TOOLKIT_ROOT}" \
-  -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
-  -DGPU_SUITE_BUILD_CPU=ON -DGPU_SUITE_BUILD_CUDA=ON \
-  -DGPU_SUITE_BUILD_OPENACC=OFF \
-  -DGPU_SUITE_CPU_BLAS_BACKEND=GENERIC_CBLAS
-cmake --build /tmp/gpu-library-suite-local-build/cpu-cuda \
-  --target blas_cpu blas_gpu blas_cpu_bench blas_gpu_bench
-
-NVHPC_CUDA_HOME="${CUDA_TOOLKIT_ROOT}" \
-cmake -S . -B /tmp/gpu-library-suite-local-build/openacc \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_C_COMPILER=nvc -DCMAKE_CXX_COMPILER=nvc++ \
-  -DCUDAToolkit_ROOT="${CUDA_TOOLKIT_ROOT}" \
-  -DGPU_SUITE_NVHPC_GPU_TARGET="${NVHPC_GPU_TARGET}" \
-  -DGPU_SUITE_BUILD_CPU=OFF -DGPU_SUITE_BUILD_CUDA=OFF \
-  -DGPU_SUITE_BUILD_OPENACC=ON
-cmake --build /tmp/gpu-library-suite-local-build/openacc \
-  --target openacc_cublas openacc_cublas_bench
-```
+教材に時間測定用の引数はありません。性能測定では対応する`_bench`を使い、library（内部scope名`compute`）とend-to-endを区別します。以下は既存benchmarkの参照情報です。[測定手順](../../../docs/PORTABILITY.ja.md#measuring-on-your-own-system)でbenchmarkを有効にしたbuildを作り、そこで設定したパスを使ってください。最小教材buildにはbenchmarkは含まれません。
 
 <a id="benchmark-cli"></a>
 
 ## ベンチマークCLI
 
+以下はリンク先の測定手順で作ったbuildを使う1スレッド要求の小規模確認です。BLAS／Sparse／Solverはその手順のoneMKL構成に対応します。別providerでbuildした場合は`--cpu-backend`もbuildに合わせて変更してください。
+
 ```bash
-/tmp/gpu-library-suite-local-build/cpu-cuda/nvidia/c-cpp/cublas/blas_cpu_bench \
+"$CPU_CUDA_BUILD/nvidia/c-cpp/cublas/blas_cpu_bench" \
   --size 128 --alpha 1 --beta 1 --warmup 1 --repeat 2 --trials 1 \
   --scope compute --verify true --abs-tolerance 1e-12 \
   --rel-tolerance 1e-10 --output - --format jsonl \
-  --cpu-backend cpu-generic-cblas --cpu-threads 48 \
+  --cpu-backend cpu-onemkl --cpu-threads 1 \
   --cpu-backend-role production --series-role primary \
   --cpu-parallelism threaded
 ```
@@ -129,25 +131,9 @@ cmake --build /tmp/gpu-library-suite-local-build/openacc \
 
 ## 測定スコープ
 
+表示名libraryの内部scopeは`compute`です。
+
 `compute`は、メモリ／ハンドルの作成とCの復元を測定開始前に行い、repeatを通してDGEMMの更新を連続適用します。そのため検証では、repeat回の更新を反映した結果を確認します。`end-to-end`は各repeatのメモリ確保、コピー、ハンドルのライフサイクル、DGEMM、完了、結果取得を測定し、後処理は終了時刻の後に行います。各repeatの前に正本のCを復元するため、状態を引き継ぎません。
-
-<a id="from-example-to-benchmark"></a>
-
-## サンプルからベンチマークへの対応
-
-対応する`_bench`ソースより先に、3本の短いサンプルを読んでください。どちらも全要素1の同じDGEMM問題を解きますが、ベンチマークでは`main`関数全体の時間を測るのではなく、測定条件を制御します。
-
-| プログラムの部分 | 教材サンプル | ベンチマークでの対応 |
-| --- | --- | --- |
-| 入力と初期化 | `m=n=k=1024`に固定し、ホストのA/B/Cを1で埋める | CLI／設定で次元を指定し、サイズを確認。同じ正本入力を測定区間外で生成 |
-| CPU計算 | `cblas_dgemm`を1回呼ぶ | 同じプロバイダ呼び出し。並列化はCPUライブラリ内部で行い、アプリケーションのOpenMPループではない |
-| 直接CUDAのメモリ | 明示的な`cudaMalloc`、H2D、D2H | computeでは永続的なメモリ確保/ハンドル、E2Eではrepeatごとのパイプライン |
-| OpenACCのメモリ | `acc data`が配列を所有し、`host_data use_device`でデバイスポインタをcuBLASへ渡す | 所有関係は同じ。スコープに応じてデータ領域への出入りとタイムスタンプの位置関係を変える |
-| 計算 | `cublasDgemm`または`cblas_dgemm`を1回呼ぶ | computeでは反復呼び出し、教材掲載用設定のE2Eでは1回の処理 |
-| 復元と検証 | 1回呼び出した期待値`k+1`を確認 | warm-up後と各試行前にCを復元。computeの検証は全repeatの更新を反映し、E2Eでは各repeat前にCを復元 |
-| 時間測定と出力 | タイマーや機械可読レコードはない | 共通の単調wall clock、GPU完了の同期、試行ごとのJSONL/CSV、測定区間外の検証 |
-
-正本の[時間測定境界](../../../docs/BENCHMARK_PROTOCOL.ja.md#timing-fields)には、どの準備、転送、同期、後処理が測定に含まれるかを厳密に記載しています。教材プログラムを単にストップウォッチで囲むのではなく、[小規模測定とデータ処理全体の手順](../../../docs/PORTABILITY.ja.md#measuring-on-your-own-system)へ進んでください。
 
 <a id="verification"></a>
 
@@ -155,20 +141,20 @@ cmake --build /tmp/gpu-library-suite-local-build/openacc \
 
 実効設定を使い、最大絶対誤差を`abs_tolerance + rel_tolerance * reference_scale`と比較します。検証失敗はraw失敗として保持し、状態を復元した後の試行は継続できます。
 
-<a id="cpu-backend-and-role"></a>
-
-## CPUバックエンドとrole
-
-設定したCBLASプロバイダが、productionのprimary CPUバックエンドです。対応する名前は`cpu-onemkl`、`cpu-openblas`、`cpu-generic-cblas`です。キャンペーンには1つを選択し、他プロバイダへ暗黙にフォールバックすることはありません。
-
 <a id="openacc-notes"></a>
 
 ## OpenACCの注意点
 
 OpenACCデータ領域がA、B、Cを所有します。`host_data use_device`でそのアドレスをcuBLASへ渡し、別のCUDAメモリ確保が配列を重複所有することはありません。正本のリンク対象は`OpenACC::OpenACC_CXX`、`CUDA::cudart`、`CUDA::cublas`です。
 
+<a id="cpu-backend-and-role"></a>
+
+## CPUバックエンドとrole
+
+測定では選択したproduction CPU backendを明示し、依存不足による別providerへの置換を行いません。スレッド要求と実効worker数は区別します。
+
 <a id="known-limitations-and-local-validation"></a>
 
 ## 既知の制限とローカル検証
 
-ランタイムから信頼できる値を取得できない場合、プロバイダのスレッド数は不明のままです。そのため、要求スレッド数を有効スレッド数と読み替えません。ローカルテストはfake CBLASプロバイダとGPU構文だけを対象としています。実cuBLASランタイム、NVHPCコンパイラ、GPU、production用oneMKL/OpenBLASインストール環境、Pegasus実行はローカルでは未検証です。その後に保存された実機実行記録は、[検証報告（英語）](../../../docs/VALIDATION_REPORT.md#saved-execution-evidence-reviewed-for-publication)でこれらのローカルテストと区別しています。
+PegasusでNVIDIA C/C++のbuild・数値smoke・性能測定の保存記録があります。[版と確認範囲](../../../docs/VALIDATION_REPORT.md#current-coexistence-status)を参照してください。ローカルfixture検査と実機検証は別で、別環境や後続変更の動作を保証しません。数値誤差・乱数分布の検証条件とCPU並列性の制約は[測定仕様](../../../docs/BENCHMARK_PROTOCOL.ja.md)を参照してください。

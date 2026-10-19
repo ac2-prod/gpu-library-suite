@@ -1,59 +1,111 @@
-# rocBLAS C/C++ examples and benchmarks
+# rocBLAS C/C++: build, run, and adapt
 
 [English](README.md) | [日本語](README.ja.md)
 
-The CPU, HIP and OpenMP target sources are implemented. Local host API fixtures
-exercise numerical recurrence and failure handling; they do not establish real
-ROCm compilation, offload or GPU execution. On Sirius, all six BLAS artifacts
-built successfully in `sirius-amd-build-20261017T104351Z-a3697cae`. The separate
-BLAS run `sirius-blas-smoke-20261017T135452Z-a3697cae` passed all three teaching
-examples and 96 numerical records, including OpenMP target and CPU thread
-requests 1/2. Effective CPU workers and performance remain unverified; see the
-[recorded source boundary and results](../../../docs/VALIDATION_REPORT.md#amd-focused-numerical-smoke).
+Multiply dense matrices with FP64 DGEMM: `C = alpha*A*B + beta*C`. Compare the CPU BLAS call with direct GPU use and directive-managed arrays.
 
-| Implementation | Teaching source / target | Benchmark source / target |
+<a id="teaching-default"></a>
+
+## Problem and expected result
+
+Column-major square matrices, `m=n=k=1024`, `alpha=beta=1`, and all-one A/B/C. Every output element must be `1025`; successful C/C++ examples report maximum error at most `1e-10`.
+
+Require exit status 0 and the result checks above. Teaching sizes are source constants; do not pass benchmark CLI options to these examples.
+CPU calls CBLAS; GPU calls `rocblas_dgemm`.
+
+<a id="dependencies"></a>
+
+## Dependencies
+
+Select oneMKL, OpenBLAS, or a generic CBLAS provider explicitly for CPU. The selection below uses OpenBLAS (`cblas.h`, `libopenblas`).
+
+HIP needs the corresponding ROCm libraries; OpenMP target also needs compatible AMD Clang. Native CMake HIP uses HIP-capable Clang, not `hipcc`. CPU-only usage does not require ROCm.
+
+<a id="select-a-minimal-build"></a>
+
+## Select a minimal build
+
+Set these variables in Bash, then follow only the CPU, direct GPU, or directive section you need in the [shared build guide](../../../docs/BUILDING.md#select). It builds the selected example; benchmarks and the full test suite are not needed.
+```bash
+VENDOR=amd
+SOURCE_LANGUAGE=c-cpp
+LIBRARY=rocblas
+CPU_TARGET=blas_cpu
+GPU_TARGET=blas_gpu
+DIRECTIVE_TARGET=openmp_rocblas
+CPU_OPTIONS=(-DGPU_SUITE_CPU_BLAS_BACKEND=OPENBLAS)
+```
+
+<a id="canonical-sources-and-targets"></a>
+
+## Sources and targets
+
+| Variant | Teaching source / target | Benchmark source / target |
 | --- | --- | --- |
-| CPU | `examples/blas_cpu.c` / `blas_cpu` | `benchmarks/blas_cpu_bench.c` / `blas_cpu_bench` |
-| HIP | `examples/blas_gpu.cpp` / `blas_gpu` | `benchmarks/blas_gpu_bench.cpp` / `blas_gpu_bench` |
-| OpenMP target | `examples/openmp_rocblas.cpp` / `openmp_rocblas` | `benchmarks/openmp_rocblas_bench.cpp` / `openmp_rocblas_bench` |
+| CPU | [`blas_cpu.c`](examples/blas_cpu.c) / `blas_cpu` | [`blas_cpu_bench.c`](benchmarks/blas_cpu_bench.c) / `blas_cpu_bench` |
+| HIP | [`blas_gpu.cpp`](examples/blas_gpu.cpp) / `blas_gpu` | [`blas_gpu_bench.cpp`](benchmarks/blas_gpu_bench.cpp) / `blas_gpu_bench` |
+| OpenMP target | [`openmp_rocblas.cpp`](examples/openmp_rocblas.cpp) / `openmp_rocblas` | [`openmp_rocblas_bench.cpp`](benchmarks/openmp_rocblas_bench.cpp) / `openmp_rocblas_bench` |
 
-Each teaching example is one complete, independently compiled source. It uses
-FP64 column-major DGEMM, `C = alpha A B + beta C`, with `m=n=k=1024`, `alpha=beta=1`, and all-one A/B/C. The expected value is 1025.
-GPU calls use `rocblas_dgemm` with `rocblas_operation_none` for both operands.
+<a id="adapting-the-example"></a>
 
-CPU uses the configured CBLAS provider (`cpu-openblas`, `cpu-onemkl`, or `cpu-generic-cblas`). The requested backend must match the compiled binary.
+## Adapt this example
 
-The benchmark preserves the shared CLI and raw-result lifecycle. Compute keeps
-allocations and library context alive, restores C/y after warm-up and before
-each raw trial, then measures `repeat` successive updates and completion using
-the host monotonic clock. Its expected result follows that recurrence.
-End-to-end restores C/y before each repeat outside timing, then measures
-context/descriptor preparation, allocation or OpenMP mapping, transfers,
-execution, completion and retrieval. Explicit cleanup follows the measured
-interval. Host input generation and verification are untimed. Numerical failure,
-nonfinite output, invalid dimensions and unavailable dependencies are explicit.
+Match matrix layout and leading dimensions (`lda`, `ldb`, `ldc`) to your storage. With nonzero beta, C is an input as well as an output: copying only A/B is insufficient. Keep arrays and a handle across repeated multiplies when their lifetime permits it. CPU parallelism belongs to the selected BLAS provider; a requested thread count is not an observed worker count.
 
-OpenMP owns mapped matrix/vector storage and passes `use_device_ptr` addresses
-to rocBLAS. `omp_is_initial_device()` must reject host fallback, and HIP pointer
-attributes must match the selected HIP device. Device ordinals alone do not
-establish correspondence. Set `OMP_TARGET_OFFLOAD=MANDATORY` for real execution.
-Only the library workspace, where needed, is allocated with HIP in this path.
+The HIP variant manages arrays with `hipMalloc` / `hipMemcpy`. In OpenMP target, `map` owns storage and `use_device_ptr` exposes it to the GPU library. Ensure completion before result retrieval/map exit; do not free mapped storage with HIP. Shared physical memory does not imply USM or omitted copies.
 
-Configure a new vendor-specific build with `GPU_SUITE_VENDOR=amd` and
-`GPU_SUITE_SOURCE_LANGUAGE=c-cpp`. CPU, HIP and OpenMP use separate build trees.
-Set `GPU_SUITE_BUILD_CPU`, `GPU_SUITE_BUILD_HIP`, `GPU_SUITE_BUILD_OPENMP` for the
-selected profile, and disable CUDA/OpenACC. Native CMake HIP uses a supported
-Clang driver, not the hipcc wrapper; architecture and dependency roots are
-explicit inputs established for the execution system. Missing optional
-libraries disable only affected targets and are not installed automatically.
+<a id="direct-compile"></a>
 
-Manual teaching compilation may use `hipcc` with `-lrocblas`. OpenMP compilation
-requires the supported compiler's `-fopenmp` and explicit target architecture,
-plus `-lrocblas -lamdhip64` and ordinary installation-specific search flags.
-These instructions do not authorize login-node builds: approved Sirius builds
-and executions run through its scheduler. See [Sirius operations](../../../jobs/sirius/README.md).
+## Direct compile (optional)
 
-Mathematics and canonical names belong to [the specification](../../../docs/PROJECT_SPECIFICATION.md).
-Timing/CPU rules belong to [the protocol](../../../docs/BENCHMARK_PROTOCOL.md),
-and campaign provenance to [the schema](../../../docs/RESULT_SCHEMA.md).
-API signatures were checked against the [ROCm 7.2 rocBLAS reference](https://rocm.docs.amd.com/projects/rocBLAS/en/docs-7.2.0/reference/level-3.html).
+Run from the repository root in Bash with the provider header/library search paths available. Prefer CMake for complex CPU dependencies or static linking. Run only the CPU, HIP, or OpenMP blocks you need.
+
+```bash
+DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-direct.XXXXXX")" || exit 1
+```
+
+```bash
+cc -std=c17 -O2 amd/c-cpp/rocblas/examples/blas_cpu.c -lopenblas -lm -o "$DIRECT_BUILD/blas_cpu" &&
+"$DIRECT_BUILD/blas_cpu"
+```
+Set the GPU target for your installation and use `hipcc` from the selected ROCm stack.
+
+```bash
+: "${AMD_GPU_TARGET:?Set your AMD GPU target}"
+hipcc -x hip -std=c++17 -O2 --offload-arch="$AMD_GPU_TARGET" \
+  amd/c-cpp/rocblas/examples/blas_gpu.cpp -lrocblas \
+  -o "$DIRECT_BUILD/blas_gpu" &&
+"$DIRECT_BUILD/blas_gpu"
+```
+
+```bash
+: "${AMD_CLANGXX:?Set the AMD Clang OpenMP C++ compiler}"
+: "${ROCM_ROOT:?Set the ROCm prefix containing include}"
+: "${ROCM_LIBDIR:?Set the ROCm shared-library directory}"
+: "${AMD_GPU_TARGET:?Set your AMD GPU target}"
+"$AMD_CLANGXX" -std=c++17 -O2 -fopenmp --offload-arch="$AMD_GPU_TARGET" \
+  -I"$ROCM_ROOT/include" amd/c-cpp/rocblas/examples/openmp_rocblas.cpp \
+  -L"$ROCM_LIBDIR" -Wl,-rpath,"$ROCM_LIBDIR" -lrocblas -lamdhip64 \
+  -o "$DIRECT_BUILD/openmp_rocblas" &&
+OMP_TARGET_OFFLOAD=MANDATORY "$DIRECT_BUILD/openmp_rocblas"
+```
+
+<a id="timing-scopes"></a>
+
+## Optional performance measurement
+
+Figures use library / end-to-end; internal CLI scopes are `compute` / `end-to-end`. These are controlled intervals, not simply the whole teaching program.
+
+library restores C outside timing, then times repeated DGEMM updates and completion using persistent arrays/handle. End-to-end restores host C outside timing, then includes device allocation/map, input movement, handle creation, DGEMM/completion, and C retrieval. Explicit HIP frees and handle destruction are outside; OpenMP structured map exit is inside. With beta=1, library verification accounts for all repeat updates.
+
+Host input generation and numerical verification are outside timing. See the [benchmark protocol](../../../docs/BENCHMARK_PROTOCOL.md) for details and [Sirius procedures](../../../jobs/sirius/README.md) for suite execution/aggregation. Distributed configs do not automatically adapt to another installation.
+
+<a id="validation-and-limits"></a>
+
+## Recorded validation and limits
+
+Saved Sirius evidence includes CPU / HIP / OpenMP builds, numerical checks, and performance measurements. Source versions and coverage are recorded in the [validation report](../../../docs/VALIDATION_REPORT.md#amd-production-comparison).
+
+Requested CPU threads are not observed worker counts. Saved RAND / Thrust CPU measurements use serial backends. Complete actually loaded-library identity remains unverified. Recorded success is not a guarantee for another environment or later edits; local fixtures do not prove GPU execution.
+
+[Problem/source specification](../../../docs/PROJECT_SPECIFICATION.md) · [Result format](../../../docs/RESULT_SCHEMA.md)

@@ -2,6 +2,8 @@
 
 [English](PORTABILITY.md) | [日本語](PORTABILITY.ja.md)
 
+The measurement commands here target NVIDIA workflows. To run one teaching example, start with [minimal build instructions](BUILDING.md), which also cover AMD CPU / HIP / OpenMP examples. Site execution corresponding to the saved AMD campaigns is documented in [Sirius operations](../jobs/sirius/README.md).
+
 ## Purpose
 
 This guide summarizes how to reuse the implemented NVIDIA C/C++ suite without
