@@ -2,11 +2,17 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
-The CPU (AOCL Sparse), HIP and OpenMP target implementations passed Sirius
-build and basic numerical smoke: three teaching examples and 96 records, all
-with zero error. See [the recorded source snapshot and run evidence](../../../jobs/sirius/README.md#focused-numerical-smoke).
-Performance and effective CPU worker count remain unmeasured; this evidence
-does not validate later source changes.
+The v2/CSR rowsplit revision `a974467bd4f9b45526a0c448f597f895cd244062`
+passed Sirius builds for all six CPU (AOCL Sparse), HIP and OpenMP targets,
+three teaching examples (maximum error 0), and 96 numerical smoke records.
+The separate v2 campaign `sirius-rocsparse-v2-20261019T010457Z-a974467`
+passed all 1,080 production records across six physical hosts per wave and two waves.
+Raw data, provenance and the regenerated figure are retained under that campaign's
+`runs/` directory as non-distributed evidence. The earlier
+[basic smoke evidence](../../../jobs/sirius/README.md#focused-numerical-smoke)
+and adaptive results remain separate historical records.
+Effective CPU worker count and complete actually loaded DSO identity remain
+unverified. These results do not validate later source changes.
 
 | Implementation | Teaching source / target | Benchmark source / target |
 | --- | --- | --- |

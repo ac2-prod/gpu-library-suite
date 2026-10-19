@@ -3,10 +3,15 @@
 [English](README.md) | [日本語](README.ja.md)
 
 CPU・HIP・OpenMP target の教材とbenchmarkを実装しました。教材は各1ソースで完結します。
-CPU（AOCL Sparse）・HIP・OpenMP targetのSirius実機buildと基本数値smokeを確認済みです。
-教材3本と数値検証96件がすべて成功し、誤差は0でした。
-[検証したsource snapshotと保存ログ](../../../jobs/sirius/README.md#focused-numerical-smoke)を参照してください。
-後続のソース変更、性能、CPU実効worker数はこの結果の検証範囲外です。
+v2/CSR rowsplit版`a974467bd4f9b45526a0c448f597f895cd244062`について、
+CPU（AOCL Sparse）・HIP・OpenMP targetの6成果物をSiriusでbuildし、
+教材3本（最大誤差0）と数値smoke 96件がすべて成功しました。
+別campaign `sirius-rocsparse-v2-20261019T010457Z-a974467`では、
+各wave 6物理ノード・2 waveの本測定1,080行がすべて数値検証PASSです。
+raw・来歴・再生成した性能図は同campaignの`runs/`配下に非配布の証跡として保持します。
+[以前の基本smoke](../../../jobs/sirius/README.md#focused-numerical-smoke)とadaptive結果は、別の履歴として保持します。
+CPU実効worker数と完全な実ロードDSOの同一性は引き続き未確認です。
+後続のソース変更は、この結果の検証範囲外です。
 
 FP64の5点Poisson行列によるCSR SpMVを扱います。教材は1024×1024格子、対角4・隣接要素−1、alpha=beta=1、x/yはすべて1です。GPUは`rocsparse_v2_spmv`と`rocsparse_spmv_alg_csr_rowsplit`を固定使用します。
 SpMV descriptorに非転置・FP64 scalar/compute型を設定し、analysisとcomputeのworkspaceサイズを個別に照会します。
