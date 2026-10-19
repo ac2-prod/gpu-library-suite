@@ -16,7 +16,7 @@ does not validate later source changes.
 
 Each teaching example is one complete, independently compiled source. It uses
 FP64 zero-based CSR SpMV on a 1024 by 1024 five-point Poisson grid: `y = alpha A x + beta y`, `alpha=beta=1`, diagonal 4, off-diagonal -1, and all-one x/y. Boundary/corner neighbor counts determine the expected output.
-GPU calls use the generic `rocsparse_spmv` API with `rocsparse_spmv_alg_csr_adaptive`, 32-bit CSR indices and FP64 values. Workspace query, allocation and preprocess precede compute; persistent compute trials reuse those descriptors and workspace.
+GPU calls use `rocsparse_v2_spmv` with fixed `rocsparse_spmv_alg_csr_rowsplit`, 32-bit CSR indices and FP64 values. A SpMV descriptor specifies operation-none and FP64 scalar/compute types. Analysis and compute each query their own workspace size; analysis runs once, its buffer is freed, and the compute buffer is then allocated. Library (`compute`) trials reuse the prepared descriptors and compute workspace. End-to-end includes this setup. Missing v2 APIs disable the affected GPU targets with an explicit dependency reason; there is no old-API fallback. Earlier adaptive results are historical and must not be mixed with the v2/rowsplit campaign.
 
 CPU production supports explicit oneMKL Sparse (`cpu-onemkl`, default ONEMKL)
 or AOCL Sparse (`cpu-aocl-sparse`, `GPU_SUITE_CPU_SPARSE_BACKEND=AOCLSPARSE`).

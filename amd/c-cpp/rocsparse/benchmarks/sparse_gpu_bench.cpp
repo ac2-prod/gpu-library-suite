@@ -54,6 +54,7 @@ struct Context {
   rocsparse_handle h = nullptr;
   rocsparse_spmat_descr a = nullptr;
   rocsparse_dnvec_descr x = nullptr, y = nullptr;
+  rocsparse_spmv_descr spmv = nullptr;
   int *dr = nullptr, *dc = nullptr;
   double *dv = nullptr, *dx = nullptr, *dy = nullptr;
   void *work = nullptr;
@@ -71,10 +72,48 @@ static bool sparse_ok(rocsparse_status status, const char *api) {
   std::fprintf(stderr, "%s: rocSPARSE status %d\n", api, (int)status);
   return false;
 }
+static bool prepare_spmv(rocsparse_handle handle, rocsparse_spmat_descr matrix,
+                         rocsparse_dnvec_descr x, rocsparse_dnvec_descr y,
+                         double alpha, double beta, rocsparse_spmv_descr &spmv,
+                         void *&workspace, size_t &workspace_size) {
+  const auto alg = rocsparse_spmv_alg_csr_rowsplit;
+  const auto op = rocsparse_operation_none;
+  const auto datatype = rocsparse_datatype_f64_r;
+  if (!sparse_ok(rocsparse_create_spmv_descr(&spmv), "rocsparse_create_spmv_descr") ||
+      !sparse_ok(rocsparse_spmv_set_input(handle, spmv, rocsparse_spmv_input_alg,
+          &alg, sizeof(alg), nullptr), "rocsparse_spmv_set_input alg") ||
+      !sparse_ok(rocsparse_spmv_set_input(handle, spmv, rocsparse_spmv_input_operation,
+          &op, sizeof(op), nullptr), "rocsparse_spmv_set_input operation") ||
+      !sparse_ok(rocsparse_spmv_set_input(handle, spmv, rocsparse_spmv_input_scalar_datatype,
+          &datatype, sizeof(datatype), nullptr), "rocsparse_spmv_set_input scalar") ||
+      !sparse_ok(rocsparse_spmv_set_input(handle, spmv, rocsparse_spmv_input_compute_datatype,
+          &datatype, sizeof(datatype), nullptr), "rocsparse_spmv_set_input compute") ||
+      !sparse_ok(rocsparse_v2_spmv_buffer_size(handle, spmv, matrix, x, y,
+          rocsparse_v2_spmv_stage_analysis, &workspace_size, nullptr),
+          "rocsparse_v2_spmv_buffer_size analysis"))
+    return false;
+  if (workspace_size && !hip_ok(hipMalloc(&workspace, workspace_size), "analysis workspace"))
+    return false;
+  if (!sparse_ok(rocsparse_v2_spmv(handle, spmv, &alpha, matrix, x, &beta, y,
+          rocsparse_v2_spmv_stage_analysis, workspace_size, workspace, nullptr),
+          "rocsparse_v2_spmv analysis"))
+    return false;
+  if (workspace && !hip_ok(hipFree(workspace), "free analysis workspace"))
+    return false;
+  workspace = nullptr;
+  if (!sparse_ok(rocsparse_v2_spmv_buffer_size(handle, spmv, matrix, x, y,
+          rocsparse_v2_spmv_stage_compute, &workspace_size, nullptr),
+          "rocsparse_v2_spmv_buffer_size compute"))
+    return false;
+  return workspace_size == 0 || hip_ok(hipMalloc(&workspace, workspace_size), "compute workspace");
+}
+
 static bool destroy(Context &q) {
   bool ok = true;
   if (q.work)
     ok = hip_ok(hipFree(q.work), "hipFree cleanup") && ok;
+  if (q.spmv)
+    ok = sparse_ok(rocsparse_destroy_spmv_descr(q.spmv), "rocsparse_destroy_spmv_descr cleanup") && ok;
   if (q.y)
     ok = sparse_ok(rocsparse_destroy_dnvec_descr(q.y), "rocsparse_destroy_dnvec_descr cleanup") && ok;
   if (q.x)
@@ -135,23 +174,14 @@ static bool create(Context &q, int n, int nnz, const std::vector<int> &r,
       !sparse_ok(rocsparse_create_dnvec_descr(&q.x, n, q.dx, rocsparse_datatype_f64_r),
                  "rocsparse_create_dnvec_descr x") ||
       !sparse_ok(rocsparse_create_dnvec_descr(&q.y, n, q.dy, rocsparse_datatype_f64_r),
-                 "rocsparse_create_dnvec_descr y") ||
-      !sparse_ok(rocsparse_spmv(q.h, rocsparse_operation_none, &alpha, q.a, q.x, &beta, q.y,
-          rocsparse_datatype_f64_r, rocsparse_spmv_alg_csr_adaptive,
-          rocsparse_spmv_stage_buffer_size, &q.ws, nullptr),
-                 "rocsparse_spmv buffer_size"))
+                 "rocsparse_create_dnvec_descr y"))
     return false;
-  if (q.ws != 0 && !hip_ok(hipMalloc(&q.work, q.ws), "hipMalloc rocSPARSE workspace"))
-    return false;
-  return sparse_ok(rocsparse_spmv(q.h, rocsparse_operation_none, &alpha, q.a,
-      q.x, &beta, q.y, rocsparse_datatype_f64_r, rocsparse_spmv_alg_csr_adaptive,
-      rocsparse_spmv_stage_preprocess, &q.ws, q.work), "rocsparse_spmv preprocess");
+  return prepare_spmv(q.h, q.a, q.x, q.y, alpha, beta, q.spmv, q.work, q.ws);
 }
 static bool apply(Context &q, double a, double b) {
-  return sparse_ok(rocsparse_spmv(q.h, rocsparse_operation_none, &a, q.a, q.x, &b, q.y,
-      rocsparse_datatype_f64_r, rocsparse_spmv_alg_csr_adaptive, rocsparse_spmv_stage_compute,
-      &q.ws, q.work),
-                   "rocsparse_spmv compute");
+  return sparse_ok(rocsparse_v2_spmv(q.h, q.spmv, &a, q.a, q.x, &b, q.y,
+      rocsparse_v2_spmv_stage_compute, q.ws, q.work, nullptr),
+                   "rocsparse_v2_spmv compute");
 }
 
 static bool run_end_to_end_pipeline(

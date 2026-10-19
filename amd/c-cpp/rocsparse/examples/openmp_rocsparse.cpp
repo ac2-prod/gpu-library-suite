@@ -83,6 +83,10 @@ int main() {
   {
     rocsparse_spmat_descr matrix = nullptr;
     rocsparse_dnvec_descr vecx = nullptr, vecy = nullptr;
+    rocsparse_spmv_descr spmv = nullptr;
+    const auto alg = rocsparse_spmv_alg_csr_rowsplit;
+    const auto op = rocsparse_operation_none;
+    const auto datatype = rocsparse_datatype_f64_r;
     void *workspace = nullptr;
     size_t workspace_size = 0;
 #pragma omp target data use_device_ptr(rp, cp, vp, xp, yp)
@@ -96,22 +100,38 @@ int main() {
            rocsparse_create_dnvec_descr(&vecy, n, yp, rocsparse_datatype_f64_r) ==
                rocsparse_status_success;
     }
-    ok = ok && rocsparse_spmv(handle, rocsparse_operation_none, &alpha, matrix, vecx, &beta, vecy,
-        rocsparse_datatype_f64_r, rocsparse_spmv_alg_csr_adaptive,
-        rocsparse_spmv_stage_buffer_size, &workspace_size, nullptr) == rocsparse_status_success;
+    ok = ok && rocsparse_create_spmv_descr(&spmv) == rocsparse_status_success &&
+         rocsparse_spmv_set_input(handle, spmv, rocsparse_spmv_input_alg,
+             &alg, sizeof(alg), nullptr) == rocsparse_status_success &&
+         rocsparse_spmv_set_input(handle, spmv, rocsparse_spmv_input_operation,
+             &op, sizeof(op), nullptr) == rocsparse_status_success &&
+         rocsparse_spmv_set_input(handle, spmv, rocsparse_spmv_input_scalar_datatype,
+             &datatype, sizeof(datatype), nullptr) == rocsparse_status_success &&
+         rocsparse_spmv_set_input(handle, spmv, rocsparse_spmv_input_compute_datatype,
+             &datatype, sizeof(datatype), nullptr) == rocsparse_status_success &&
+         rocsparse_v2_spmv_buffer_size(handle, spmv, matrix, vecx, vecy,
+             rocsparse_v2_spmv_stage_analysis, &workspace_size, nullptr) == rocsparse_status_success;
     if (ok && workspace_size > 0)
       ok = hipMalloc(&workspace, workspace_size) == hipSuccess;
     if (ok)
-      ok =
-          rocsparse_spmv(handle, rocsparse_operation_none, &alpha, matrix, vecx, &beta, vecy,
-              rocsparse_datatype_f64_r, rocsparse_spmv_alg_csr_adaptive,
-              rocsparse_spmv_stage_preprocess, &workspace_size, workspace) == rocsparse_status_success &&
-             rocsparse_spmv(handle, rocsparse_operation_none, &alpha, matrix, vecx, &beta, vecy,
-                 rocsparse_datatype_f64_r, rocsparse_spmv_alg_csr_adaptive,
-                 rocsparse_spmv_stage_compute, &workspace_size, workspace) == rocsparse_status_success &&
-          hipDeviceSynchronize() == hipSuccess;
+      ok = rocsparse_v2_spmv(handle, spmv, &alpha, matrix, vecx, &beta, vecy,
+          rocsparse_v2_spmv_stage_analysis, workspace_size, workspace, nullptr) == rocsparse_status_success;
+    if (workspace) {
+      ok = hipFree(workspace) == hipSuccess && ok;
+      workspace = nullptr;
+    }
+    ok = ok && rocsparse_v2_spmv_buffer_size(handle, spmv, matrix, vecx, vecy,
+        rocsparse_v2_spmv_stage_compute, &workspace_size, nullptr) == rocsparse_status_success;
+    if (ok && workspace_size > 0)
+      ok = hipMalloc(&workspace, workspace_size) == hipSuccess;
+    if (ok)
+      ok = rocsparse_v2_spmv(handle, spmv, &alpha, matrix, vecx, &beta, vecy,
+          rocsparse_v2_spmv_stage_compute, workspace_size, workspace, nullptr) == rocsparse_status_success;
+    ok = hipDeviceSynchronize() == hipSuccess && ok;
     if (workspace)
       ok = hipFree(workspace) == hipSuccess && ok;
+    if (spmv)
+      ok = rocsparse_destroy_spmv_descr(spmv) == rocsparse_status_success && ok;
     if (vecy)
       ok = rocsparse_destroy_dnvec_descr(vecy) == rocsparse_status_success && ok;
     if (vecx)

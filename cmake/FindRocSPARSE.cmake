@@ -21,10 +21,35 @@ int main() {
   if (!symbol_4) return 1;
   auto volatile symbol_5 = &rocsparse_destroy_dnvec_descr;
   if (!symbol_5) return 1;
-  auto volatile symbol_6 = &rocsparse_spmv;
+  auto volatile symbol_6 = &rocsparse_v2_spmv;
   if (!symbol_6) return 1;
   auto volatile symbol_7 = &rocsparse_get_version;
   if (!symbol_7) return 1;
+  auto volatile symbol_8 = &rocsparse_create_spmv_descr;
+  if (!symbol_8) return 1;
+  auto volatile symbol_9 = &rocsparse_destroy_spmv_descr;
+  if (!symbol_9) return 1;
+  auto volatile symbol_10 = &rocsparse_spmv_set_input;
+  if (!symbol_10) return 1;
+  auto volatile symbol_11 = &rocsparse_v2_spmv_buffer_size;
+  if (!symbol_11) return 1;
+  rocsparse_spmv_descr spmv = nullptr;
+  const auto alg = rocsparse_spmv_alg_csr_rowsplit;
+  const auto op = rocsparse_operation_none;
+  const auto datatype = rocsparse_datatype_f64_r;
+  (void)rocsparse_spmv_set_input(nullptr, spmv, rocsparse_spmv_input_alg,
+      &alg, sizeof(alg), nullptr);
+  (void)rocsparse_spmv_set_input(nullptr, spmv, rocsparse_spmv_input_operation,
+      &op, sizeof(op), nullptr);
+  (void)rocsparse_spmv_set_input(nullptr, spmv, rocsparse_spmv_input_scalar_datatype,
+      &datatype, sizeof(datatype), nullptr);
+  (void)rocsparse_spmv_set_input(nullptr, spmv, rocsparse_spmv_input_compute_datatype,
+      &datatype, sizeof(datatype), nullptr);
+  size_t bytes = 0;
+  (void)rocsparse_v2_spmv_buffer_size(nullptr, spmv, nullptr, nullptr, nullptr,
+      rocsparse_v2_spmv_stage_analysis, &bytes, nullptr);
+  (void)rocsparse_v2_spmv(nullptr, spmv, nullptr, nullptr, nullptr, nullptr, nullptr,
+      rocsparse_v2_spmv_stage_compute, bytes, nullptr, nullptr);
   void *p = nullptr;
   hipDeviceProp_t properties{};
   hipPointerAttribute_t attributes{};

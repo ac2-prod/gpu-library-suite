@@ -8,7 +8,12 @@ CPU（AOCL Sparse）・HIP・OpenMP targetのSirius実機buildと基本数値smo
 [検証したsource snapshotと保存ログ](../../../jobs/sirius/README.md#focused-numerical-smoke)を参照してください。
 後続のソース変更、性能、CPU実効worker数はこの結果の検証範囲外です。
 
-FP64の5点Poisson行列によるCSR SpMVを扱います。教材は1024×1024格子、対角4・隣接要素−1、alpha=beta=1、x/yはすべて1です。GPUはgeneric rocsparse_spmvを使用し、workspace照会→確保→preprocess→computeの順に実行します。
+FP64の5点Poisson行列によるCSR SpMVを扱います。教材は1024×1024格子、対角4・隣接要素−1、alpha=beta=1、x/yはすべて1です。GPUは`rocsparse_v2_spmv`と`rocsparse_spmv_alg_csr_rowsplit`を固定使用します。
+SpMV descriptorに非転置・FP64 scalar/compute型を設定し、analysisとcomputeのworkspaceサイズを個別に照会します。
+analysisを1回実行してそのbufferを解放した後、compute用bufferを確保します。
+library（内部scope名`compute`）では準備済みdescriptorとcompute bufferを再利用し、end-to-endでは準備も計測に含めます。
+v2 APIが利用できなければ対象GPU targetを依存不足として無効化し、旧APIへfallbackしません。
+旧adaptive結果は履歴として保持し、新しいv2/rowsplit campaignへ混在させません。
 CPU productionは既定のoneMKL Sparse、または明示選択のAOCL Sparseです。
 AOCLには`GPU_SUITE_CPU_SPARSE_BACKEND=AOCLSPARSE`を指定し、結果は`cpu-aocl-sparse`と記録します。
 REFERENCEを明示した場合だけcpu-reference-csrを構築します。依存不足で他backendへ切り替えません。

@@ -16,3 +16,7 @@ __pycache__/
 *.pyc
 .DS_Store
 .fuse_hidden*
+
+# Owner-supplied teaching deck and its local rocSPARSE review copy.
+/HAIRDESC_AMD_GPU_Library_C_20261020.pptx
+/HAIRDESC_AMD_GPU_Library_C_20261020_rocsparse_v2_rowsplit.pptx

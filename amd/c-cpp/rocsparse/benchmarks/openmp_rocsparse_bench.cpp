@@ -54,6 +54,42 @@ static bool rocsparse_success(rocsparse_status status, const char *api) {
   return false;
 }
 
+static bool prepare_spmv(rocsparse_handle handle, rocsparse_spmat_descr matrix,
+                         rocsparse_dnvec_descr x, rocsparse_dnvec_descr y,
+                         double alpha, double beta, rocsparse_spmv_descr &spmv,
+                         void *&workspace, size_t &workspace_size) {
+  const auto alg = rocsparse_spmv_alg_csr_rowsplit;
+  const auto op = rocsparse_operation_none;
+  const auto datatype = rocsparse_datatype_f64_r;
+  if (!rocsparse_success(rocsparse_create_spmv_descr(&spmv), "rocsparse_create_spmv_descr") ||
+      !rocsparse_success(rocsparse_spmv_set_input(handle, spmv, rocsparse_spmv_input_alg,
+          &alg, sizeof(alg), nullptr), "rocsparse_spmv_set_input alg") ||
+      !rocsparse_success(rocsparse_spmv_set_input(handle, spmv, rocsparse_spmv_input_operation,
+          &op, sizeof(op), nullptr), "rocsparse_spmv_set_input operation") ||
+      !rocsparse_success(rocsparse_spmv_set_input(handle, spmv, rocsparse_spmv_input_scalar_datatype,
+          &datatype, sizeof(datatype), nullptr), "rocsparse_spmv_set_input scalar") ||
+      !rocsparse_success(rocsparse_spmv_set_input(handle, spmv, rocsparse_spmv_input_compute_datatype,
+          &datatype, sizeof(datatype), nullptr), "rocsparse_spmv_set_input compute") ||
+      !rocsparse_success(rocsparse_v2_spmv_buffer_size(handle, spmv, matrix, x, y,
+          rocsparse_v2_spmv_stage_analysis, &workspace_size, nullptr),
+          "rocsparse_v2_spmv_buffer_size analysis"))
+    return false;
+  if (workspace_size && !hip_success(hipMalloc(&workspace, workspace_size), "analysis workspace"))
+    return false;
+  if (!rocsparse_success(rocsparse_v2_spmv(handle, spmv, &alpha, matrix, x, &beta, y,
+          rocsparse_v2_spmv_stage_analysis, workspace_size, workspace, nullptr),
+          "rocsparse_v2_spmv analysis"))
+    return false;
+  if (workspace && !hip_success(hipFree(workspace), "free analysis workspace"))
+    return false;
+  workspace = nullptr;
+  if (!rocsparse_success(rocsparse_v2_spmv_buffer_size(handle, spmv, matrix, x, y,
+          rocsparse_v2_spmv_stage_compute, &workspace_size, nullptr),
+          "rocsparse_v2_spmv_buffer_size compute"))
+    return false;
+  return workspace_size == 0 || hip_success(hipMalloc(&workspace, workspace_size), "compute workspace");
+}
+
 static uint64_t root(uint64_t v) {
   uint64_t r = (uint64_t)std::sqrt((long double)v);
   return r;
@@ -101,6 +137,7 @@ static bool run_end_to_end_once(int n, int nnz, int *row_offsets,
   rocsparse_spmat_descr matrix = nullptr;
   rocsparse_dnvec_descr vector_x = nullptr;
   rocsparse_dnvec_descr vector_y = nullptr;
+  rocsparse_spmv_descr spmv = nullptr;
   void *workspace = nullptr;
   size_t workspace_size = 0;
   struct timespec start;
@@ -133,27 +170,13 @@ static bool run_end_to_end_once(int n, int nnz, int *row_offsets,
       }
     }
     if (ok) {
-      ok = rocsparse_success(
-               rocsparse_spmv(handle, rocsparse_operation_none, &alpha, matrix, vector_x, &beta,
-                   vector_y, rocsparse_datatype_f64_r, rocsparse_spmv_alg_csr_adaptive,
-                   rocsparse_spmv_stage_buffer_size, &workspace_size, nullptr),
-               "rocsparse_spmv buffer_size") &&
-           (workspace_size == 0 ||
-            hip_success(hipMalloc(&workspace, workspace_size),
-                         "hipMalloc rocSPARSE workspace")) &&
-           rocsparse_success(
-               rocsparse_spmv(handle, rocsparse_operation_none, &alpha, matrix, vector_x, &beta,
-                   vector_y, rocsparse_datatype_f64_r, rocsparse_spmv_alg_csr_adaptive,
-                   rocsparse_spmv_stage_preprocess, &workspace_size, workspace),
-                   "rocsparse_spmv preprocess") &&
-           rocsparse_success(rocsparse_spmv(handle, rocsparse_operation_none, &alpha, matrix,
-               vector_x, &beta, vector_y, rocsparse_datatype_f64_r,
-               rocsparse_spmv_alg_csr_adaptive, rocsparse_spmv_stage_compute, &workspace_size,
-               workspace),
-               "rocsparse_spmv compute") &&
-           hip_success(hipDeviceSynchronize(),
-                        "end-to-end synchronize");
+      ok = prepare_spmv(handle, matrix, vector_x, vector_y, alpha, beta,
+                        spmv, workspace, workspace_size) &&
+           rocsparse_success(rocsparse_v2_spmv(handle, spmv, &alpha, matrix,
+               vector_x, &beta, vector_y, rocsparse_v2_spmv_stage_compute,
+               workspace_size, workspace, nullptr), "rocsparse_v2_spmv compute");
     }
+    ok = hip_success(hipDeviceSynchronize(), "end-to-end synchronize") && ok;
   }
   ok = ok &&
        (last_repeat
@@ -164,6 +187,8 @@ static bool run_end_to_end_once(int n, int nnz, int *row_offsets,
 
   if (workspace)
     ok = hip_success(hipFree(workspace), "hipFree cleanup") && ok;
+  if (spmv)
+    ok = rocsparse_success(rocsparse_destroy_spmv_descr(spmv), "rocsparse_destroy_spmv_descr cleanup") && ok;
   if (vector_y)
     ok = rocsparse_success(rocsparse_destroy_dnvec_descr(vector_y), "rocsparse_destroy_dnvec_descr cleanup") && ok;
   if (vector_x)
@@ -333,6 +358,7 @@ int main(int argc, char **argv) {
   {
     rocsparse_spmat_descr a = nullptr;
     rocsparse_dnvec_descr vx = nullptr, vy = nullptr;
+    rocsparse_spmv_descr spmv = nullptr;
     void *work = nullptr;
     size_t ws = 0;
 #pragma omp target data use_device_ptr(rp, cp, vp, xp, yp)
@@ -352,25 +378,12 @@ int main(int argc, char **argv) {
       }
     }
     if (!fatal_failure)
-      fatal_failure =
-          !rocsparse_success(
-              rocsparse_spmv(h, rocsparse_operation_none, &o.alpha, a, vx, &o.beta, vy,
-                  rocsparse_datatype_f64_r, rocsparse_spmv_alg_csr_adaptive,
-                  rocsparse_spmv_stage_buffer_size, &ws, nullptr),
-              "rocsparse_spmv buffer_size") ||
-          (ws != 0 && !hip_success(hipMalloc(&work, ws),
-                                    "hipMalloc rocSPARSE workspace"));
-    if (!fatal_failure)
-      fatal_failure = !rocsparse_success(rocsparse_spmv(h, rocsparse_operation_none,
-          &o.alpha, a, vx, &o.beta, vy, rocsparse_datatype_f64_r,
-          rocsparse_spmv_alg_csr_adaptive, rocsparse_spmv_stage_preprocess,
-          &ws, work), "rocsparse_spmv preprocess");
+      fatal_failure = !prepare_spmv(h, a, vx, vy, o.alpha, o.beta, spmv, work, ws);
     for (int warm = 0; warm < o.warmup && !fatal_failure; ++warm)
       fatal_failure = !rocsparse_success(
-          rocsparse_spmv(h, rocsparse_operation_none, &o.alpha, a, vx, &o.beta, vy,
-              rocsparse_datatype_f64_r, rocsparse_spmv_alg_csr_adaptive,
-              rocsparse_spmv_stage_compute, &ws, work),
-          "warmup rocsparse_spmv compute");
+          rocsparse_v2_spmv(h, spmv, &o.alpha, a, vx, &o.beta, vy,
+              rocsparse_v2_spmv_stage_compute, ws, work, nullptr),
+          "warmup rocsparse_v2_spmv compute");
     if (!fatal_failure)
       fatal_failure = !hip_success(hipDeviceSynchronize(),
                                     "warmup synchronize");
@@ -392,10 +405,9 @@ int main(int argc, char **argv) {
                     GPU_SUITE_OK;
       for (int rep = 0; rep < o.repeat && ok; ++rep)
         ok = rocsparse_success(
-            rocsparse_spmv(h, rocsparse_operation_none, &o.alpha, a, vx, &o.beta, vy,
-                rocsparse_datatype_f64_r, rocsparse_spmv_alg_csr_adaptive,
-                rocsparse_spmv_stage_compute, &ws, work),
-            "rocsparse_spmv compute");
+            rocsparse_v2_spmv(h, spmv, &o.alpha, a, vx, &o.beta, vy,
+              rocsparse_v2_spmv_stage_compute, ws, work, nullptr),
+            "rocsparse_v2_spmv compute");
       ok = ok && hip_success(hipDeviceSynchronize(),
                               "post-timing synchronize") &&
            gpu_suite_measurement_end(&te, et, e, sizeof(e)) == GPU_SUITE_OK;
@@ -442,8 +454,11 @@ int main(int argc, char **argv) {
         break;
       }
     }
+    any_failure = !hip_success(hipDeviceSynchronize(), "before OpenMP data exit") || any_failure;
     if (work)
       any_failure = !hip_success(hipFree(work), "hipFree cleanup") || any_failure;
+    if (spmv)
+      any_failure = !rocsparse_success(rocsparse_destroy_spmv_descr(spmv), "rocsparse_destroy_spmv_descr cleanup") || any_failure;
     if (vy)
       any_failure = !rocsparse_success(rocsparse_destroy_dnvec_descr(vy), "rocsparse_destroy_dnvec_descr cleanup") || any_failure;
     if (vx)

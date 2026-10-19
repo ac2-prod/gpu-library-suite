@@ -18,6 +18,8 @@ AMD = ROOT / "amd/c-cpp"
 @unittest.skipUnless(shutil.which("cc") and shutil.which("c++"),
                      "host C and C++ compilers required for API fixtures")
 class AmdBlasSparseTests(unittest.TestCase):
+    family_stems = (("rocblas", "blas"), ("rocsparse", "sparse"))
+
     @classmethod
     def setUpClass(cls):
         base = Path("/tmp/gpu-library-suite-local-build")
@@ -55,7 +57,7 @@ class AmdBlasSparseTests(unittest.TestCase):
         cls.checked(["c++", "-std=c++17", *fixture_includes,
                      "-c", FIXTURE / "fake_amd.cpp", "-o", fake])
         cls.binaries = {}
-        for family, stem in (("rocblas", "blas"), ("rocsparse", "sparse")):
+        for family, stem in cls.family_stems:
             for implementation in ("cpu", "hip", "openmp"):
                 name = stem + "_cpu_bench.c" if implementation == "cpu" else (
                     stem + "_gpu_bench.cpp" if implementation == "hip" else "openmp_" + family + "_bench.cpp")
@@ -120,7 +122,7 @@ class AmdBlasSparseTests(unittest.TestCase):
                                                    float(row["elapsed_total_sec"]), places=12)
 
     def test_nonfinite_gpu_fixture_output_fails_verification(self):
-        for family in ("rocblas", "rocsparse"):
+        for family, _ in self.family_stems:
             for implementation in ("hip", "openmp"):
                 for scope in ("compute", "end-to-end"):
                     for value in ("nan", "inf"):
@@ -133,7 +135,7 @@ class AmdBlasSparseTests(unittest.TestCase):
                                 self.assertEqual(row["failure_origin"], "verification")
 
     def test_gpu_fixture_library_failure_has_no_success_records(self):
-        for family in ("rocblas", "rocsparse"):
+        for family, _ in self.family_stems:
             for implementation in ("hip", "openmp"):
                 for scope in ("compute", "end-to-end"):
                     with self.subTest(family=family, implementation=implementation, scope=scope):
@@ -145,7 +147,7 @@ class AmdBlasSparseTests(unittest.TestCase):
                         self.assertTrue(all(row["status"] != "success" for row in rows))
 
     def test_openmp_host_fallback_and_mapped_device_mismatch_reject(self):
-        for family in ("rocblas", "rocsparse"):
+        for family, _ in self.family_stems:
             for scope in ("compute", "end-to-end"):
                 for failure in ("FAKE_HOST_FALLBACK", "FAKE_DEVICE_MISMATCH"):
                     with self.subTest(family=family, scope=scope, failure=failure):
@@ -156,7 +158,7 @@ class AmdBlasSparseTests(unittest.TestCase):
                         self.assertTrue(all(row["status"] != "success" for row in rows))
 
     def test_measured_failure_marks_remaining_trials_unattempted(self):
-        for family in ("rocblas", "rocsparse"):
+        for family, _ in self.family_stems:
             for implementation in ("hip", "openmp"):
                 for scope in ("compute", "end-to-end"):
                     with self.subTest(family=family, implementation=implementation, scope=scope):
@@ -172,7 +174,7 @@ class AmdBlasSparseTests(unittest.TestCase):
                         self.assertEqual(rows[1]["failure_origin"], "prior-failure")
 
     def test_zero_warmup_still_checks_openmp_device_mapping(self):
-        for family in ("rocblas", "rocsparse"):
+        for family, _ in self.family_stems:
             result = self.invoke(family, "openmp", extra=("--warmup", "0"),
                                  environment={"FAKE_DEVICE_MISMATCH": "1"})
             self.assertNotEqual(result.returncode, 0)
@@ -191,7 +193,7 @@ class AmdBlasSparseTests(unittest.TestCase):
                 self.assertTrue(all(not row["attempted"] and row["elapsed_sec"] is None for row in rows))
 
     def test_hip_allocation_failure_is_recorded(self):
-        for family in ("rocblas", "rocsparse"):
+        for family, _ in self.family_stems:
             result = self.invoke(family, "hip", environment={"FAKE_ALLOC_FAIL": "1"})
             self.assertNotEqual(result.returncode, 0)
             rows = [json.loads(line) for line in result.stdout.splitlines()]
@@ -199,7 +201,7 @@ class AmdBlasSparseTests(unittest.TestCase):
             self.assertEqual(rows[0]["status"], "failure")
 
     def test_explicit_cpu_backend_does_not_fallback(self):
-        for family in ("rocblas", "rocsparse"):
+        for family, _ in self.family_stems:
             result = self.invoke(family, "cpu", extra=("--cpu-backend", "cpu-onemkl"))
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("backend", result.stderr.lower())
@@ -208,7 +210,7 @@ class AmdBlasSparseTests(unittest.TestCase):
         compiler = shutil.which("clang++")
         if not compiler:
             self.skipTest("Clang OpenMP syntax frontend unavailable")
-        for family, stem in (("rocblas", "blas"), ("rocsparse", "sparse")):
+        for family, stem in self.family_stems:
             sources = [AMD / family / "examples" / (stem + "_gpu.cpp"),
                        AMD / family / "examples" / ("openmp_" + family + ".cpp"),
                        AMD / family / "benchmarks" / ("openmp_" + family + "_bench.cpp")]
@@ -217,7 +219,7 @@ class AmdBlasSparseTests(unittest.TestCase):
                           "-I", ROOT / "common/c-cpp/include", *sources])
 
     def test_standalone_cpu_teaching_sources_compile_for_explicit_backends(self):
-        for family, stem in (("rocblas", "blas"), ("rocsparse", "sparse")):
+        for family, stem in self.family_stems:
             source = AMD / family / "examples" / (stem + "_cpu.c")
             self.checked(["cc", "-std=c11", "-fsyntax-only", "-I",
                           ROOT / "tests/fixtures/cpu_libs/include", source])
@@ -226,7 +228,7 @@ class AmdBlasSparseTests(unittest.TestCase):
                               "-I", ROOT / "tests/fixtures/cpu_libs/include", source])
 
     def test_sources_do_not_depend_on_nvidia_or_hidden_teaching_helpers(self):
-        for family in ("rocblas", "rocsparse"):
+        for family, _ in self.family_stems:
             for source in (AMD / family).rglob("*"):
                 if source.suffix not in (".c", ".cpp", ".hpp"):
                     continue
@@ -236,6 +238,29 @@ class AmdBlasSparseTests(unittest.TestCase):
                 if source.parent.name == "examples":
                     self.assertNotIn('#include "', text)
                     self.assertNotIn("gpu_suite_options", text)
+                if family == "rocsparse" and source.name in {
+                        "sparse_gpu.cpp", "openmp_rocsparse.cpp",
+                        "sparse_gpu_bench.cpp", "openmp_rocsparse_bench.cpp"}:
+                    self.assertNotRegex(text, r"\brocsparse_spmv\s*\(")
+                    self.assertNotRegex(text, r"\brocsparse_spmv_stage_\w+")
+                    self.assertNotIn("rocsparse_spmv_alg_csr_adaptive", text)
+                    for api in ("rocsparse_v2_spmv", "rocsparse_create_spmv_descr",
+                                "rocsparse_destroy_spmv_descr", "rocsparse_spmv_set_input",
+                                "rocsparse_spmv_alg_csr_rowsplit"):
+                        self.assertIn(api, text)
+                    for field in ("alg", "operation", "scalar_datatype", "compute_datatype"):
+                        self.assertIn("rocsparse_spmv_input_" + field, text)
+                    for stage in ("analysis", "compute"):
+                        self.assertRegex(text, r"rocsparse_v2_spmv_buffer_size\([^;]+?"
+                                         r"rocsparse_v2_spmv_stage_" + stage)
+                    self.assertLess(text.index("rocsparse_v2_spmv_stage_analysis"),
+                                    text.index("rocsparse_v2_spmv_stage_compute"))
+                    if "openmp" in source.name:
+                        self.assertIn("use_device_ptr", text)
+                        self.assertIn("mapped_device", text)
+                        self.assertIn("omp_is_initial_device", text)
+                        self.assertTrue(all(pointer in {"work", "workspace"}
+                                            for pointer in re.findall(r"hipFree\((\w+)\)", text)))
 
 
 if __name__ == "__main__":
