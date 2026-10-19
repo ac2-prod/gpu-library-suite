@@ -1,89 +1,121 @@
-# rocSPARSE C/C++ examples and benchmarks
+# rocSPARSE C/C++: build, run, and adapt
 
 [English](README.md) | [日本語](README.ja.md)
 
-The v2/CSR rowsplit revision `a974467bd4f9b45526a0c448f597f895cd244062`
-passed Sirius builds for all six CPU (AOCL Sparse), HIP and OpenMP targets,
-three teaching examples (maximum error 0), and 96 numerical smoke records.
-The separate v2 campaign `sirius-rocsparse-v2-20261019T010457Z-a974467`
-passed all 1,080 production records across six physical hosts per wave and two waves.
-Raw data, provenance and the regenerated figure are retained under that campaign's
-`runs/` directory as non-distributed evidence. The earlier
-[basic smoke evidence](../../../jobs/sirius/README.md#focused-numerical-smoke)
-and adaptive results remain separate historical records.
-Effective CPU worker count and complete actually loaded DSO identity remain
-unverified. These results do not validate later source changes.
+Compute FP64 sparse matrix-vector multiplication in CSR form: `y = alpha*A*x + beta*y`. The sample matrix is a regular 2D five-point Poisson stencil.
 
-| Implementation | Teaching source / target | Benchmark source / target |
-| --- | --- | --- |
-| CPU | `examples/sparse_cpu.c` / `sparse_cpu` | `benchmarks/sparse_cpu_bench.c` / `sparse_cpu_bench` |
-| HIP | `examples/sparse_gpu.cpp` / `sparse_gpu` | `benchmarks/sparse_gpu_bench.cpp` / `sparse_gpu_bench` |
-| OpenMP target | `examples/openmp_rocsparse.cpp` / `openmp_rocsparse` | `benchmarks/openmp_rocsparse_bench.cpp` / `openmp_rocsparse_bench` |
+<a id="teaching-default"></a>
 
-Each teaching example is one complete, independently compiled source. It uses
-FP64 zero-based CSR SpMV on a 1024 by 1024 five-point Poisson grid: `y = alpha A x + beta y`, `alpha=beta=1`, diagonal 4, off-diagonal -1, and all-one x/y. Boundary/corner neighbor counts determine the expected output.
-GPU calls use `rocsparse_v2_spmv` with fixed `rocsparse_spmv_alg_csr_rowsplit`, 32-bit CSR indices and FP64 values. A SpMV descriptor specifies operation-none and FP64 scalar/compute types. Analysis and compute each query their own workspace size; analysis runs once, its buffer is freed, and the compute buffer is then allocated. Library (`compute`) trials reuse the prepared descriptors and compute workspace. End-to-end includes this setup. Missing v2 APIs disable the affected GPU targets with an explicit dependency reason; there is no old-API fallback. Earlier adaptive results are historical and must not be mixed with the v2/rowsplit campaign.
+## Problem and expected result
 
-CPU production supports explicit oneMKL Sparse (`cpu-onemkl`, default ONEMKL)
-or AOCL Sparse (`cpu-aocl-sparse`, `GPU_SUITE_CPU_SPARSE_BACKEND=AOCLSPARSE`).
-`GPU_SUITE_CPU_SPARSE_BACKEND=REFERENCE` explicitly selects independent
-`cpu-reference-csr` for teaching and auxiliary verification. No missing provider
-selects another provider or reference code automatically.
+A 1024×1024 grid gives 1,048,576 rows. Diagonal entries are 4, neighbors are −1, and `alpha=beta=1`, `x=y=1`. Expected y is 1 in the interior, 2 on an edge, and 3 at a corner. CSR indices are zero-based.
 
-AOCL Sparse uses the LP64 descriptor/CSR, hint/optimize and `aoclsparse_dmv`
-APIs. The setup uses the same fixed hint of one call as the oneMKL path;
-analysis precedes timed compute and belongs inside end-to-end setup.
-Manual CPU teaching builds define `GPU_SUITE_USE_AOCL_SPARSE=1` and supply the
-selected header/library paths and any required ordered link inputs, for example:
+Require exit status 0 and the result checks above. Teaching sizes are source constants; do not pass benchmark CLI options to these examples.
+GPU uses `rocsparse_v2_spmv` with `rocsparse_spmv_alg_csr_rowsplit`. It needs the v2 API checked with ROCm 7.2; there is no old-API fallback. Analysis and compute workspace sizes are queried separately.
 
-```sh
-cc -std=c17 -O2 -DGPU_SUITE_USE_AOCL_SPARSE=1 -I"$AOCL_SPARSE_INCLUDE" \
-  examples/sparse_cpu.c "$AOCL_SPARSE_LIBRARY" -lm -o sparse_cpu
+<a id="dependencies"></a>
+
+## Dependencies
+
+Select AOCL Sparse (`aoclsparse.h`, `libaoclsparse`, LP64) or oneMKL Sparse explicitly for CPU. The selection below uses AOCL Sparse. REFERENCE is an auxiliary benchmark backend, not a substitute for the teaching provider.
+
+HIP needs the corresponding ROCm libraries; OpenMP target also needs compatible AMD Clang. Native CMake HIP uses HIP-capable Clang, not `hipcc`. CPU-only usage does not require ROCm.
+The CPU selection below explicitly uses AOCL Sparse. If you intend oneMKL instead, set `CPU_OPTIONS=(-DGPU_SUITE_CPU_SPARSE_BACKEND=ONEMKL)`.
+
+<a id="select-a-minimal-build"></a>
+
+## Select a minimal build
+
+Set these variables in Bash, then follow only the CPU, direct GPU, or directive section you need in the [shared build guide](../../../docs/BUILDING.md#select). It builds the selected example; benchmarks and the full test suite are not needed.
+```bash
+VENDOR=amd
+SOURCE_LANGUAGE=c-cpp
+LIBRARY=rocsparse
+CPU_TARGET=sparse_cpu
+GPU_TARGET=sparse_gpu
+DIRECTIVE_TARGET=openmp_rocsparse
+CPU_OPTIONS=(-DGPU_SUITE_CPU_SPARSE_BACKEND=AOCLSPARSE)
 ```
 
-For a static library, also provide its required runtime/dependency files after
-the primary library; the example does not guess those inputs. With CMake, use
-`GPU_SUITE_AOCL_SPARSE_INCLUDE_DIR`, `GPU_SUITE_AOCL_SPARSE_LIBRARY` and the
-ordered `GPU_SUITE_AOCL_SPARSE_EXTRA_LIBRARIES`. API compile/link and LP64 header
-checks must pass before enabling targets. See the
-[backend contract](../../../docs/BENCHMARK_PROTOCOL.md#cpu-backends-and-parallelism).
-The benchmark records API version and effective AOCL/OMP controls; observed
-worker count remains null. Header/configured-library hashes do not prove actual
-loaded DSO identity; the numerical smoke does not claim complete loaded-DSO evidence.
+<a id="canonical-sources-and-targets"></a>
 
-The benchmark preserves the shared CLI and raw-result lifecycle. Compute keeps
-allocations and library context alive, restores C/y after warm-up and before
-each raw trial, then measures `repeat` successive updates and completion using
-the host monotonic clock. Its expected result follows that recurrence.
-End-to-end restores C/y before each repeat outside timing, then measures
-context/descriptor preparation, allocation or OpenMP mapping, transfers,
-execution, completion and retrieval. Explicit cleanup follows the measured
-interval. Host input generation and verification are untimed. Numerical failure,
-nonfinite output, invalid dimensions and unavailable dependencies are explicit.
+## Sources and targets
 
-OpenMP owns mapped matrix/vector storage and passes `use_device_ptr` addresses
-to rocSPARSE. `omp_is_initial_device()` must reject host fallback, and HIP pointer
-attributes must match the selected HIP device. Device ordinals alone do not
-establish correspondence. Set `OMP_TARGET_OFFLOAD=MANDATORY` for real execution.
-Only the library workspace, where needed, is allocated with HIP in this path.
+| Variant | Teaching source / target | Benchmark source / target |
+| --- | --- | --- |
+| CPU | [`sparse_cpu.c`](examples/sparse_cpu.c) / `sparse_cpu` | [`sparse_cpu_bench.c`](benchmarks/sparse_cpu_bench.c) / `sparse_cpu_bench` |
+| HIP | [`sparse_gpu.cpp`](examples/sparse_gpu.cpp) / `sparse_gpu` | [`sparse_gpu_bench.cpp`](benchmarks/sparse_gpu_bench.cpp) / `sparse_gpu_bench` |
+| OpenMP target | [`openmp_rocsparse.cpp`](examples/openmp_rocsparse.cpp) / `openmp_rocsparse` | [`openmp_rocsparse_bench.cpp`](benchmarks/openmp_rocsparse_bench.cpp) / `openmp_rocsparse_bench` |
 
-Configure a new vendor-specific build with `GPU_SUITE_VENDOR=amd` and
-`GPU_SUITE_SOURCE_LANGUAGE=c-cpp`. CPU, HIP and OpenMP use separate build trees.
-Set `GPU_SUITE_BUILD_CPU`, `GPU_SUITE_BUILD_HIP`, `GPU_SUITE_BUILD_OPENMP` for the
-selected profile, and disable CUDA/OpenACC. Native CMake HIP uses a supported
-Clang driver, not the hipcc wrapper; architecture and dependency roots are
-explicit inputs established for the execution system. Missing optional
-libraries disable only affected targets and are not installed automatically.
+<a id="adapting-the-example"></a>
 
-Manual teaching compilation may use `hipcc` with `-lrocsparse`. OpenMP compilation
-requires the supported compiler's `-fopenmp` and explicit target architecture,
-plus `-lrocsparse -lamdhip64` and ordinary installation-specific search flags.
-These instructions do not authorize login-node builds: approved Sirius builds
-and executions run through its scheduler. See [Sirius operations](../../../jobs/sirius/README.md).
+## Adapt this example
 
-Mathematics and canonical names belong to [the specification](../../../docs/PROJECT_SPECIFICATION.md).
-Timing/CPU rules belong to [the protocol](../../../docs/BENCHMARK_PROTOCOL.md),
-and campaign provenance to [the schema](../../../docs/RESULT_SCHEMA.md).
-API signatures were checked against the [ROCm 7.2 rocSPARSE reference](https://rocm.docs.amd.com/projects/rocSPARSE/en/docs-7.2.0/reference/generic.html).
-AOCL CPU API signatures were checked against the
-[AOCL Sparse 5.1 public headers](https://github.com/amd/aocl-sparse/tree/5.1/library/include).
+Replace CSR row pointers, column indices, and values together. Preserve index width/base, dimensions, and nonzero ordering. Initial y matters when beta is nonzero. Reuse descriptors and analysis only when the API permits it for the matrix/pointers you retain. Regular five-point rows do not predict performance for highly irregular application matrices.
+
+The HIP variant manages arrays with `hipMalloc` / `hipMemcpy`. In OpenMP target, `map` owns storage and `use_device_ptr` exposes it to the GPU library. Ensure completion before result retrieval/map exit; do not free mapped storage with HIP. Shared physical memory does not imply USM or omitted copies.
+
+<a id="direct-compile"></a>
+
+## Direct compile (optional)
+
+Run from the repository root in Bash with the provider header/library search paths available. Prefer CMake for complex CPU dependencies or static linking. Run only the CPU, HIP, or OpenMP blocks you need.
+
+```bash
+DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-direct.XXXXXX")" || exit 1
+```
+If AOCL needs additional dependencies, set `AOCL_EXTRA_LIBRARIES` as a Bash array of absolute files in link order; otherwise use an empty array.
+
+```bash
+AOCL_EXTRA_LIBRARIES=()
+```
+
+```bash
+cc -std=c17 -O2 -DGPU_SUITE_USE_AOCL_SPARSE=1 \
+  -I"${AOCL_SPARSE_INCLUDE:?Set the aoclsparse.h directory}" \
+  amd/c-cpp/rocsparse/examples/sparse_cpu.c \
+  "${AOCL_SPARSE_LIBRARY:?Set the AOCL Sparse shared library file}" \
+  "${AOCL_EXTRA_LIBRARIES[@]}" -lm -o "$DIRECT_BUILD/sparse_cpu" &&
+"$DIRECT_BUILD/sparse_cpu"
+```
+Set the GPU target for your installation and use `hipcc` from the selected ROCm stack.
+
+```bash
+: "${AMD_GPU_TARGET:?Set your AMD GPU target}"
+hipcc -x hip -std=c++17 -O2 --offload-arch="$AMD_GPU_TARGET" \
+  amd/c-cpp/rocsparse/examples/sparse_gpu.cpp -lrocsparse \
+  -o "$DIRECT_BUILD/sparse_gpu" &&
+"$DIRECT_BUILD/sparse_gpu"
+```
+
+```bash
+: "${AMD_CLANGXX:?Set the AMD Clang OpenMP C++ compiler}"
+: "${ROCM_ROOT:?Set the ROCm prefix containing include}"
+: "${ROCM_LIBDIR:?Set the ROCm shared-library directory}"
+: "${AMD_GPU_TARGET:?Set your AMD GPU target}"
+"$AMD_CLANGXX" -std=c++17 -O2 -fopenmp --offload-arch="$AMD_GPU_TARGET" \
+  -I"$ROCM_ROOT/include" amd/c-cpp/rocsparse/examples/openmp_rocsparse.cpp \
+  -L"$ROCM_LIBDIR" -Wl,-rpath,"$ROCM_LIBDIR" -lrocsparse -lamdhip64 \
+  -o "$DIRECT_BUILD/openmp_rocsparse" &&
+OMP_TARGET_OFFLOAD=MANDATORY "$DIRECT_BUILD/openmp_rocsparse"
+```
+
+<a id="timing-scopes"></a>
+
+## Optional performance measurement
+
+Figures use library / end-to-end; internal CLI scopes are `compute` / `end-to-end`. These are controlled intervals, not simply the whole teaching program.
+
+library reuses descriptors and compute workspace, restores y before the trial, and times repeated v2 SpMV compute calls plus completion. End-to-end includes CPU descriptor/hint/optimize or GPU copies/maps, descriptors, v2 analysis, workspace setup, compute, and y retrieval. Analysis workspace release is part of setup; final explicit resource cleanup is outside timing, while OpenMP structured map exit is inside. Do not mix older adaptive measurements with v2/csr_rowsplit results.
+
+Host input generation and numerical verification are outside timing. See the [benchmark protocol](../../../docs/BENCHMARK_PROTOCOL.md) for details and [Sirius procedures](../../../jobs/sirius/README.md) for suite execution/aggregation. Distributed configs do not automatically adapt to another installation.
+
+<a id="validation-and-limits"></a>
+
+## Recorded validation and limits
+
+Sirius revision `a974467` verified six v2/csr_rowsplit builds, three teaching examples, 96 smoke records, and 1,080 production records in `sirius-rocsparse-v2-20261019T010457Z-a974467`. Earlier adaptive results remain separate historical evidence.
+
+Requested CPU threads are not observed worker counts. Saved RAND / Thrust CPU measurements use serial backends. Complete actually loaded-library identity remains unverified. Recorded success is not a guarantee for another environment or later edits; local fixtures do not prove GPU execution.
+
+[Problem/source specification](../../../docs/PROJECT_SPECIFICATION.md) · [Result format](../../../docs/RESULT_SCHEMA.md)

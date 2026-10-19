@@ -2,53 +2,97 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
-See the [shared Fortran guide](../README.md) for dependencies, separate CMake builds, numerical flags, and the scope and limits of completed Pegasus validation.
+Generate uniform FP64 random values. This demonstrates a persistent generator and output buffer, useful for simulation inputs and stochastic algorithms.
 
-| Implementation | Example | Benchmark |
+<a id="problem"></a>
+
+## Problem and expected result
+
+Generate `2^24` values with seed 1234. CPU uses the Fortran intrinsic RNG. GPU uses the library’s default pseudorandom generator. CPU uniform values are in [0,1), GPU values in (0,1]. These are comparable distributions, not identical streams.
+
+Fortran examples must exit 0 and print `verification PASS`. Teaching sizes are source constants.
+
+<a id="dependencies"></a>
+
+## Dependencies
+
+CPU uses its Fortran compiler and intrinsic RNG only. GPU requires cuRAND.
+
+CPU supports GNU Fortran / NVHPC; GPU uses NVHPC `nvfortran` and CUDA Toolkit. Do not share `.mod` files between compilers or reuse a C/C++ tree. The [Fortran guide](../README.md) covers ABI and numerical requirements.
+
+<a id="select-a-minimal-build"></a>
+
+## Select a minimal build
+
+Set these variables in Bash, then follow only the CPU, direct GPU, or directive section you need in the [shared build guide](../../../docs/BUILDING.md#select). It builds the selected example; benchmarks and the full test suite are not needed.
+```bash
+VENDOR=nvidia
+SOURCE_LANGUAGE=fortran
+LIBRARY=curand
+CPU_TARGET=rand_cpu
+GPU_TARGET=rand_gpu
+DIRECTIVE_TARGET=openacc_curand
+CPU_OPTIONS=()
+```
+
+<a id="sources"></a>
+
+## Sources and explicit link inputs
+
+| Variant | Example | Benchmark |
 | --- | --- | --- |
-| CPU | [rand_cpu.f90](examples/rand_cpu.f90) | [rand_cpu_bench.f90](benchmarks/rand_cpu_bench.f90) |
-| CUDA | [rand_gpu.f90](examples/rand_gpu.f90) | [rand_gpu_bench.f90](benchmarks/rand_gpu_bench.f90) |
-| OpenACC | [openacc_curand.f90](examples/openacc_curand.f90) | [openacc_curand_bench.f90](benchmarks/openacc_curand_bench.f90) |
+| CPU | [rand_cpu.f90](examples/rand_cpu.f90) / `rand_cpu` | [rand_cpu_bench.f90](benchmarks/rand_cpu_bench.f90) / `rand_cpu_bench` |
+| CUDA | [rand_gpu.f90](examples/rand_gpu.f90) / `rand_gpu` | [rand_gpu_bench.f90](benchmarks/rand_gpu_bench.f90) / `rand_gpu_bench` |
+| OpenACC | [openacc_curand.f90](examples/openacc_curand.f90) / `openacc_curand` | [openacc_curand_bench.f90](benchmarks/openacc_curand_bench.f90) / `openacc_curand_bench` |
 
-FP64 uniform random output. CPU uses random_seed(size=...) then a seed vector filled with 1234 and random_number, never the C++ MT engine. The algorithm/stream depends on the Fortran compiler; only the distribution task is compared with CURAND_RNG_PSEUDO_DEFAULT. CPU values are in [0,1), GPU in (0,1]. Verification checks finite range, mean and second central moment with configured sigma bounds. Compute advances the stream across repeats and resets seed/offset before each trial; E2E creates/resets each pipeline. The CPU benchmark requires seed<=INT_MAX and implements offset by consuming the intrinsic stream in bounded chunks.
+<a id="adapting-the-example"></a>
 
-## Direct compilation
+## Adapt this example
 
-Prefer the [shared CMake recipe](../README.md#separate-gpu-build-trees). These are NVHPC/Linux commands from the repository root in the same Toolkit environment, not a claim of an executed GPU build. Supply real provider include/library directories. Helpers/wrappers are explicit link inputs; no dependency installation is performed.
+Choose a generator and reproducible seed/stream policy for the application. Do not reset the seed on every call unless restarting the same stream is intended. Reuse the generator and output buffer for a continuing stream. Compare range and distribution statistics, not CPU/GPU element identity; CPU and GPU algorithms differ. The CPU examples are serial.
+
+Distinguish Fortran column-major arrays from C ABI types. CUDA Fortran uses device arrays; OpenACC manages a data region while calling the same GPU library. Include required helpers/wrappers in the application link.
+
+<a id="direct-compilation"></a>
+
+## Direct compilation (NVHPC alternative)
+
+Prefer the common CMake route. These optional commands run in Bash from the repository root with dependency search paths already configured. CPU and GPU blocks are separate; use only the variants you need.
 
 ```bash
-DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-fortran-example.XXXXXX")"
+DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-fortran-example.XXXXXX")" || exit 1
 F90FLAGS=(-O3 -Kieee -Mnoflushz -Mnodaz)
-GPUFLAGS=(-cuda "-gpu=${NVHPC_GPU_TARGET:?Set the actual target},mem:separate")
 unset NVCOMPILER_FPU_STATE
 nvfortran "${F90FLAGS[@]}" nvidia/fortran/curand/examples/rand_cpu.f90 \
-  -o "$DIRECT_BUILD/rand_cpu"
+  -o "$DIRECT_BUILD/rand_cpu" &&
+"$DIRECT_BUILD/rand_cpu"
+```
+
+```bash
+DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-fortran-gpu.XXXXXX")" || exit 1
+F90FLAGS=(-O3 -Kieee -Mnoflushz -Mnodaz)
+: "${CUDA_TOOLKIT_ROOT:?Set your CUDA Toolkit prefix}"
+export NVHPC_CUDA_HOME="$CUDA_TOOLKIT_ROOT"
+GPUFLAGS=(-cuda "-gpu=${NVHPC_GPU_TARGET:?Set your NVHPC GPU target},mem:separate")
+unset NVCOMPILER_FPU_STATE
 nvfortran "${F90FLAGS[@]}" "${GPUFLAGS[@]}" -cudalib=curand \
-  nvidia/fortran/curand/examples/rand_gpu.f90 -o "$DIRECT_BUILD/rand_gpu"
+  nvidia/fortran/curand/examples/rand_gpu.f90 -o "$DIRECT_BUILD/rand_gpu" &&
 nvfortran "${F90FLAGS[@]}" "${GPUFLAGS[@]}" -acc=gpu -cudalib=curand \
-  nvidia/fortran/curand/examples/openacc_curand.f90 -o "$DIRECT_BUILD/openacc_curand"
+  nvidia/fortran/curand/examples/openacc_curand.f90 -o "$DIRECT_BUILD/openacc_curand" &&
+"$DIRECT_BUILD/rand_gpu" &&
+"$DIRECT_BUILD/openacc_curand"
 ```
 
-## Examples and a small benchmark
+<a id="examples-and-a-small-benchmark"></a>
 
-Use the two build variables from the CMake recipe. Require exit 0 and verification PASS for each example. For direct compilation use the same names inside DIRECT_BUILD.
+## After the example: optional measurement
 
-```bash
-"$CPU_CUDA_BUILD/nvidia/fortran/curand/rand_cpu"
-"$CPU_CUDA_BUILD/nvidia/fortran/curand/rand_gpu"
-"$OPENACC_BUILD/nvidia/fortran/curand/openacc_curand"
-```
+The minimal build excludes benchmarks. To measure, enable them using the [Fortran measurement workflow](../README.md#first-checks-and-own-measurements), with the language-specific config and manifest. Library uses internal CLI scope `compute`; the other scope is `end-to-end`. These intervals differ from timing the entire teaching program.
 
-RUN_DIR must be fresh. This standalone CPU diagnostic is not a campaign input:
+See the [problem specification](../../../docs/PROJECT_SPECIFICATION.md) and [timing protocol](../../../docs/BENCHMARK_PROTOCOL.md). Do not mix Fortran and C/C++ results; intrinsic CPU RNG / sum are serial series.
 
-```bash
-"$CPU_CUDA_BUILD/nvidia/fortran/curand/rand_cpu_bench" \
-  --size 65536 --seed 1234 --offset 0 --warmup 1 --repeat 2 --trials 1 \
-  --scope compute --verify true --cpu-threads 1 --cpu-backend cpu-fortran-random-serial \
-  --cpu-parallelism serial --cpu-threads-effective 1 \
-  --output "$RUN_DIR/standalone-curand-cpu-compute.jsonl" --format jsonl
-```
+<a id="validation"></a>
 
-For E2E use --scope end-to-end and a fresh output name. For GPU diagnostics select the corresponding benchmark path in the table (CUDA under CPU_CUDA_BUILD, OpenACC under OPENACC_BUILD), remove CPU-only arguments and preserve the same problem/verification/repetition settings. Start E2E diagnostics with repeat=1.
+## Recorded validation
 
-[Own measurement → verification → aggregation → figures](../README.md#first-checks-and-own-measurements) uses the existing runner. The [benchmark protocol](../../../docs/BENCHMARK_PROTOCOL.md) owns scope, restoration and tolerances. Retain the Fortran language identity and do not mix in C/C++ measurements.
+Saved Pegasus evidence covers NVHPC builds, numerical smoke, and production measurements; see the [versions and limits](../../../docs/VALIDATION_REPORT.md#fortran-production-validation). This does not certify another compiler / GPU. Distinguish requested/effective CPU threads and linked-library evidence from complete actual load provenance.

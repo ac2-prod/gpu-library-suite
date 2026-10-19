@@ -1,12 +1,39 @@
-# cuSPARSE C/C++ examples and benchmarks
+# cuSPARSE C/C++: build, run, and adapt
 
 [English](README.md) | [日本語](README.ja.md)
 
-This directory compares the canonical FP64 five-point Poisson CSR SpMV through
-oneMKL Sparse, direct cuSPARSE, and OpenACC/cuSPARSE. Matrix construction belongs
-to [`docs/PROJECT_SPECIFICATION.md`](../../../docs/PROJECT_SPECIFICATION.md),
-and CLI, timing, restoration, and verification belong to
-[`docs/BENCHMARK_PROTOCOL.md`](../../../docs/BENCHMARK_PROTOCOL.md).
+Compute FP64 sparse matrix-vector multiplication in CSR form: `y = alpha*A*x + beta*y`. The sample matrix is a regular 2D five-point Poisson stencil.
+
+<a id="teaching-default"></a>
+
+## Teaching default
+
+A 1024×1024 grid gives 1,048,576 rows. Diagonal entries are 4, neighbors are −1, and `alpha=beta=1`, `x=y=1`. Expected y is 1 in the interior, 2 on an edge, and 3 at a corner. CSR indices are zero-based.
+
+<a id="dependencies"></a>
+
+## Dependencies
+
+The CPU teaching example uses oneMKL Sparse LP64 (`mkl_spblas.h`, `mkl_rt`). REFERENCE is an auxiliary benchmark backend, not a substitute for the teaching provider.
+
+GPU variants need a compatible NVIDIA GPU/driver and CUDA Toolkit; OpenACC additionally needs NVHPC nvc++.
+
+<a id="select-a-minimal-build"></a>
+
+## Select a minimal build
+
+Set these variables in Bash, then follow only the CPU, direct GPU, or directive section you need in the [shared build guide](../../../docs/BUILDING.md#select). It builds the selected example; benchmarks and the full test suite are not needed.
+```bash
+VENDOR=nvidia
+SOURCE_LANGUAGE=c-cpp
+LIBRARY=cusparse
+CPU_TARGET=sparse_cpu
+GPU_TARGET=sparse_gpu
+DIRECTIVE_TARGET=openacc_cusparse
+CPU_OPTIONS=(-DGPU_SUITE_CPU_SPARSE_BACKEND=ONEMKL)
+```
+
+<a id="canonical-sources-and-targets"></a>
 
 ## Canonical sources and targets
 
@@ -19,92 +46,83 @@ and CLI, timing, restoration, and verification belong to
 | CUDA benchmark | `benchmarks/sparse_gpu_bench.cu` | `sparse_gpu_bench` |
 | OpenACC benchmark | `benchmarks/openacc_cusparse_bench.cpp` | `openacc_cusparse_bench` |
 
-## Teaching default
+<a id="adapting-the-example"></a>
 
-The teaching programs build a 1,024 by 1,024 grid, so the matrix has
-1,048,576 rows and `5*n - 2*nx - 2*ny` nonzeros. They execute FP64 SpMV with
-`alpha=1` and `beta=1`. The canonical CPU teaching example is specifically a
-oneMKL Sparse example; it does not contain a handwritten reference fallback.
+## Adapt this example
 
-## Dependencies
+Replace CSR row pointers, column indices, and values together. Preserve index width/base, dimensions, and nonzero ordering. Initial y matters when beta is nonzero. Reuse descriptors and analysis only when the API permits it for the matrix/pointers you retain. Regular five-point rows do not predict performance for highly irregular application matrices.
 
-`sparse_cpu` requires oneMKL Sparse and a successful descriptor/create,
-hint/optimize, SpMV, and destroy compile-and-link probe. The CPU benchmark may
-instead be built as the separately named `cpu-reference-csr` backend when
-`GPU_SUITE_CPU_SPARSE_BACKEND=REFERENCE`; that choice disables the canonical
-CPU teaching target with an explicit reason. CUDA and OpenACC targets require
-CUDA Runtime and cuSPARSE descriptor/SpMV symbols.
+Direct CUDA manages device arrays; OpenACC uses a data region and `host_data use_device` to call the same GPU library. Keep allocation ownership clear and ensure completion before reading results.
+
+<a id="direct-compile"></a>
 
 ## Direct compile
 
-These representative commands assume the selected libraries are on compiler
-search paths:
+An alternative to CMake, from the repository root in Bash with provider header/library search paths already configured. Choose the variant you need; run it only if compilation succeeds.
 
 ```bash
-mkdir -p /tmp/gpu-library-suite-local-build
-cc -std=c17 nvidia/c-cpp/cusparse/examples/sparse_cpu.c \
-  -lmkl_rt -lpthread -ldl -lm \
-  -o /tmp/gpu-library-suite-local-build/sparse_cpu-direct
-nvcc -std=c++17 nvidia/c-cpp/cusparse/examples/sparse_gpu.cu \
-  -lcusparse -o /tmp/gpu-library-suite-local-build/sparse_gpu-direct
-nvc++ -std=c++17 -acc -cuda \
-  nvidia/c-cpp/cusparse/examples/openacc_cusparse.cpp -cudalib=cusparse \
-  -o /tmp/gpu-library-suite-local-build/openacc_cusparse-direct
+DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-direct.XXXXXX")" || exit 1
 ```
+
+```bash
+cc -std=c17 -O2 -I"${MKLROOT:?Set the installed oneMKL prefix}/include" \
+  nvidia/c-cpp/cusparse/examples/sparse_cpu.c -L"${MKL_LIBDIR:?Set the oneMKL library directory}" \
+  -lmkl_rt -lpthread -ldl -lm -o "$DIRECT_BUILD/sparse_cpu" &&
+"$DIRECT_BUILD/sparse_cpu"
+```
+
+```bash
+: "${CUDA_TOOLKIT_ROOT:?Set your CUDA Toolkit prefix}"
+: "${NVCC_ARCH:?Set the nvcc architecture supported by your GPU}"
+"$CUDA_TOOLKIT_ROOT/bin/nvcc" -std=c++17 -O2 -arch="$NVCC_ARCH" \
+  nvidia/c-cpp/cusparse/examples/sparse_gpu.cu -lcusparse \
+  -o "$DIRECT_BUILD/sparse_gpu" &&
+"$DIRECT_BUILD/sparse_gpu"
+```
+
+```bash
+: "${CUDA_TOOLKIT_ROOT:?Set your CUDA Toolkit prefix}"
+: "${NVHPC_GPU_TARGET:?Set your NVHPC GPU target}"
+NVHPC_CUDA_HOME="$CUDA_TOOLKIT_ROOT" \
+nvc++ -std=c++17 -O2 -acc -cuda -gpu="$NVHPC_GPU_TARGET" \
+  nvidia/c-cpp/cusparse/examples/openacc_cusparse.cpp -cudalib=cusparse \
+  -o "$DIRECT_BUILD/openacc_cusparse" &&
+"$DIRECT_BUILD/openacc_cusparse"
+```
+
+<a id="cmake-configure-and-build"></a>
 
 ## CMake configure and build
 
-The commands assume that `CUDA_TOOLKIT_ROOT`, `CUDA_ARCHITECTURES`, and
-`NVHPC_GPU_TARGET` were set to explicit site-approved values.
+Use the selection above with the [shared guide](../../../docs/BUILDING.md). It creates separate CPU, CUDA, and OpenACC trees and builds only the chosen target. Use the GPU sections alone if you do not need CPU numerical dependencies.
 
-```bash
-cmake -S . -B /tmp/gpu-library-suite-local-build/cpu-cuda \
-  -DCUDAToolkit_ROOT="${CUDA_TOOLKIT_ROOT}" \
-  -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
-  -DGPU_SUITE_BUILD_CPU=ON -DGPU_SUITE_BUILD_CUDA=ON \
-  -DGPU_SUITE_BUILD_OPENACC=OFF \
-  -DGPU_SUITE_CPU_SPARSE_BACKEND=ONEMKL
-cmake --build /tmp/gpu-library-suite-local-build/cpu-cuda \
-  --target sparse_cpu sparse_gpu sparse_cpu_bench sparse_gpu_bench
+<a id="first-build-and-run"></a>
 
-NVHPC_CUDA_HOME="${CUDA_TOOLKIT_ROOT}" \
-cmake -S . -B /tmp/gpu-library-suite-local-build/openacc \
-  -DCMAKE_C_COMPILER=nvc -DCMAKE_CXX_COMPILER=nvc++ \
-  -DCUDAToolkit_ROOT="${CUDA_TOOLKIT_ROOT}" \
-  -DGPU_SUITE_NVHPC_GPU_TARGET="${NVHPC_GPU_TARGET}" \
-  -DGPU_SUITE_BUILD_CPU=OFF -DGPU_SUITE_BUILD_CUDA=OFF \
-  -DGPU_SUITE_BUILD_OPENACC=ON
-cmake --build /tmp/gpu-library-suite-local-build/openacc \
-  --target openacc_cusparse openacc_cusparse_bench
-```
+## First build and run
 
-## Run the examples
+Follow selection → build → run and require exit status 0 plus the expected result under Teaching default. A missing target or nonzero exit is not success. Use a compute allocation on shared clusters.
 
-From the repository root, after the corresponding targets above built:
+<a id="run-the-examples"></a>
+For Fortran, use the [separate guide](../../fortran/cusparse/README.md).
 
-```bash
-CPU_CUDA_BUILD="${CPU_CUDA_BUILD:-/tmp/gpu-library-suite-local-build/cpu-cuda}"
-OPENACC_BUILD="${OPENACC_BUILD:-/tmp/gpu-library-suite-local-build/openacc}"
-"$CPU_CUDA_BUILD/nvidia/c-cpp/cusparse/sparse_cpu"
-printf 'CPU exit status: %s\n' "$?"
-"$CPU_CUDA_BUILD/nvidia/c-cpp/cusparse/sparse_gpu"
-printf 'CUDA exit status: %s\n' "$?"
-"$OPENACC_BUILD/nvidia/c-cpp/cusparse/openacc_cusparse"
-printf 'OpenACC exit status: %s\n' "$?"
-```
+<a id="from-example-to-benchmark"></a>
 
-Inspect the Poisson SpMV error and each exit status. A missing target or nonzero
-exit leaves the three-way check incomplete. Continue with
-[measurement and result processing](../../../docs/PORTABILITY.md#measuring-on-your-own-system).
+## From example to benchmark
+
+Teaching examples have no timing CLI. For performance use the matching `_bench`, separating library (internal scope `compute`) from end-to-end. The sections below are benchmark reference material. Enable benchmarks using the [measurement workflow](../../../docs/PORTABILITY.md#measuring-on-your-own-system) and use its build paths; the minimal example build does not include benchmarks.
+
+<a id="benchmark-cli"></a>
 
 ## Benchmark CLI
 
+This small check requests one CPU thread and uses the build from the linked measurement workflow. BLAS / Sparse / Solver use its oneMKL configuration. If you built another provider, match `--cpu-backend` to that build.
+
 ```bash
-/tmp/gpu-library-suite-local-build/cpu-cuda/nvidia/c-cpp/cusparse/sparse_cpu_bench \
+"$CPU_CUDA_BUILD/nvidia/c-cpp/cusparse/sparse_cpu_bench" \
   --size 4096 --alpha 1 --beta 1 --warmup 1 --repeat 2 --trials 1 \
   --scope compute --verify true --abs-tolerance 1e-12 \
   --rel-tolerance 1e-10 --output - --format jsonl \
-  --cpu-backend cpu-onemkl --cpu-threads 48 \
+  --cpu-backend cpu-onemkl --cpu-threads 1 \
   --cpu-backend-role production --series-role primary \
   --cpu-parallelism threaded
 ```
@@ -113,7 +131,11 @@ The square `--size` determines `nx`, `ny`, and the exact nonzero count. Suite
 runs pass config-owned roles and thresholds and keep the runner as the sole raw
 result-file writer.
 
+<a id="timing-scopes"></a>
+
 ## Timing scopes
+
+The display term library corresponds to internal scope `compute`.
 
 `compute` constructs descriptors and storage before timing, restores y, and
 applies the SpMV state update continuously across repeats; verification checks
@@ -122,6 +144,8 @@ descriptor creation, workspace query/allocation, SpMV, completion, and copyout;
 cleanup follows the end timestamp, and canonical y is restored before every
 repeat.
 
+<a id="verification"></a>
+
 ## Verification
 
 Maximum absolute error is checked against
@@ -129,11 +153,7 @@ Maximum absolute error is checked against
 recoverable trial failure; fatal descriptor, allocation, API, or clock failure
 alone skips the remaining trials.
 
-## CPU backend and role
-
-`cpu-onemkl` is the production primary backend. `cpu-reference-csr` is an
-explicit reference backend for benchmark work only; it cannot replace oneMKL
-inside the canonical teaching example or silently become a production series.
+<a id="openacc-notes"></a>
 
 ## OpenACC notes
 
@@ -142,11 +162,14 @@ those addresses to cuSPARSE. Only a nonzero cuSPARSE workspace is allocated with
 CUDA; a zero-byte workspace remains `nullptr`. The target links
 `OpenACC::OpenACC_CXX`, `CUDA::cudart`, and `CUDA::cusparse`.
 
+<a id="cpu-backend-and-role"></a>
+
+## CPU backend and role
+
+Select the production CPU backend explicitly for measurements; do not replace it because a dependency is missing. Distinguish requested threads from effective workers.
+
+<a id="known-limitations-and-local-validation"></a>
+
 ## Known limitations and local validation
 
-Only square problem sizes are accepted by the canonical suite configuration,
-and allocation failure is reported without automatic downsizing. Local tests
-use a fake oneMKL provider and fake CUDA headers; a production oneMKL Sparse
-runtime, real cuSPARSE, NVHPC, GPU, and Pegasus execution remain locally unverified.
-Later saved real execution records are distinguished from these local tests in
-[the validation report](../../../docs/VALIDATION_REPORT.md#saved-execution-evidence-reviewed-for-publication).
+Saved Pegasus evidence includes NVIDIA C/C++ builds, numerical smoke, and performance measurements; see the [versions and coverage](../../../docs/VALIDATION_REPORT.md#current-coexistence-status). GPU/toolchain behavior is locally unverified by host-only fixtures; saved real-machine runs are distinct evidence and do not certify another environment or later edits. See the [protocol](../../../docs/BENCHMARK_PROTOCOL.md) for numerical/statistical verification and CPU parallelism limits.

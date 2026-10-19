@@ -8,8 +8,10 @@ addition, and AMD C/C++ CPU/HIP/OpenMP forms for rocFFT, rocBLAS, rocSPARSE,
 rocSOLVER, rocRAND and rocThrust. AMD basic numerical coverage and the bounded
 NVIDIA coexistence review are recorded in
 [VALIDATION_REPORT](VALIDATION_REPORT.md#current-coexistence-status).
-The next step is separately approved pilot/performance work under the
-[minimal plan](IMPLEMENTATION_PLAN.md#minimal-performance-evaluation-plan).
+Saved NVIDIA and AMD performance campaigns are also recorded there; current
+rocSPARSE v2/csr_rowsplit coverage is in its [README](../amd/c-cpp/rocsparse/README.md).
+These records do not authorize new execution. Use the
+[implementation plan](IMPLEMENTATION_PLAN.md) when extending the project.
 AMD Fortran remains outside this increment.
 
 Implementation is not the same as real-device validation. The retained Sirius

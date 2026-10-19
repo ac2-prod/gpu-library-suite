@@ -2,12 +2,9 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
-Six libraries, each with CPU, direct CUDA Fortran and OpenACC teaching examples
-and benchmarks. NVHPC builds, real-machine validation and production measurements
-on Pegasus are complete; see [the recorded coverage and limits](../../docs/VALIDATION_REPORT.md#fortran-production-validation).
-The approved input was the 2026-09-17 Fortran teaching extraction.
-C/C++ sources, historical flags/results and published figures remain
-unchanged. No saved measurements, raw logs or distribution archives are supplied.
+Six families show CPU library calls, CUDA Fortran, and OpenACC from Fortran. Start by running a small teaching example, then substitute your own arrays and operation.
+
+The [minimal build/run guide](../../docs/BUILDING.md) builds only your selected example. GPU variants require NVHPC. CPU RAND / Thrust can also start with GNU Fortran alone. Benchmark measurement and aggregation are optional next steps.
 
 ## Source map
 
@@ -41,8 +38,9 @@ the Toolkit's Thrust/CCCL headers. GNU Fortran cannot compile the device
 extensions. Do not share compiler-generated `.mod` files or build trees across
 compilers, profiles or source languages.
 
-FFTW requires FP32 `fftw3f`, `fftw3.f03` and, for threaded benchmarks,
-`fftw3f_threads`. oneMKL requires the LP64 Fortran BLAS/LAPACK ABI,
+FFTW requires FP32 `fftw3f` and `fftw3.f03`. Threaded benchmarks additionally
+need a supported thread API provider (pthread, OpenMP, or a combined library);
+see the [FFTW discovery options](../../docs/BUILDING.md#cpu-providers). oneMKL requires the LP64 Fortran BLAS/LAPACK ABI,
 `mkl_rt`, `mkl_service.h`, and `mkl_spblas.f90` for Sparse BLAS. The supplied
 module source is compiled with the selected compiler; do not copy an Intel
 compiler's `.mod` into NVHPC/GNU builds. Export actual `MKLROOT` and optionally
@@ -53,20 +51,26 @@ The default `GPU_SUITE_SOURCE_LANGUAGE=c-cpp` does not enable or require
 Fortran. Select `fortran` in a **new** tree:
 
 ```bash
-cmake -S . -B /tmp/gpu-library-suite-local-build/fortran-cpu \
-  -DGPU_SUITE_SOURCE_LANGUAGE=fortran -DCMAKE_Fortran_COMPILER=gfortran \
-  -DCMAKE_BUILD_TYPE=Release -DGPU_SUITE_BUILD_CUDA=OFF \
-  -DGPU_SUITE_BUILD_OPENACC=OFF -DGPU_SUITE_BUILD_TESTS=ON
-cmake --build /tmp/gpu-library-suite-local-build/fortran-cpu --parallel 2
-cmake --build /tmp/gpu-library-suite-local-build/fortran-cpu \
-  --target gpu_suite_partial_manifest --parallel 2
-ctest --test-dir /tmp/gpu-library-suite-local-build/fortran-cpu --output-on-failure
+FORTRAN_CPU_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-fortran-cpu.XXXXXX")" || exit 1
+cmake -S . -B "$FORTRAN_CPU_BUILD" \
+  -DGPU_SUITE_VENDOR=nvidia -DGPU_SUITE_SOURCE_LANGUAGE=fortran \
+  -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=Release \
+  -DGPU_SUITE_BUILD_EXAMPLES=ON -DGPU_SUITE_BUILD_BENCHMARKS=OFF \
+  -DGPU_SUITE_BUILD_CPU=ON -DGPU_SUITE_BUILD_CUDA=OFF \
+  -DGPU_SUITE_BUILD_OPENACC=OFF -DGPU_SUITE_BUILD_TESTS=OFF &&
+cmake --build "$FORTRAN_CPU_BUILD" --target reduce_cpu --parallel 2 &&
+"$FORTRAN_CPU_BUILD/nvidia/fortran/thrust/reduce_cpu"
 ```
 
 Without FFTW/oneMKL, the CPU random and reduction programs remain available.
 An enabled target is not proof it has run. Compile/link logs are under
 `fortran-probes/`; final build flags are in `compile_commands.json` and verbose
 build output. Inspect the configure summary, not only the configure exit code.
+
+Require square sum `16777216`, `verification PASS`, and exit 0. Input uses 128 MiB. The following full benchmark workflow is optional and is not required to run your first teaching example.
+
+<details>
+<summary>Benchmark builds, configuration, and records (optional)</summary>
 
 ### Separate GPU build trees
 
@@ -133,8 +137,8 @@ six-library check.
 
 ### Numerical and CPU runtime conditions
 
-The new Fortran Release default is `-O3`, not NVHPC's implicit `-fast`.
-New Fortran target options are GNU `-fno-fast-math -ffp-contract=off` or NVHPC
+The Fortran Release default is `-O3`, not NVHPC's implicit `-fast`.
+Fortran target options are GNU `-fno-fast-math -ffp-contract=off` or NVHPC
 `-Kieee -Mnoflushz -Mnodaz`. GPU targets add explicit separate-memory options;
 OpenACC adds `-acc=gpu`. Unsafe global fast-math/automatic offload/parallel
 options are rejected for this profile. The bridge's C/C++ global flags must
@@ -154,8 +158,7 @@ Intrinsic RNG and sum builds do not enable automatic parallelization/offload:
 their backend IDs are `cpu-fortran-random-serial` and `cpu-fortran-sum-serial`,
 effective count 1. Record compiler identity: the intrinsic RNG algorithm is
 compiler-dependent, not C++ MT19937 and not stream-equivalent to cuRAND.
-The initial pilot requests one thread; this is a diagnostic, not an approved
-production CPU setting.
+The distributed small pilot requests one thread for diagnostics. Choose and record production CPU settings explicitly; it is not the saved production configuration.
 
 ## First checks and own measurements
 
@@ -243,3 +246,7 @@ Interface references: [NVIDIA Fortran CUDA Interfaces 25.11](https://docs.nvidia
 [CUDA Fortran Guide 25.11](https://docs.nvidia.com/hpc-sdk/archive/25.11/compilers/cuda-fortran-prog-guide/index.html),
 [HPC Compilers Reference 25.11](https://docs.nvidia.com/hpc-sdk/archive/25.11/compilers/hpc-compilers-ref-guide/index.html).
 Static agreement with these references is not evidence of an executed GPU test.
+
+</details>
+
+NVHPC builds, real-machine validation, and production measurements were completed on Pegasus. See the [versions and coverage](../../docs/VALIDATION_REPORT.md#fortran-production-validation); they do not guarantee another environment or later edits. Saved measurements, logs, and PPTX files are not distributed.

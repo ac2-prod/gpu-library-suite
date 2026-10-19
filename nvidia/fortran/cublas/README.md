@@ -2,56 +2,100 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
-See the [shared Fortran guide](../README.md) for dependencies, separate CMake builds, numerical flags, and the scope and limits of completed Pegasus validation.
+Multiply dense matrices with FP64 DGEMM: `C = alpha*A*B + beta*C`. Compare the CPU BLAS call with direct GPU use and directive-managed arrays.
 
-| Implementation | Example | Benchmark |
+<a id="problem"></a>
+
+## Problem and expected result
+
+Column-major square matrices, `m=n=k=1024`, `alpha=beta=1`, and all-one A/B/C. Every output element must be `1025`.
+
+Fortran examples must exit 0 and print `verification PASS`. Teaching sizes are source constants.
+
+<a id="dependencies"></a>
+
+## Dependencies
+
+CPU uses oneMKL LP64. Set `MKLROOT` and supply `mkl_rt` and `mkl_service.h` from that installation.
+
+CPU supports GNU Fortran / NVHPC; GPU uses NVHPC `nvfortran` and CUDA Toolkit. Do not share `.mod` files between compilers or reuse a C/C++ tree. The [Fortran guide](../README.md) covers ABI and numerical requirements.
+
+<a id="select-a-minimal-build"></a>
+
+## Select a minimal build
+
+Set these variables in Bash, then follow only the CPU, direct GPU, or directive section you need in the [shared build guide](../../../docs/BUILDING.md#select). It builds the selected example; benchmarks and the full test suite are not needed.
+```bash
+VENDOR=nvidia
+SOURCE_LANGUAGE=fortran
+LIBRARY=cublas
+CPU_TARGET=blas_cpu
+GPU_TARGET=blas_gpu
+DIRECTIVE_TARGET=openacc_cublas
+CPU_OPTIONS=()
+```
+
+<a id="sources"></a>
+
+## Sources and explicit link inputs
+
+| Variant | Example | Benchmark |
 | --- | --- | --- |
-| CPU | [blas_cpu.f90](examples/blas_cpu.f90) | [blas_cpu_bench.f90](benchmarks/blas_cpu_bench.f90) |
-| CUDA | [blas_gpu.f90](examples/blas_gpu.f90) | [blas_gpu_bench.f90](benchmarks/blas_gpu_bench.f90) |
-| OpenACC | [openacc_cublas.f90](examples/openacc_cublas.f90) | [openacc_cublas_bench.f90](benchmarks/openacc_cublas_bench.f90) |
+| CPU | [blas_cpu.f90](examples/blas_cpu.f90) / `blas_cpu` | [blas_cpu_bench.f90](benchmarks/blas_cpu_bench.f90) / `blas_cpu_bench` |
+| CUDA | [blas_gpu.f90](examples/blas_gpu.f90) / `blas_gpu` | [blas_gpu_bench.f90](benchmarks/blas_gpu_bench.f90) / `blas_gpu_bench` |
+| OpenACC | [openacc_cublas.f90](examples/openacc_cublas.f90) / `openacc_cublas` | [openacc_cublas_bench.f90](benchmarks/openacc_cublas_bench.f90) / `openacc_cublas_bench` |
 
-FP64 column-major C=alpha*A*B+beta*C, with all-ones A/B/C. The CPU calls Fortran dgemm through oneMKL; GPU variants use cublas_v2. C is an input as well as an output, so OpenACC uses copy, not copyout-only. Compute repeats accumulate the specified recurrence; E2E restores the original C outside every interval. Verification uses the matching recurrence. Benchmark --m/--n/--k also supports nonsquare problems.
+<a id="adapting-the-example"></a>
 
-## Direct compilation
+## Adapt this example
 
-Prefer the [shared CMake recipe](../README.md#separate-gpu-build-trees). These are NVHPC/Linux commands from the repository root in the same Toolkit environment, not a claim of an executed GPU build. Supply real provider include/library directories. Helpers/wrappers are explicit link inputs; no dependency installation is performed.
+Match matrix layout and leading dimensions (`lda`, `ldb`, `ldc`) to your storage. With nonzero beta, C is an input as well as an output: copying only A/B is insufficient. Keep arrays and a handle across repeated multiplies when their lifetime permits it. CPU parallelism belongs to the selected BLAS provider; a requested thread count is not an observed worker count.
+
+Distinguish Fortran column-major arrays from C ABI types. CUDA Fortran uses device arrays; OpenACC manages a data region while calling the same GPU library. Include required helpers/wrappers in the application link.
+
+<a id="direct-compilation"></a>
+
+## Direct compilation (NVHPC alternative)
+
+Prefer the common CMake route. These optional commands run in Bash from the repository root with dependency search paths already configured. CPU and GPU blocks are separate; use only the variants you need.
 
 ```bash
-DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-fortran-example.XXXXXX")"
+DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-fortran-example.XXXXXX")" || exit 1
 F90FLAGS=(-O3 -Kieee -Mnoflushz -Mnodaz)
-GPUFLAGS=(-cuda "-gpu=${NVHPC_GPU_TARGET:?Set the actual target},mem:separate")
 unset NVCOMPILER_FPU_STATE
 nvfortran "${F90FLAGS[@]}" -module "$DIRECT_BUILD" \
   -I"${MKLROOT:?Set the installed oneMKL root}/include" \
   nvidia/fortran/cublas/examples/blas_cpu.f90 \
   -L"${MKL_LIBDIR:?Set the installed oneMKL library directory}" -lmkl_rt -lpthread -lm -ldl \
-  -o "$DIRECT_BUILD/blas_cpu"
+  -o "$DIRECT_BUILD/blas_cpu" &&
+"$DIRECT_BUILD/blas_cpu"
+```
+
+```bash
+DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-fortran-gpu.XXXXXX")" || exit 1
+F90FLAGS=(-O3 -Kieee -Mnoflushz -Mnodaz)
+: "${CUDA_TOOLKIT_ROOT:?Set your CUDA Toolkit prefix}"
+export NVHPC_CUDA_HOME="$CUDA_TOOLKIT_ROOT"
+GPUFLAGS=(-cuda "-gpu=${NVHPC_GPU_TARGET:?Set your NVHPC GPU target},mem:separate")
+unset NVCOMPILER_FPU_STATE
 nvfortran "${F90FLAGS[@]}" "${GPUFLAGS[@]}" -cudalib=cublas \
-  nvidia/fortran/cublas/examples/blas_gpu.f90 -o "$DIRECT_BUILD/blas_gpu"
+  nvidia/fortran/cublas/examples/blas_gpu.f90 -o "$DIRECT_BUILD/blas_gpu" &&
 nvfortran "${F90FLAGS[@]}" "${GPUFLAGS[@]}" -acc=gpu -cudalib=cublas \
-  nvidia/fortran/cublas/examples/openacc_cublas.f90 -o "$DIRECT_BUILD/openacc_cublas"
+  nvidia/fortran/cublas/examples/openacc_cublas.f90 -o "$DIRECT_BUILD/openacc_cublas" &&
+"$DIRECT_BUILD/blas_gpu" &&
+"$DIRECT_BUILD/openacc_cublas"
 ```
 
-## Examples and a small benchmark
+<a id="examples-and-a-small-benchmark"></a>
 
-Use the two build variables from the CMake recipe. Require exit 0 and verification PASS for each example. For direct compilation use the same names inside DIRECT_BUILD.
+## After the example: optional measurement
 
-```bash
-"$CPU_CUDA_BUILD/nvidia/fortran/cublas/blas_cpu"
-"$CPU_CUDA_BUILD/nvidia/fortran/cublas/blas_gpu"
-"$OPENACC_BUILD/nvidia/fortran/cublas/openacc_cublas"
-```
+The minimal build excludes benchmarks. To measure, enable them using the [Fortran measurement workflow](../README.md#first-checks-and-own-measurements), with the language-specific config and manifest. Library uses internal CLI scope `compute`; the other scope is `end-to-end`. These intervals differ from timing the entire teaching program.
 
-RUN_DIR must be fresh. This standalone CPU diagnostic is not a campaign input:
+See the [problem specification](../../../docs/PROJECT_SPECIFICATION.md) and [timing protocol](../../../docs/BENCHMARK_PROTOCOL.md). Do not mix Fortran and C/C++ results; intrinsic CPU RNG / sum are serial series.
 
-```bash
-"$CPU_CUDA_BUILD/nvidia/fortran/cublas/blas_cpu_bench" \
-  --size 32 --alpha 1 --beta 1 --warmup 1 --repeat 2 --trials 1 \
-  --scope compute --verify true --cpu-threads 1 --cpu-backend cpu-onemkl \
-  --cpu-parallelism threaded \
-  --output "$RUN_DIR/standalone-cublas-cpu-compute.jsonl" --format jsonl
-```
+<a id="validation"></a>
 
-For E2E use --scope end-to-end and a fresh output name. For GPU diagnostics select the corresponding benchmark path in the table (CUDA under CPU_CUDA_BUILD, OpenACC under OPENACC_BUILD), remove CPU-only arguments and preserve the same problem/verification/repetition settings. Start E2E diagnostics with repeat=1.
+## Recorded validation
 
-[Own measurement → verification → aggregation → figures](../README.md#first-checks-and-own-measurements) uses the existing runner. The [benchmark protocol](../../../docs/BENCHMARK_PROTOCOL.md) owns scope, restoration and tolerances. Retain the Fortran language identity and do not mix in C/C++ measurements.
+Saved Pegasus evidence covers NVHPC builds, numerical smoke, and production measurements; see the [versions and limits](../../../docs/VALIDATION_REPORT.md#fortran-production-validation). This does not certify another compiler / GPU. Distinguish requested/effective CPU threads and linked-library evidence from complete actual load provenance.

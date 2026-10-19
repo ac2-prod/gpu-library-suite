@@ -2,12 +2,9 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
-6ライブラリそれぞれにCPU、直接CUDA Fortran、OpenACCの教材サンプルと
-ベンチマークを実装しています。Pegasus上のNVHPCビルド、実機検証、本測定は完了しており、
-[確認範囲と留保（英語）](../../docs/VALIDATION_REPORT.md#fortran-production-validation)を記録しています。
-実装の入力は2026-09-17版Fortran教材の掲載コード抽出一式です。
-既存C/C++計算本体、過去のflags・測定値、承認済み図は変更していません。
-保存済み測定データ、実機ログ、配布候補archiveは同梱しません。
+FortranからCPUライブラリ、CUDA Fortran、OpenACCを使う6分野の教材とbenchmarkです。まず各ライブラリの短い教材を動かし、自分の配列と演算へ置き換えてください。
+
+[最小のビルド・実行手順](../../docs/BUILDING.ja.md)は、選択した教材だけを構築します。GPU版にはNVHPCが必要です。CPU RAND／ThrustならGNU Fortranだけでも始められます。benchmarkの測定・集計は、その後に必要な場合だけ行います。
 
 <a id="source-map"></a>
 
@@ -44,8 +41,10 @@ CPU-onlyはGNU FortranまたはNVHPC、CUDA Fortran/OpenACCは
 同じToolkitのThrust/CCCLも必要です。GNU Fortranはdevice拡張を扱えません。
 コンパイラ・profile・言語が異なるbuild treeや`.mod`を流用しないでください。
 
-FFTWはFP32の`fftw3f`と`fftw3.f03`、threaded benchmarkには
-`fftw3f_threads`が必要です。oneMKLはLP64 Fortran BLAS/LAPACK ABI、
+FFTWはFP32の`fftw3f`と`fftw3.f03`が必要です。スレッド版benchmarkには
+pthread版・OpenMP版・本体統合型のいずれかのスレッドAPIも必要です。
+[FFTW探索の指定](../../docs/BUILDING.ja.md#cpu-providers)を参照してください。
+oneMKLはLP64 Fortran BLAS/LAPACK ABI、
 `mkl_rt`、`mkl_service.h`、Sparse BLAS用`mkl_spblas.f90`が必要です。
 moduleソースを選択コンパイラでビルドするため、他コンパイラの`.mod`はコピーしません。
 実際の`MKLROOT`、必要なら`FFTW_ROOT`を設定してください。
@@ -55,19 +54,25 @@ moduleソースを選択コンパイラでビルドするため、他コンパ�
 新しいtreeで明示的に選びます。
 
 ```bash
-cmake -S . -B /tmp/gpu-library-suite-local-build/fortran-cpu \
-  -DGPU_SUITE_SOURCE_LANGUAGE=fortran -DCMAKE_Fortran_COMPILER=gfortran \
-  -DCMAKE_BUILD_TYPE=Release -DGPU_SUITE_BUILD_CUDA=OFF \
-  -DGPU_SUITE_BUILD_OPENACC=OFF -DGPU_SUITE_BUILD_TESTS=ON
-cmake --build /tmp/gpu-library-suite-local-build/fortran-cpu --parallel 2
-cmake --build /tmp/gpu-library-suite-local-build/fortran-cpu \
-  --target gpu_suite_partial_manifest --parallel 2
-ctest --test-dir /tmp/gpu-library-suite-local-build/fortran-cpu --output-on-failure
+FORTRAN_CPU_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-fortran-cpu.XXXXXX")" || exit 1
+cmake -S . -B "$FORTRAN_CPU_BUILD" \
+  -DGPU_SUITE_VENDOR=nvidia -DGPU_SUITE_SOURCE_LANGUAGE=fortran \
+  -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=Release \
+  -DGPU_SUITE_BUILD_EXAMPLES=ON -DGPU_SUITE_BUILD_BENCHMARKS=OFF \
+  -DGPU_SUITE_BUILD_CPU=ON -DGPU_SUITE_BUILD_CUDA=OFF \
+  -DGPU_SUITE_BUILD_OPENACC=OFF -DGPU_SUITE_BUILD_TESTS=OFF &&
+cmake --build "$FORTRAN_CPU_BUILD" --target reduce_cpu --parallel 2 &&
+"$FORTRAN_CPU_BUILD/nvidia/fortran/thrust/reduce_cpu"
 ```
 
 FFTW/oneMKLがなくても組込み乱数・平方和のCPU版は使えます。
 configure成功と全target有効化・実行成功は別です。
 `fortran-probes/`のログ、`compile_commands.json`、verbose build出力を確認します。
+
+二乗和`16777216`、`verification PASS`、終了値0を確認します。入力は128 MiBです。以下はbenchmarkを含む全体の測定手順であり、最初の教材実行には不要です。
+
+<details>
+<summary>測定用のビルド・設定・記録（任意）</summary>
 
 <a id="separate-gpu-build-trees"></a>
 
@@ -238,3 +243,7 @@ Pegasus検証にはCMake profileを使用しており、直接コンパイル手
 [CUDA Fortran Guide 25.11](https://docs.nvidia.com/hpc-sdk/archive/25.11/compilers/cuda-fortran-prog-guide/index.html)、
 [HPC Compilers Reference 25.11](https://docs.nvidia.com/hpc-sdk/archive/25.11/compilers/hpc-compilers-ref-guide/index.html)。
 静的な照合をGPU実行確認と扱わないでください。
+
+</details>
+
+PegasusでNVHPCによるbuild・実機検証・本測定が完了しています。[版と確認範囲](../../docs/VALIDATION_REPORT.md#fortran-production-validation)を参照してください。これは別環境や後続変更の保証ではありません。保存データ・ログ・PPTXは配布に含みません。

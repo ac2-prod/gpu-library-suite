@@ -1,12 +1,40 @@
-# cuRAND C/C++ examples and benchmarks
+# cuRAND C/C++: build, run, and adapt
 
 [English](README.md) | [日本語](README.ja.md)
 
-This directory compares uniform-double generation through C++17
-`std::mt19937_64`, direct cuRAND, and OpenACC/cuRAND. Workload ownership belongs
-to [`docs/PROJECT_SPECIFICATION.md`](../../../docs/PROJECT_SPECIFICATION.md),
-and CLI, timing, and statistical verification belong to
-[`docs/BENCHMARK_PROTOCOL.md`](../../../docs/BENCHMARK_PROTOCOL.md).
+Generate uniform FP64 random values. This demonstrates a persistent generator and output buffer, useful for simulation inputs and stochastic algorithms.
+
+<a id="teaching-default"></a>
+
+## Teaching default
+
+Generate `2^24` values with seed 1234. CPU uses serial `std::mt19937_64`. GPU uses the library’s default pseudorandom generator. CPU uniform values are in [0,1), GPU values in (0,1]. These are comparable distributions, not identical streams.
+This is a comparison of the distribution/output task, not of identical random number algorithms.
+
+<a id="dependencies"></a>
+
+## Dependencies
+
+CPU needs only C++17 and its standard library. GPU requires cuRAND.
+
+GPU variants need a compatible NVIDIA GPU/driver and CUDA Toolkit; OpenACC additionally needs NVHPC nvc++.
+
+<a id="select-a-minimal-build"></a>
+
+## Select a minimal build
+
+Set these variables in Bash, then follow only the CPU, direct GPU, or directive section you need in the [shared build guide](../../../docs/BUILDING.md#select). It builds the selected example; benchmarks and the full test suite are not needed.
+```bash
+VENDOR=nvidia
+SOURCE_LANGUAGE=c-cpp
+LIBRARY=curand
+CPU_TARGET=rand_cpu
+GPU_TARGET=rand_gpu
+DIRECTIVE_TARGET=openacc_curand
+CPU_OPTIONS=()
+```
+
+<a id="canonical-sources-and-targets"></a>
 
 ## Canonical sources and targets
 
@@ -19,89 +47,82 @@ and CLI, timing, and statistical verification belong to
 | CUDA benchmark | `benchmarks/rand_gpu_bench.cu` | `rand_gpu_bench` |
 | OpenACC benchmark | `benchmarks/openacc_curand_bench.cpp` | `openacc_curand_bench` |
 
-## Teaching default
+<a id="adapting-the-example"></a>
 
-Each teaching program generates `2^24` FP64 uniform values. The CPU uses
-`std::mt19937_64`; GPU variants use `CURAND_RNG_PSEUDO_DEFAULT`. This compares
-the same distribution/output-type task, not of identical random number
-algorithms, so element identity across CPU and GPU is neither expected nor
-verified.
+## Adapt this example
 
-## Dependencies
+Choose a generator and reproducible seed/stream policy for the application. Do not reset the seed on every call unless restarting the same stream is intended. Reuse the generator and output buffer for a continuing stream. Compare range and distribution statistics, not CPU/GPU element identity; CPU and GPU algorithms differ. The CPU examples are serial.
 
-CPU targets need only a C++17 standard library. CUDA targets require CUDA
-Runtime and cuRAND generator APIs. OpenACC targets require NVHPC OpenACC C++,
-CUDA Runtime, and cuRAND. CMake compile-and-link probes exercise generator
-creation and uniform-double generation before enabling GPU targets.
+Direct CUDA manages device arrays; OpenACC uses a data region and `host_data use_device` to call the same GPU library. Keep allocation ownership clear and ensure completion before reading results.
+
+<a id="direct-compile"></a>
 
 ## Direct compile
 
+An alternative to CMake, from the repository root in Bash with provider header/library search paths already configured. Choose the variant you need; run it only if compilation succeeds.
+
 ```bash
-mkdir -p /tmp/gpu-library-suite-local-build
-c++ -std=c++17 nvidia/c-cpp/curand/examples/rand_cpu.cpp \
-  -o /tmp/gpu-library-suite-local-build/rand_cpu-direct
-nvcc -std=c++17 nvidia/c-cpp/curand/examples/rand_gpu.cu \
-  -lcurand -o /tmp/gpu-library-suite-local-build/rand_gpu-direct
-nvc++ -std=c++17 -acc -cuda \
-  nvidia/c-cpp/curand/examples/openacc_curand.cpp -cudalib=curand \
-  -o /tmp/gpu-library-suite-local-build/openacc_curand-direct
+DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-direct.XXXXXX")" || exit 1
 ```
+
+```bash
+c++ -std=c++17 -O2 nvidia/c-cpp/curand/examples/rand_cpu.cpp -o "$DIRECT_BUILD/rand_cpu" &&
+"$DIRECT_BUILD/rand_cpu"
+```
+
+```bash
+: "${CUDA_TOOLKIT_ROOT:?Set your CUDA Toolkit prefix}"
+: "${NVCC_ARCH:?Set the nvcc architecture supported by your GPU}"
+"$CUDA_TOOLKIT_ROOT/bin/nvcc" -std=c++17 -O2 -arch="$NVCC_ARCH" \
+  nvidia/c-cpp/curand/examples/rand_gpu.cu -lcurand \
+  -o "$DIRECT_BUILD/rand_gpu" &&
+"$DIRECT_BUILD/rand_gpu"
+```
+
+```bash
+: "${CUDA_TOOLKIT_ROOT:?Set your CUDA Toolkit prefix}"
+: "${NVHPC_GPU_TARGET:?Set your NVHPC GPU target}"
+NVHPC_CUDA_HOME="$CUDA_TOOLKIT_ROOT" \
+nvc++ -std=c++17 -O2 -acc -cuda -gpu="$NVHPC_GPU_TARGET" \
+  nvidia/c-cpp/curand/examples/openacc_curand.cpp -cudalib=curand \
+  -o "$DIRECT_BUILD/openacc_curand" &&
+"$DIRECT_BUILD/openacc_curand"
+```
+
+<a id="cmake-configure-and-build"></a>
 
 ## CMake configure and build
 
-The commands assume that `CUDA_TOOLKIT_ROOT`, `CUDA_ARCHITECTURES`, and
-`NVHPC_GPU_TARGET` were set to explicit site-approved values.
+Use the selection above with the [shared guide](../../../docs/BUILDING.md). It creates separate CPU, CUDA, and OpenACC trees and builds only the chosen target. Use the GPU sections alone if you do not need CPU numerical dependencies.
 
-```bash
-cmake -S . -B /tmp/gpu-library-suite-local-build/cpu-cuda \
-  -DCUDAToolkit_ROOT="${CUDA_TOOLKIT_ROOT}" \
-  -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
-  -DGPU_SUITE_BUILD_CPU=ON -DGPU_SUITE_BUILD_CUDA=ON \
-  -DGPU_SUITE_BUILD_OPENACC=OFF
-cmake --build /tmp/gpu-library-suite-local-build/cpu-cuda \
-  --target rand_cpu rand_gpu rand_cpu_bench rand_gpu_bench
+<a id="first-build-and-run"></a>
 
-NVHPC_CUDA_HOME="${CUDA_TOOLKIT_ROOT}" \
-cmake -S . -B /tmp/gpu-library-suite-local-build/openacc \
-  -DCMAKE_C_COMPILER=nvc -DCMAKE_CXX_COMPILER=nvc++ \
-  -DCUDAToolkit_ROOT="${CUDA_TOOLKIT_ROOT}" \
-  -DGPU_SUITE_NVHPC_GPU_TARGET="${NVHPC_GPU_TARGET}" \
-  -DGPU_SUITE_BUILD_CPU=OFF -DGPU_SUITE_BUILD_CUDA=OFF \
-  -DGPU_SUITE_BUILD_OPENACC=ON
-cmake --build /tmp/gpu-library-suite-local-build/openacc \
-  --target openacc_curand openacc_curand_bench
-```
+## First build and run
 
-## Run the examples
+Follow selection → build → run and require exit status 0 plus the expected result under Teaching default. A missing target or nonzero exit is not success. Use a compute allocation on shared clusters.
 
-From the repository root, after the corresponding targets above built:
+<a id="run-the-examples"></a>
+For Fortran, use the [separate guide](../../fortran/curand/README.md).
 
-```bash
-CPU_CUDA_BUILD="${CPU_CUDA_BUILD:-/tmp/gpu-library-suite-local-build/cpu-cuda}"
-OPENACC_BUILD="${OPENACC_BUILD:-/tmp/gpu-library-suite-local-build/openacc}"
-"$CPU_CUDA_BUILD/nvidia/c-cpp/curand/rand_cpu"
-printf 'CPU exit status: %s\n' "$?"
-"$CPU_CUDA_BUILD/nvidia/c-cpp/curand/rand_gpu"
-printf 'CUDA exit status: %s\n' "$?"
-"$OPENACC_BUILD/nvidia/c-cpp/curand/openacc_curand"
-printf 'OpenACC exit status: %s\n' "$?"
-```
+<a id="from-example-to-benchmark"></a>
 
-Inspect each exit status and the reported distribution statistics. Do not expect
-element-by-element CPU/GPU identity: the RNG algorithms differ. A missing target
-or nonzero exit is not a successful three-way check. Continue with
-[measurement and result processing](../../../docs/PORTABILITY.md#measuring-on-your-own-system),
-whose benchmark verification uses the explicit statistical thresholds below.
+## From example to benchmark
+
+Teaching examples have no timing CLI. For performance use the matching `_bench`, separating library (internal scope `compute`) from end-to-end. The sections below are benchmark reference material. Enable benchmarks using the [measurement workflow](../../../docs/PORTABILITY.md#measuring-on-your-own-system) and use its build paths; the minimal example build does not include benchmarks.
+
+<a id="benchmark-cli"></a>
 
 ## Benchmark CLI
 
+This small check requests one CPU thread and uses the build from the linked measurement workflow. BLAS / Sparse / Solver use its oneMKL configuration. If you built another provider, match `--cpu-backend` to that build.
+
 ```bash
-/tmp/gpu-library-suite-local-build/cpu-cuda/nvidia/c-cpp/curand/rand_cpu_bench \
+"$CPU_CUDA_BUILD/nvidia/c-cpp/curand/rand_cpu_bench" \
   --size 65536 --warmup 1 --repeat 2 --trials 1 --scope compute \
   --verify true --sigma-multiplier 6 --expected-mean 0.5 \
   --expected-second-central-moment 0.08333333333333333 \
   --output - --format jsonl --cpu-backend cpu-std-random-serial \
-  --cpu-threads 48 --cpu-threads-effective 1 \
+  --cpu-threads 1 --cpu-threads-effective 1 \
   --cpu-backend-role production --series-role primary \
   --cpu-parallelism serial
 ```
@@ -109,7 +130,11 @@ whose benchmark verification uses the explicit statistical thresholds below.
 Production suite execution passes all statistical constants from the effective
 configuration and uses the runner as the only node raw-file writer.
 
+<a id="timing-scopes"></a>
+
 ## Timing scopes
+
+The display term library corresponds to internal scope `compute`.
 
 `compute` creates and seeds the persistent generator before timing, restores
 the configured offset, and times repeated generation into existing storage.
@@ -117,6 +142,8 @@ the configured offset, and times repeated generation into existing storage.
 completion, and host result retrieval for every repeat; destruction follows the
 end timestamp. Canonical generator state is restored before each raw
 trial/repeat as the scope requires.
+
+<a id="verification"></a>
 
 ## Verification
 
@@ -127,13 +154,7 @@ the CPU `[0,1)` and cuRAND `(0,1]` contracts. Required metrics are
 `sigma_multiplier*sqrt(1/(12*N))` about mean 0.5 and
 `sigma_multiplier*sqrt(1/(180*N))` about second central moment 1/12.
 
-## CPU backend and role
-
-`cpu-std-random-serial` is the configured production primary serial CPU
-implementation. The approved legend is **Intel Xeon Platinum 8468,
-std::mt19937_64 (single thread)**, not a parallel or algorithm-equivalent
-baseline; a campaign may request 48 threads
-while the effective count remains 1. No speedup is plotted from this series.
+<a id="openacc-notes"></a>
 
 ## OpenACC notes
 
@@ -141,11 +162,14 @@ The data region owns output storage and `host_data use_device` exposes it to
 cuRAND. The target links `OpenACC::OpenACC_CXX`, `CUDA::cudart`, and
 `CUDA::curand`; portable source does not hard-code a GPU architecture.
 
+<a id="cpu-backend-and-role"></a>
+
+## CPU backend and role
+
+The recorded CPU series is serial. A larger requested thread count does not make it parallel. Label your own CPU/backend and distinguish requested from effective threads.
+
+<a id="known-limitations-and-local-validation"></a>
+
 ## Known limitations and local validation
 
-The statistical test compares distribution behavior, not sequence equivalence,
-and finite samples may fail according to the configured bound. Local tests run
-the serial CPU generator and fake GPU syntax only. A real cuRAND runtime,
-NVHPC compiler, GPU, and Pegasus campaign remain locally unverified.
-Later saved real execution records are distinguished from these local tests in
-[the validation report](../../../docs/VALIDATION_REPORT.md#saved-execution-evidence-reviewed-for-publication).
+Saved Pegasus evidence includes NVIDIA C/C++ builds, numerical smoke, and performance measurements; see the [versions and coverage](../../../docs/VALIDATION_REPORT.md#current-coexistence-status). GPU/toolchain behavior is locally unverified by host-only fixtures; saved real-machine runs are distinct evidence and do not certify another environment or later edits. See the [protocol](../../../docs/BENCHMARK_PROTOCOL.md) for numerical/statistical verification and CPU parallelism limits.

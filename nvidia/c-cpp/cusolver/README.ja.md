@@ -1,8 +1,37 @@
-# cuSOLVER C/C++のサンプルとベンチマーク
+# cuSOLVER C/C++：ビルド・実行・使い方
 
 [English](README.md) | [日本語](README.ja.md)
 
-このディレクトリでは、密なFP64連立方程式の正本問題を、LAPACKE、直接cuSOLVER、OpenACC/cuSOLVERで解きます。方程式系の構成は[`docs/PROJECT_SPECIFICATION.md`（英語）](../../../docs/PROJECT_SPECIFICATION.md)、CLI、段階分割、時間測定、検証は[`docs/BENCHMARK_PROTOCOL.ja.md`](../../../docs/BENCHMARK_PROTOCOL.ja.md)が定めます。
+LU分解を使って複数右辺のFP64密行列方程式`A*X=B`を解きます。行列のほかpivot配列とsolverの終了情報を扱う流れを示します。
+
+<a id="teaching-default"></a>
+
+## 教材の既定問題
+
+`N=1024`、`nrhs=16`、`A=N*I+ones`、Bの全要素は`2*N`です。解はすべて1となります。APIの成功と`info=0`に加え、数値検証の成功が必要です。
+
+<a id="dependencies"></a>
+
+## 依存環境
+
+CPUはLAPACKE APIが必要で、oneMKL・LAPACKEを含むOpenBLAS・generic LAPACKEを明示選択します。以下の例はgeneric LAPACKEです。BLASだけの環境では不足します。
+
+GPUはCUDA Toolkitと対応GPU／ドライバ、OpenACCはさらにNVHPC nvc++が必要です。
+
+<a id="select-a-minimal-build"></a>
+
+## 最小ビルドの選択
+
+Bashで以下を設定してから、[共通ビルド手順](../../../docs/BUILDING.ja.md#select)のCPU・GPU直接版・ディレクティブ版のうち必要な節だけを実行します。教材targetだけを構築し、benchmarkや全件テストは不要です。
+```bash
+VENDOR=nvidia
+SOURCE_LANGUAGE=c-cpp
+LIBRARY=cusolver
+CPU_TARGET=solver_cpu
+GPU_TARGET=solver_gpu
+DIRECTIVE_TARGET=openacc_cusolver
+CPU_OPTIONS=(-DGPU_SUITE_CPU_LAPACK_BACKEND=GENERIC_LAPACKE)
+```
 
 <a id="canonical-sources-and-targets"></a>
 
@@ -17,92 +46,82 @@
 | CUDAベンチマーク | `benchmarks/solver_gpu_bench.cu` | `solver_gpu_bench` |
 | OpenACCベンチマーク | `benchmarks/openacc_cusolver_bench.cpp` | `openacc_cusolver_bench` |
 
-<a id="teaching-default"></a>
+<a id="adapting-the-example"></a>
 
-## 教材の既定問題
+## 自分のアプリケーションへ取り込む
 
-すべての教材版は、`n=1024`、`nrhs=16`のFP64正本問題を解きます。CPU教材サンプルでは、意図的に`LAPACKE_dgesv`を示します。ベンチマーク版は因子分解と求解を別の段階に分け、`getrf_info`と`getrs_info`を独立に確認できるようにしています。
+分解でA、solveでBが上書きされるため、残差確認や再試行に必要な原本を保持します。API失敗とinfoによる特異性の報告を区別してください。Aが同じでBだけ変わるなら、LUとpivotを保持してgetrsへ渡せます。毎回分解する場合とは費用が異なります。
 
-<a id="dependencies"></a>
-
-## 依存環境
-
-CPUターゲットには、`LAPACKE_dgesv`、`LAPACKE_dgetrf`、`LAPACKE_dgetrs`のすべてをコンパイル・リンクできるONEMKL、OPENBLAS、GENERIC_LAPACKEのいずれかのプロバイダが必要です。プロバイダごとのキャッシュキーで、他プロバイダの古いパスの混入を防ぎます。CUDAプログラムにはCUDA RuntimeとcuSOLVER 密行列APIが必要です。OpenACCプログラムには、さらにNVHPC OpenACC C++が必要です。
+CUDA版はdevice配列を直接管理し、OpenACC版はdata領域と`host_data use_device`を使って同じGPUライブラリへ渡します。配列の所有権を混ぜず、結果を読む前に完了を保証してください。
 
 <a id="direct-compile"></a>
 
 ## 直接コンパイル
 
-CPUソースは、CMakeがプロバイダのヘッダを指定しない限り、既定で`<lapacke.h>`をincludeします。代表的な直接コンパイルのコマンドは次のとおりです。
+CMakeを使わない場合の代替手順です。リポジトリ直下のBashで、必要なheader・libraryの検索パスが設定済みであることを前提とします。各方式のblockを選び、成功した場合だけ実行します。
 
 ```bash
-mkdir -p /tmp/gpu-library-suite-local-build
-cc -std=c17 nvidia/c-cpp/cusolver/examples/solver_cpu.c \
-  -llapacke -llapack -lblas -lm \
-  -o /tmp/gpu-library-suite-local-build/solver_cpu-direct
-nvcc -std=c++17 nvidia/c-cpp/cusolver/examples/solver_gpu.cu \
-  -lcusolver -o /tmp/gpu-library-suite-local-build/solver_gpu-direct
-nvc++ -std=c++17 -acc -cuda \
+DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-direct.XXXXXX")" || exit 1
+```
+
+```bash
+cc -std=c17 -O2 nvidia/c-cpp/cusolver/examples/solver_cpu.c \
+  -llapacke -llapack -lblas -lm -o "$DIRECT_BUILD/solver_cpu" &&
+"$DIRECT_BUILD/solver_cpu"
+```
+
+```bash
+: "${CUDA_TOOLKIT_ROOT:?Set your CUDA Toolkit prefix}"
+: "${NVCC_ARCH:?Set the nvcc architecture supported by your GPU}"
+"$CUDA_TOOLKIT_ROOT/bin/nvcc" -std=c++17 -O2 -arch="$NVCC_ARCH" \
+  nvidia/c-cpp/cusolver/examples/solver_gpu.cu -lcusolver \
+  -o "$DIRECT_BUILD/solver_gpu" &&
+"$DIRECT_BUILD/solver_gpu"
+```
+
+```bash
+: "${CUDA_TOOLKIT_ROOT:?Set your CUDA Toolkit prefix}"
+: "${NVHPC_GPU_TARGET:?Set your NVHPC GPU target}"
+NVHPC_CUDA_HOME="$CUDA_TOOLKIT_ROOT" \
+nvc++ -std=c++17 -O2 -acc -cuda -gpu="$NVHPC_GPU_TARGET" \
   nvidia/c-cpp/cusolver/examples/openacc_cusolver.cpp -cudalib=cusolver \
-  -o /tmp/gpu-library-suite-local-build/openacc_cusolver-direct
+  -o "$DIRECT_BUILD/openacc_cusolver" &&
+"$DIRECT_BUILD/openacc_cusolver"
 ```
 
 <a id="cmake-configure-and-build"></a>
 
-## CMakeのconfigureとビルド
+## CMakeの構成とビルド
 
-`CUDA_TOOLKIT_ROOT`、`CUDA_ARCHITECTURES`、`NVHPC_GPU_TARGET`に、サイトで承認された具体値が設定済みであることを前提とします。
+上の選択値を[共通手順](../../../docs/BUILDING.ja.md)へ渡します。CPU、CUDA、OpenACCの新しいtreeを用い、選択したtargetだけを構築します。CPU数値ライブラリが不要ならGPUの節だけを利用できます。
 
-```bash
-cmake -S . -B /tmp/gpu-library-suite-local-build/cpu-cuda \
-  -DCUDAToolkit_ROOT="${CUDA_TOOLKIT_ROOT}" \
-  -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
-  -DGPU_SUITE_BUILD_CPU=ON -DGPU_SUITE_BUILD_CUDA=ON \
-  -DGPU_SUITE_BUILD_OPENACC=OFF \
-  -DGPU_SUITE_CPU_LAPACK_BACKEND=GENERIC_LAPACKE
-cmake --build /tmp/gpu-library-suite-local-build/cpu-cuda \
-  --target solver_cpu solver_gpu solver_cpu_bench solver_gpu_bench
+<a id="first-build-and-run"></a>
 
-NVHPC_CUDA_HOME="${CUDA_TOOLKIT_ROOT}" \
-cmake -S . -B /tmp/gpu-library-suite-local-build/openacc \
-  -DCMAKE_C_COMPILER=nvc -DCMAKE_CXX_COMPILER=nvc++ \
-  -DCUDAToolkit_ROOT="${CUDA_TOOLKIT_ROOT}" \
-  -DGPU_SUITE_NVHPC_GPU_TARGET="${NVHPC_GPU_TARGET}" \
-  -DGPU_SUITE_BUILD_CPU=OFF -DGPU_SUITE_BUILD_CUDA=OFF \
-  -DGPU_SUITE_BUILD_OPENACC=ON
-cmake --build /tmp/gpu-library-suite-local-build/openacc \
-  --target openacc_cusolver openacc_cusolver_bench
-```
+## 最初のビルドと実行
+
+選択・build・実行の順に進み、終了値0と「教材の既定問題」の期待値を確認してください。欠落targetや非ゼロ終了を成功とは扱いません。共有計算機では計算ノードの割当内で実行します。
 
 <a id="run-the-examples"></a>
+Fortran教材は[別の案内](../../fortran/cusolver/README.ja.md)を使います。
 
-## サンプルの実行
+<a id="from-example-to-benchmark"></a>
 
-上記の対応ターゲットをビルドした後、リポジトリのルートから実行します。
+## サンプルからベンチマークへの対応
 
-```bash
-CPU_CUDA_BUILD="${CPU_CUDA_BUILD:-/tmp/gpu-library-suite-local-build/cpu-cuda}"
-OPENACC_BUILD="${OPENACC_BUILD:-/tmp/gpu-library-suite-local-build/openacc}"
-"$CPU_CUDA_BUILD/nvidia/c-cpp/cusolver/solver_cpu"
-printf 'CPU exit status: %s\n' "$?"
-"$CPU_CUDA_BUILD/nvidia/c-cpp/cusolver/solver_gpu"
-printf 'CUDA exit status: %s\n' "$?"
-"$OPENACC_BUILD/nvidia/c-cpp/cusolver/openacc_cusolver"
-printf 'OpenACC exit status: %s\n' "$?"
-```
-
-solverの`info`値、解の誤差、各終了ステータスを確認してください。ターゲットがない場合や、終了値が0以外の場合、比較は未完了です。CPU教材の呼び出しは`LAPACKE_dgesv`ですが、ベンチマークでは以下のように因子分解と求解を分離します。続いて[測定と結果処理](../../../docs/PORTABILITY.ja.md#measuring-on-your-own-system)へ進んでください。
+教材に時間測定用の引数はありません。性能測定では対応する`_bench`を使い、library（内部scope名`compute`）とend-to-endを区別します。以下は既存benchmarkの参照情報です。[測定手順](../../../docs/PORTABILITY.ja.md#measuring-on-your-own-system)でbenchmarkを有効にしたbuildを作り、そこで設定したパスを使ってください。最小教材buildにはbenchmarkは含まれません。
 
 <a id="benchmark-cli"></a>
 
 ## ベンチマークCLI
 
+以下はリンク先の測定手順で作ったbuildを使う1スレッド要求の小規模確認です。BLAS／Sparse／Solverはその手順のoneMKL構成に対応します。別providerでbuildした場合は`--cpu-backend`もbuildに合わせて変更してください。
+
 ```bash
-/tmp/gpu-library-suite-local-build/cpu-cuda/nvidia/c-cpp/cusolver/solver_cpu_bench \
+"$CPU_CUDA_BUILD/nvidia/c-cpp/cusolver/solver_cpu_bench" \
   --size 64 --nrhs 2 --warmup 1 --repeat 1 --trials 1 \
   --scope end-to-end --verify true --abs-tolerance 1e-12 \
   --rel-tolerance 1e-10 --output - --format jsonl \
-  --cpu-backend cpu-generic-lapacke --cpu-threads 48 \
+  --cpu-backend cpu-onemkl --cpu-threads 1 \
   --cpu-backend-role production --series-role primary \
   --cpu-parallelism threaded
 ```
@@ -113,6 +132,8 @@ cuSOLVERのすべてのスコープで`repeat=1`が必要です。選択したLA
 
 ## 測定スコープ
 
+表示名libraryの内部scopeは`compute`です。
+
 `compute`は、測定前にメモリ確保、転送、作業領域照会を行い、正本の行列／右辺（RHS）を復元してから、`getrf`と`getrs`からなるパイプラインを1回測定します。`end-to-end`には、メモリ確保、コピーまたはOpenACC update、ハンドル/作業領域作成、求解、完了、解と両方のinfo codeの取得を含みます。後処理は終了時刻の後です。warm-up、状態復元、検証は測定区間外です。
 
 <a id="verification"></a>
@@ -121,20 +142,20 @@ cuSOLVERのすべてのスコープで`repeat=1`が必要です。選択したLA
 
 effectiveな絶対・相対許容誤差を使い、解の相対誤差と相対残差の両方を確認します。`getrf_info`と`getrs_info`はそれぞれ0でなければなりません。OpenACCでは両方を`-1`で初期化し、ホストへ明示的にコピーするため、copybackの欠落を成功と誤認しません。
 
-<a id="cpu-backend-and-role"></a>
-
-## CPUバックエンドとrole
-
-設定したプロバイダがproductionのprimaryバックエンドで、名前は`cpu-onemkl`、`cpu-openblas`、`cpu-generic-lapacke`のいずれかです。プロバイダを暗黙に置き換えず、要求スレッド数を有効スレッド数とは仮定しません。
-
 <a id="openacc-notes"></a>
 
 ## OpenACCの注意点
 
 OpenACCデータ領域が行列、RHS、pivot、info配列を所有します。小さな`host_data use_device` 領域からそれらをcuSOLVERへ渡し、作業領域だけを手動でCUDAメモリ確保します。end-to-endの結果取得では、測定終了前にRHSと両info配列へ明示的な`acc update self`を行います。
 
+<a id="cpu-backend-and-role"></a>
+
+## CPUバックエンドとrole
+
+測定では選択したproduction CPU backendを明示し、依存不足による別providerへの置換を行いません。スレッド要求と実効worker数は区別します。
+
 <a id="known-limitations-and-local-validation"></a>
 
 ## 既知の制限とローカル検証
 
-ハードウェア検出後にアルゴリズムの数値モードを切り替えることはなく、メモリ確保や因子分解の失敗をそのまま報告します。ローカルテストはfake LAPACKE/CUDA interfaceを使い、production用LAPACKEインストール環境、cuSOLVERランタイム、NVHPCコンパイラ、実GPU、Pegasus jobは実行していません。これらはローカルでは未検証です。その後に保存された実機実行記録は、[検証報告（英語）](../../../docs/VALIDATION_REPORT.md#saved-execution-evidence-reviewed-for-publication)でこれらのローカルテストと区別しています。
+PegasusでNVIDIA C/C++のbuild・数値smoke・性能測定の保存記録があります。[版と確認範囲](../../../docs/VALIDATION_REPORT.md#current-coexistence-status)を参照してください。ローカルfixture検査と実機検証は別で、別環境や後続変更の動作を保証しません。数値誤差・乱数分布の検証条件とCPU並列性の制約は[測定仕様](../../../docs/BENCHMARK_PROTOCOL.ja.md)を参照してください。
