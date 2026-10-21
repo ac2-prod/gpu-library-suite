@@ -6,6 +6,21 @@ FortranからCPUライブラリ、CUDA Fortran、OpenACCを使う6分野の教�
 
 [最小のビルド・実行手順](../../docs/BUILDING.ja.md)は、選択した教材だけを構築します。GPU版にはNVHPCが必要です。CPU RAND／ThrustならGNU Fortranだけでも始められます。benchmarkの測定・集計は、その後に必要な場合だけ行います。
 
+<a id="measurement-compatibility-and-verified-results"></a>
+
+## 計測条件と検証済みの結果
+
+NVIDIA Fortranのbenchmarkは、公開済みNVIDIA C/C++版に計測境界・同期・
+warm-upと状態復元・ビルド設定を揃えています。修正後の18 benchmarkを
+Pegasusで再構築し、72件の数値smokeと6ノード×2 waveの本測定6,480行すべてが
+成功しました。[検証した版・問題サイズと結果](../../docs/VALIDATION_REPORT.md#fortran-production-validation)
+を参照してください。
+
+データをGPU上に保持する処理にはlibrary、準備と結果取得を含む単発処理には
+end-to-endの図を使います。計測条件の統一は比較の前提を揃えるものであり、
+Fortran組込み乱数・sum、コンパイラ生成コードや言語APIまで同一にはしません。
+統一前の測定結果は、今回の結果へ混ぜず履歴として保持します。
+
 <a id="source-map"></a>
 
 ## コード対応
@@ -27,8 +42,11 @@ target名と実行ファイル名はstemと一致し、C/C++とはbuild treeで�
 [共通Fortran処理](../../common/fortran)は数学helperと、既存CLI・単調時計・
 厳密な結果出力へ接続するC相互運用部分です。計算はFortranで行い、
 C/C++のbenchmark実行ファイルを起動しません。
-GPU Thrustだけは提供された[CUDA C++関数](thrust/examples/thrust_wrapper.cu)を
-直接版とOpenACC版で共用します。
+Thrustとの相互運用にはCUDA C++を使います。GPU教材2方式は
+[thrust_wrapper.cu](thrust/examples/thrust_wrapper.cu)を共用します。
+CUDA benchmarkはC/C++とallocationの寿命・計測境界を揃えるため、
+専用の[device-vector補助コード](thrust/benchmarks/reduce_context.cu)を使います。
+OpenACC benchmarkは教材wrapperとディレクティブによるメモリ管理を使います。
 
 <a id="build-requirements"></a>
 
@@ -156,7 +174,9 @@ global flagsとtarget optionsはbuild metadataへ分けて記録します。
 `NVCOMPILER_FPU_STATE`は実行前にunsetします。空文字でもコンパイル時の
 FPU設定を上書きするため、NVHPC benchmarkは空文字を含む設定を拒否します。
 過去の未記録のFPU状態まで復元したという意味ではありません。
-修正後のFortran成果物には新たなbuild・smoke・測定が必要です。
+修正後の成果物はPegasusでbuild・smoke・本測定を完了しています。
+[検証記録](../../docs/VALIDATION_REPORT.md#fortran-production-validation)の版を確認し、
+別環境で作成した成果物も数値検証を通してから測定してください。
 公開済みC/C++版の成果物・測定結果は比較の基準として保持します。
 
 FFTWの教材は逐次です。threaded benchmarkはplan作成前にthreads APIを設定します。
@@ -174,7 +194,7 @@ C++ MT19937やGPU cuRANDと数列一致を要求しません。
 各ライブラリREADMEにhelperを含む直接コンパイル、教材の実行パス、
 小規模benchmarkコマンドがあります。教材は終了0と`verification PASS`を確認します。
 教材の定数は保持し、benchmarkは実行時サイズを受け取ります。
-まずcuBLASのCPU/CUDA/OpenACC×compute/E2Eを小規模に確認します。
+まずcuBLASのCPU/CUDA/OpenACC×library／end-to-endを小規模に確認します。
 単独実行の診断行は完全なcampaignデータではなく、runnerのrawに混ぜません。
 
 測定基盤は[既存の自己測定手順](../../docs/PORTABILITY.ja.md#measuring-on-your-own-system)
@@ -237,10 +257,14 @@ GNU Fortranで組込みCPU版とhelperの数学を確認しています。
 これらの[ローカル検証](../../docs/VALIDATION_REPORT.md#fortran-local-validation)と、
 後続の[Pegasus本測定（英語）](../../docs/VALIDATION_REPORT.md#fortran-production-validation)は別の根拠です。
 Pegasus検証にはCMake profileを使用しており、直接コンパイル手順や任意の別環境を
-個別に実行確認したとは扱いません。本測定では各wave 6ノード×2waveの6480行すべてが
-数値検証に成功し、集計と6図生成まで完了しました。CPU要求48に対し、oneMKLの
-実効数は未観測、FFTWは48、組込み乱数・sumは1です。scheduler最終終了コード、
-短区間telemetry、turbostat未取得の留保は検証報告どおり維持します。保存raw・図は配布しません。
+個別に実行確認したとは扱いません。測定のビルド条件を再現する場合は、教材の
+直接コンパイル例ではなく、上記CMake profileを使ってください。
+今回の計測条件統一後の結果は、2 waveの計12物理ノード・6,480行すべてが成功し、
+集計と6図をrawと照合済みです。保存されたbuild・smoke・各waveのスクリプト終了値は
+すべて0です。これはscheduler accountingの最終終了記録とは区別します。
+oneMKLの実効worker数は未観測で、FFTWは設定48、組込み乱数・sumは1を記録します。
+完全な実ロードライブラリ来歴や処理別の費用は未計測です。
+旧結果・失敗記録は分けて保持し、保存raw・図は配布しません。
 
 公式照合先：
 [NVIDIA Fortran CUDA Interfaces 25.11](https://docs.nvidia.com/hpc-sdk/archive/25.11/compilers/fortran-cuda-interfaces/index.html)、

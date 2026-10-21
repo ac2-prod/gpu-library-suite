@@ -444,11 +444,13 @@ Unset `NVCOMPILER_FPU_STATE`; NVHPC benchmarks reject any present override,
 including an empty value. Verification remains explicit in Release.
 These settings align the controllable build policy; they do not reconstruct
 unrecorded historical FPU state or imply identical compiler-generated code.
-Rebuild and smoke all 18 revised NVIDIA Fortran benchmarks, then measure both
-scopes with the published C/C++ sizes, repeat counts, trials, CPU providers and
-node/wave protocol. Keep this new Fortran campaign separate from historical
-results. The published C/C++ binaries and measurements remain unchanged and
-do not require remeasurement for this Fortran alignment.
+The aligned [Pegasus production evaluation](VALIDATION_REPORT.md#fortran-production-validation)
+completed an 18-benchmark rebuild, numerical smoke and both measurement scopes
+with the published C/C++ sizes, repeat counts, trials, corresponding CPU
+providers and node/wave protocol. For another build, repeat numerical validation
+before collecting a new campaign. Keep its source/binary/config/runtime identity
+separate from historical results. The published C/C++ binaries and measurements
+remain unchanged and do not require remeasurement for this Fortran alignment.
 
 The Fortran diagnostic configuration is `configs/fortran/pilot.json`; it is not
 an approved production profile or the C/C++ publication workload. Language

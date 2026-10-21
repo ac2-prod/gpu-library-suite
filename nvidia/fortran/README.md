@@ -6,6 +6,20 @@ Six families show CPU library calls, CUDA Fortran, and OpenACC from Fortran. Sta
 
 The [minimal build/run guide](../../docs/BUILDING.md) builds only your selected example. GPU variants require NVHPC. CPU RAND / Thrust can also start with GNU Fortran alone. Benchmark measurement and aggregation are optional next steps.
 
+## Measurement compatibility and verified results
+
+The benchmarks follow the published NVIDIA C/C++ timing boundaries,
+synchronization, warm-up/restoration and build profiles. The revised version
+passed an 18-benchmark Pegasus build, 72 numerical smoke cases and all 6,480
+production records in two six-node waves. See the [tested version, workloads and
+results](../../docs/VALIDATION_REPORT.md#fortran-production-validation).
+
+Use the library panel for data already resident on the GPU and the end-to-end
+panel for a one-shot operation including setup and result retrieval. Matching
+measurement conditions helps compare implementations; it does not make native
+Fortran RNG/reduction, compiler-generated code or language bindings identical.
+Historical measurements remain separate from this aligned campaign.
+
 ## Source map
 
 | Library | CPU / direct CUDA / OpenACC stems | CPU calculation | Teaching problem |
@@ -24,8 +38,11 @@ executable names equal source stems, in a separate Fortran build tree.
 [Shared support](../../common/fortran) contains mathematical helpers and a C
 interop bridge to the existing CLI, monotonic clock and strict result writer.
 The matrix/library computation is Fortran; no C/C++ benchmark executable is
-launched. Only the supplied [Thrust function](thrust/examples/thrust_wrapper.cu)
-is CUDA C++, shared by direct and OpenACC callers.
+launched. Thrust interoperation uses CUDA C++: both teaching GPU callers share
+[thrust_wrapper.cu](thrust/examples/thrust_wrapper.cu), while the CUDA benchmark
+uses a separate [device-vector lifetime adapter](thrust/benchmarks/reduce_context.cu)
+to match C/C++ allocation and timing. The OpenACC benchmark retains the teaching
+wrapper and directive-managed memory.
 
 ## Build requirements
 
@@ -152,8 +169,10 @@ See the [numerical contract](../../docs/BENCHMARK_PROTOCOL.md#fortran-binding-of
 Unset `NVCOMPILER_FPU_STATE` before examples and benchmarks. NVHPC benchmarks
 reject the variable even when empty, because either form overrides compile-time
 FPU settings. This does not reconstruct unrecorded historical FPU state.
-The revised Fortran binaries need a new build, smoke and measurement;
-the published C/C++ binaries and measurements remain the reference.
+The revised binaries completed that build, smoke and measurement sequence on
+Pegasus; the [validation record](../../docs/VALIDATION_REPORT.md#fortran-production-validation)
+identifies the exact version. Validate a new build in your own environment before
+using its timings. The published C/C++ binaries and measurements remain the reference.
 
 FFTW teaching examples are serial. Benchmarks initialize the threaded API
 before plans when `cpu-fftw-threaded` is selected. oneMKL internally controls
@@ -239,12 +258,16 @@ the [local validation record](../../docs/VALIDATION_REPORT.md#fortran-local-vali
 and the later [Pegasus production record](../../docs/VALIDATION_REPORT.md#fortran-production-validation)
 for their distinct evidence. Pegasus validation used the CMake profiles; the
 direct-compile recipes and arbitrary other environments are not claimed as
-separately executed. The production campaign passed 6480 numerical checks
-across six nodes per wave and two waves; aggregation and six figures completed.
-oneMKL effective thread counts remain unobserved, while FFTW recorded 48 and
-the intrinsic baselines recorded 1 for a requested count of 48. Scheduler final
-exit codes, short-interval telemetry and unavailable turbostat retain the
-limits stated in the report. Saved raw data and figures are not distributed.
+separately executed. Use the CMake profiles above, not the optional teaching
+compile recipes, to reproduce the recorded benchmark build policy.
+The current aligned campaign passed all 6,480 numerical checks on 12 distinct
+hosts across two waves; aggregation and six figures were checked against those
+records. The saved build, smoke and wave scripts each returned 0. Their script
+completion records are distinct from scheduler accounting evidence.
+oneMKL effective worker counts remain unobserved; FFTW records the configured
+48 threads and the intrinsic baselines record 1. Complete loaded-library
+identity and component-level overheads were not measured. Earlier results and
+failed attempts remain separate. Saved raw data and figures are not distributed.
 
 Interface references: [NVIDIA Fortran CUDA Interfaces 25.11](https://docs.nvidia.com/hpc-sdk/archive/25.11/compilers/fortran-cuda-interfaces/index.html),
 [CUDA Fortran Guide 25.11](https://docs.nvidia.com/hpc-sdk/archive/25.11/compilers/cuda-fortran-prog-guide/index.html),

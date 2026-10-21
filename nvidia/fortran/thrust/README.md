@@ -16,7 +16,7 @@ Fortran examples must exit 0 and print `verification PASS`. Teaching sizes are s
 
 ## Dependencies
 
-CPU needs only its Fortran compiler and intrinsic sum. GPU needs Thrust/CCCL, CUDA, and NVCC for the C++ wrapper.
+CPU needs only its Fortran compiler and intrinsic sum. GPU needs Thrust/CCCL and CUDA. The CMake profiles compile C++ interoperation with NVCC for CUDA and nvc++ for OpenACC; see the [profile requirements](../README.md#numerical-and-cpu-runtime-conditions).
 
 CPU supports GNU Fortran / NVHPC; GPU uses NVHPC `nvfortran` and CUDA Toolkit. Do not share `.mod` files between compilers or reuse a C/C++ tree. The [Fortran guide](../README.md) covers ABI and numerical requirements.
 
@@ -45,7 +45,13 @@ CPU_OPTIONS=()
 | CUDA | [reduce_gpu.f90](examples/reduce_gpu.f90) / `reduce_gpu` | [reduce_gpu_bench.f90](benchmarks/reduce_gpu_bench.f90) / `reduce_gpu_bench` |
 | OpenACC | [openacc_thrust.f90](examples/openacc_thrust.f90) / `openacc_thrust` | [openacc_thrust_bench.f90](benchmarks/openacc_thrust_bench.f90) / `openacc_thrust_bench` |
 
-Both GPU callers share [thrust_wrapper.cu](examples/thrust_wrapper.cu). The `bind(C)` function is `double thrust_square_sum(const double*, size_t)`. C++ exceptions become NaN, rejected by the Fortran caller. This is a different ABI from the AMD rocThrust wrapper (three arguments, int return).
+Both GPU teaching callers and the OpenACC benchmark use [thrust_wrapper.cu](examples/thrust_wrapper.cu). Its `bind(C)` function is `double thrust_square_sum(const double*, int)`; the element count uses Fortran `integer(c_int)`. C++ exceptions become NaN, rejected by the Fortran caller. This is a different ABI from the AMD rocThrust wrapper (three arguments, int return).
+
+The CUDA benchmark instead links [reduce_context.cu](benchmarks/reduce_context.cu).
+It owns a `thrust::device_vector` across library-scope repeats, so allocation and
+input copying stay outside that interval. End-to-end includes creating/copying
+that vector and returning the scalar result; destruction follows timing.
+The teaching interface is unchanged. See the [timing contract](../../../docs/BENCHMARK_PROTOCOL.md#fortran-binding-of-this-protocol).
 
 <a id="adapting-the-example"></a>
 
@@ -59,7 +65,7 @@ Distinguish Fortran column-major arrays from C ABI types. CUDA Fortran uses devi
 
 ## Direct compilation (NVHPC alternative)
 
-Prefer the common CMake route. These optional commands run in Bash from the repository root with dependency search paths already configured. CPU and GPU blocks are separate; use only the variants you need.
+Prefer the common CMake route. These optional commands run in Bash from the repository root with dependency search paths already configured. CPU and GPU blocks are separate; use only the variants you need. These teaching-only alternatives do not reproduce the measured OpenACC build profile; use the CMake workflow above for benchmark comparisons.
 
 ```bash
 DIRECT_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/gpu-suite-fortran-example.XXXXXX")" || exit 1

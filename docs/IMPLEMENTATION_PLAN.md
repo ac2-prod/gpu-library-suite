@@ -33,9 +33,12 @@ families. NVIDIA local/fixture coexistence checks and the separately approved
 Pegasus 36-artifact build/72-case smoke passed. Their source boundaries and
 unresolved evidence are in [VALIDATION_REPORT](VALIDATION_REPORT.md#current-coexistence-status).
 AMD C/C++ performance evaluation and the aligned AMD Fortran build, smoke and
-two-wave evaluation are also complete at their recorded versions. The
-[Fortran completion status](#amd-fortran-source-implementation) and validation
-report distinguish current results from earlier preparation milestones.
+two-wave evaluation are also complete at their recorded versions. NVIDIA
+Fortran timing/build alignment has completed its own 18-benchmark rebuild,
+72-case smoke and 6,480-row two-wave evaluation; see the
+[current NVIDIA Fortran result](VALIDATION_REPORT.md#fortran-production-validation).
+The [AMD Fortran completion status](#amd-fortran-source-implementation) and
+validation report distinguish current results from earlier preparation milestones.
 Further real execution requires separate approval.
 
 ## Planning baseline and cross-phase constraints
@@ -1161,10 +1164,13 @@ Fortran 2008 features plus NVHPC CUDA/OpenACC extensions. It does not require
 Fortran in the default C/C++ profile. See [integration requirements](ADDING_FORTRAN.md),
 [usage](../nvidia/fortran/README.md) and
 [local validation](VALIDATION_REPORT.md#fortran-local-validation).
-The subsequent [Pegasus validation and production record](VALIDATION_REPORT.md#fortran-production-validation)
-covers real NVHPC/CPU-provider/GPU execution, 6480 verified rows across six nodes
-per wave and two waves, aggregation and six figures. This evidence is separate
-from source completion and CPU CI; its recorded limits and private-data boundary remain.
+The current [Pegasus validation and production record](VALIDATION_REPORT.md#fortran-production-validation)
+covers the C/C++-aligned timing and build profiles at commit `6481f47`, an
+18-benchmark rebuild, 72-case smoke and 6,480 verified rows across two waves
+of six distinct hosts each. Aggregation and all 108 plotted points were checked
+against those records. Earlier campaigns and failed attempts remain historical;
+C/C++ and AMD results are unchanged. This evidence is separate from source
+completion and CPU CI; its recorded limits and private-data boundary remain.
 
 ## AMD C/C++ and Sirius development stages
 

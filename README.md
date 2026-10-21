@@ -78,7 +78,7 @@ AMD FFT timing accommodates required input restoration and differs from NVIDIA F
 
 Published material includes NVIDIA and AMD sources in both C/C++ and Fortran, together with configurations, tools, tests, and documentation. Saved raw measurements, execution logs, PPTX files, and private review material are not part of the checkout. Using the examples does not require the authors’ saved data or conversation history.
 
-Builds, numerical checks, and measurements have been recorded for NVIDIA on Pegasus and AMD on Sirius. See the [validation report](docs/VALIDATION_REPORT.md) and each family’s recorded coverage. These establish evidence for those versions/environments, not a guarantee for another installation or later edits. Unobserved effective CPU workers and complete loaded-library identity remain explicit limitations.
+Builds, numerical checks, and measurements have been recorded for NVIDIA on Pegasus and AMD on Sirius. The [NVIDIA Fortran evaluation](docs/VALIDATION_REPORT.md#fortran-production-validation) rebuilt all 18 benchmarks after aligning timing and build profiles with NVIDIA C/C++, passed 72 numerical smoke cases, and verified all 6,480 production records across two six-node waves. See the [validation report](docs/VALIDATION_REPORT.md) and each family’s recorded coverage. These establish evidence for those versions/environments, not a guarantee for another installation or later edits. Unobserved effective CPU workers and complete loaded-library identity remain explicit limitations.
 
 Maintained under `ac2-prod`; this is not an official HAIRDESC repository.
 

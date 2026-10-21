@@ -16,7 +16,7 @@ Fortran教材は終了値0と`verification PASS`を確認します。固定サ�
 
 ## 必要環境
 
-CPUはFortranコンパイラと組込みsumだけで動きます。GPUにはThrust／CCCL・CUDA・C++ wrapper用NVCCが必要です。
+CPUはFortranコンパイラと組込みsumだけで動きます。GPUにはThrust／CCCLとCUDAが必要です。CMake profileではCUDA側のC++相互運用コードをNVCC、OpenACC側をnvc++で構築します。[ビルド条件](../README.ja.md#numerical-and-cpu-runtime-conditions)を参照してください。
 
 CPUはGNU Fortran／NVHPC、GPUはNVHPC `nvfortran`とCUDA Toolkitを使います。Fortranの`.mod`はcompiler間で共有せず、C/C++と別treeを使います。[Fortran共通案内](../README.ja.md)にABIと数値条件をまとめています。
 
@@ -45,7 +45,13 @@ CPU_OPTIONS=()
 | CUDA | [reduce_gpu.f90](examples/reduce_gpu.f90) / `reduce_gpu` | [reduce_gpu_bench.f90](benchmarks/reduce_gpu_bench.f90) / `reduce_gpu_bench` |
 | OpenACC | [openacc_thrust.f90](examples/openacc_thrust.f90) / `openacc_thrust` | [openacc_thrust_bench.f90](benchmarks/openacc_thrust_bench.f90) / `openacc_thrust_bench` |
 
-GPUの2方式は[thrust_wrapper.cu](examples/thrust_wrapper.cu)を共用します。`bind(C)`で呼ぶ関数は`double thrust_square_sum(const double*, size_t)`です。C++例外はNaNへ変換され、Fortran側が失敗として扱います。AMDのrocThrust wrapper（3引数・int戻り値）とは別仕様です。
+GPU教材2方式とOpenACC benchmarkは[thrust_wrapper.cu](examples/thrust_wrapper.cu)を使います。`bind(C)`関数は`double thrust_square_sum(const double*, int)`で、要素数はFortranの`integer(c_int)`です。C++例外はNaNとして返し、Fortran側で失敗にします。AMD rocThrust wrapperの3引数・int戻り値とは別ABIです。
+
+CUDA benchmarkは専用の[reduce_context.cu](benchmarks/reduce_context.cu)をリンクし、
+libraryの反復間で`thrust::device_vector`を保持します。allocationと入力コピーは
+library計測外、end-to-endではvector作成・入力コピー・スカラー結果取得を計測内とし、
+破棄は計測後です。教材の関数仕様は変更していません。
+[計測規約](../../../docs/BENCHMARK_PROTOCOL.md#fortran-binding-of-this-protocol)を参照してください。
 
 <a id="adapting-the-example"></a>
 
@@ -58,6 +64,9 @@ Fortranの列優先配列とC ABIの型を区別します。CUDA Fortranはdevic
 <a id="direct-compilation"></a>
 
 ## 手動コンパイル（NVHPCでの代替手順）
+
+以下は教材用の別手順で、測定済みOpenACCのビルド条件とは異なります。
+性能比較には上記CMake手順を使ってください。
 
 通常は共通CMake手順を使います。以下はリポジトリ直下のBashで、必要な探索パスが設定済みの場合の手動手順です。CPUとGPUは別blockなので、必要な方式だけを使えます。
 

@@ -229,13 +229,26 @@ Pegasusの正本教材掲載用設定では、cuFFTは`cpu-fftw-threaded`だけ�
 
 ## この規約とFortran実装の対応
 
-`nvidia/fortran`でも同じCLI、数学、FP32/FP64精度、検証閾値、試行前復元、compute・one-shot E2Eの契約を使います。Fortran workloadから`ISO_C_BINDING`で既存Cタイマー・CLI・結果出力へ接続し、計算ライブラリ呼出しはFortranに残します。1始まりCSRは同じPoisson問題の表現です。CPU solver benchmarkは`dgetrf`＋`dgetrs`で、教材の`dgesv`とは分けます。
+`nvidia/fortran`でも同じCLI、数学、FP32/FP64精度、検証閾値、試行前復元、compute・one-shot E2Eの契約を使います。Fortran workloadから`ISO_C_BINDING`で既存Cタイマー・CLI・結果出力へ接続し、計算ライブラリ呼出しはFortranに残します。benchmarkのCSR添字はC/C++と同じ0始まりです。教材と共通Poisson helperは1始まりを維持します。CPU solver benchmarkは`dgetrf`＋`dgetrs`で、教材の`dgesv`とは分けます。
+
+計測方法は、対応するNVIDIA C/C++ benchmarkを基準にします。
+
+| 項目 | NVIDIA Fortranの計測方法 |
+| --- | --- |
+| 時計・反復 | 共通の単調時計を使用。libraryは反復全体を1区間で測り、end-to-endは1回ごとの区間を合計する。 |
+| warm-up・状態復元 | 各分野のC/C++版と同じ手順。raw trial前とend-to-endの各反復前に必要な入力を計測外で復元する。 |
+| GPU同期・結果取得 | library本体の完了同期を計測に含め、結果取得はlibrary計測後、end-to-end計測内に行う。Solverのgetrf/getrs間に結果取得を挟まない。 |
+| OpenACC・Thrust | FFT/BLASは反復全体を1つの`host_data`区間で囲む。Sparseはdescriptorにdevice pointerを保持する。CUDA Thrustはbenchmark専用のdevice-vector補助コードを使う。 |
+| end-to-end | 必要な準備・device allocation・転送・演算・同期・結果取得を含む。OpenACC data exitは計測内、CUDAの明示的な破棄は計測後。host allocation・入力復元は計測外。 |
+
+API・コンパイラ生成コード・言語固有の乱数やreductionまで同一にするものではありません。
+詳しい分野別条件は[英語の正本](BENCHMARK_PROTOCOL.md#fortran-binding-of-this-protocol)を参照してください。
 
 Fortran CPU production backendは`cpu-fftw-serial`/`cpu-fftw-threaded`、`cpu-onemkl`、`cpu-fortran-random-serial`、`cpu-fortran-sum-serial`です。後2者は組込み関数を使い、自動並列化・GPU offloadなし、実効1とコンパイラ識別情報を記録し、C++ MT19937/STLと名乗りません。FFTWはplan前にthreads APIを設定し、oneMKLはAPIで要求数を設定しても未観測の実効数はnullです。CPU乱数は`cpu_engine="Fortran random_number"`を記録し、seed配列を設定seed（LP64符号付き範囲）で埋め、offset分を消費します。GPUはC/C++版と同じcuRAND generator契約で、CPU/GPUの数列一致は要求しません。
 
 NVIDIA Fortranは対応する公開済みC/C++版を基準にします。CPU/CUDA Releaseは`-O3`、補助C/C++はGCC/G++、CUDA ThrustはNVCCです。NVHPC CPU/CUDAの`-Kieee -Mnoflushz -Mnodaz`は維持し、GNU CPUは`-fno-fast-math`と通常の積和演算の既定設定を使います。OpenACC Releaseだけはnvfortranの`-fast -O3`とnvc/nvc++の`-fast -O3 -DNDEBUG`を明示し、Thrust wrapperもnvc++の`-cuda`で構築します。この系列には以前の厳密target optionsを加えません。AMD Fortranの設定は変更しません。
 
-この限定した例外以外の数値・自動並列化/offloadの上書きは引き続き拒否します。Separate Memory Mode、GPU数値モード、明示的verificationを維持し、`NVCOMPILER_FPU_STATE`は空文字設定も含めて拒否するためunsetしてください。過去の未記録のFPU状態やコンパイラ生成コードの同一性を保証するものではありません。新たなbuild・smoke・両scopeの測定は修正したNVIDIA Fortran版18成果物で行い、旧結果を保持します。C/C++版の再測定はこの統一作業では不要です。詳細は[英語の正本](BENCHMARK_PROTOCOL.md#fortran-binding-of-this-protocol)を参照してください。
+この限定した例外以外の数値・自動並列化/offloadの上書きは引き続き拒否します。Separate Memory Mode、GPU数値モード、明示的verificationを維持し、`NVCOMPILER_FPU_STATE`は空文字設定も含めて拒否するためunsetしてください。過去の未記録のFPU状態やコンパイラ生成コードの同一性を保証するものではありません。[Pegasusでの再評価](VALIDATION_REPORT.md#fortran-production-validation)は、修正したNVIDIA Fortran版18成果物のbuild・smoke・両scopeの本測定を完了しています。別環境で新しく構築した場合も、数値検証を通してから測定し、旧結果と異なる来歴を混ぜないでください。C/C++版の再測定はこの統一作業では不要です。詳細は[英語の正本](BENCHMARK_PROTOCOL.md#fortran-binding-of-this-protocol)を参照してください。
 
 Fortran診断configは`configs/fortran/pilot.json`で、本測定profileの承認やC/C++ publication workloadとは別です。言語識別と互換性は[`RESULT_SCHEMA.md`（英語）](RESULT_SCHEMA.md)が定めます。campaignを分け、既存2パネル図とFortran固有ラベルを使い、C/C++測定値を流用しません。
 

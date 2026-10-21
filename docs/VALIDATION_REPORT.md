@@ -3,8 +3,8 @@
 ## Current coexistence status
 
 This report distinguishes source compatibility checks, real numerical execution
-and performance measurements. The current summary includes the AMD Fortran
-evaluation completed on 2026-10-21. Each result applies to its recorded source
+and performance measurements. The current summary includes the aligned AMD and
+NVIDIA Fortran evaluations completed on 2026-10-21. Each result applies to its recorded source
 and environment; historical sections retain the status at the time of that run.
 
 | Evidence | Confirmed result | Source boundary |
@@ -12,6 +12,7 @@ and environment; historical sections retain the status at the time of that run.
 | AMD C/C++ on Sirius | Six-family build: 36 teaching/benchmark artifacts; focused numerical coverage: 18 teaching examples and 576 records, all passing | rocFFT and the other five families use the distinct snapshots recorded below; these are not one campaign or a test of every later edit. |
 | NVIDIA local/fixture compatibility after AMD addition | Existing CMake, CPU-provider, CLI/schema/manifest, runner/aggregation/plot and Fortran checks passed | Synthetic providers and local compilers are not GPU or performance evidence. |
 | NVIDIA C/C++ and Fortran on Pegasus | 36 benchmark artifacts built; 72/72 numerical smoke cases passed, including Fortran Thrust CUDA/OpenACC interoperation | Clean commit `eb9e594be3ea4f1dc4bef6fb562223961c60a43a`; details and private evidence identities are recorded below. |
+| NVIDIA Fortran after C/C++ timing/build alignment | 18/18 benchmarks rebuilt; 72/72 smoke cases and 6,480/6,480 production records passed, including both Thrust GPU paths | Clean commit `6481f47ce4b097f76aa642d7cf2fa1b55f899ad3`; [current results](#fortran-production-validation). |
 | AMD three-size pilot on Sirius | 108/108 numerical records passed; PBS `45781.pbs`, exit 0, walltime 00:12:59 | One APU, one trial per condition; retained dirty source snapshot `a3697cae…`. No physical-node or multi-trial dispersion evidence. |
 | AMD C/C++ performance on Sirius | Completed comparisons, with replacement campaigns for corrected BLIS links and rocSPARSE v2 | See the [C/C++ comparison record](#amd-production-comparison) and [rocSPARSE evidence](../amd/c-cpp/rocsparse/README.md#validation-and-limits); keep their distinct source identities. |
 | AMD Fortran on Sirius | 36 initial artifacts and 18 teaching examples verified; after timing alignment, 18 rebuilt benchmarks, 72 numerical smoke rows and 6,480 production rows passed | Clean measurement commit `b69847694c3e34fd220a3c44b7b1a98da22d6b63`; [details below](#amd-fortran-production-validation). |
@@ -23,6 +24,134 @@ pending states below retain their original meaning; later successful runs do
 not rewrite them. Saved raw data, job logs and teaching slides are not distributed
 in this repository. Public configs and source allow users to make their own
 measurements with the [build guide](BUILDING.md) and [measurement protocol](BENCHMARK_PROTOCOL.md).
+
+<a id="fortran-production-validation"></a>
+
+## NVIDIA Fortran aligned production validation
+
+The six NVIDIA Fortran families have completed build, numerical validation and
+performance measurement with timing and build profiles aligned to the published
+NVIDIA C/C++ implementations. This comparison uses only the revised Fortran
+binaries: CPU, CUDA Fortran and OpenACC for each library. The existing C/C++ and
+AMD measurements remain unchanged and are not input to these figures.
+
+### What changed for users
+
+Library timing uses one monotonic-clock interval around the repeat loop and its
+completion synchronization. Warm-up and mutable-input restoration follow each
+C/C++ workload. End-to-end measures each one-shot setup, operation and result
+retrieval, with host input preparation outside the interval. Solver no longer
+retrieves factorization results between getrf and getrs. CUDA Thrust retains a
+benchmark-only device vector for the same lifetime as the C/C++ implementation;
+the teaching wrapper interface remains unchanged.
+
+The OpenACC build now uses the published C/C++ `-fast -O3` profile and an nvc++
+Thrust object. CPU/CUDA retains its corresponding profile. These align the
+conditions controlled by the benchmark; they do not turn different compilers,
+language bindings or RNG/reduction algorithms into identical implementations.
+The [timing and numerical contract](BENCHMARK_PROTOCOL.md#fortran-binding-of-this-protocol)
+and [Fortran build guide](../nvidia/fortran/README.md) describe how to use these
+profiles in another installation.
+
+### Verified coverage and environment
+
+The retained run is `pegasus-fortran-aligned-20261021T203218Z`.
+
+| Stage | Confirmed result |
+| --- | --- |
+| Benchmark build | 18/18 artifacts, including CUDA and OpenACC Thrust compile/link |
+| Numerical smoke | 72/72 records passed using those same binaries |
+| Production wave 0 | 3,240/3,240 records passed on six physical hosts |
+| Production wave 1 | 3,240/3,240 records passed on six other physical hosts |
+| Combined analysis | 6,480 valid records, 12 complete blocks, no missing or excluded rows; 108 plotted elapsed-time points independently checked against raw trials |
+
+The saved build, successful smoke and two wave scripts each recorded exit 0.
+Script completion is distinct from a scheduler accounting final-exit record.
+The two waves used 12 distinct physical hosts, one process/GPU per host. Each
+block has 540 records: six libraries × three sizes × three implementations ×
+two scopes × five trials. All recorded times were positive and finite.
+
+The build used NVHPC 25.11, external CUDA Toolkit 13.0.2, GCC/G++ 11.4.0 host
+support, oneMKL 2025.3.1, FFTW 3.3.11 and CMake 3.22.1 on Pegasus H100 GPUs.
+The CPU providers are threaded single-precision FFTW, oneMKL BLAS/Sparse/LAPACK,
+and serial Fortran `random_number` / `sum`. CPU thread requests were 48; FFTW
+records its configured 48 and the intrinsic backends record 1. oneMKL effective
+worker counts remain unobserved.
+
+| Workload | Sizes | Library repeats, in size order |
+| --- | --- | --- |
+| FP32 complex FFT, batch 4,096 | 256; 4,096; 16,384 | 5,197; 328; 83 |
+| FP64 DGEMM | 512; 2,048; 4,096 | 2,184; 133; 18 |
+| FP64 five-point Poisson SpMV | 65,536; 1,048,576; 4,194,304 | 5,776; 1,520; 206 |
+| FP64 LU + solve, 16 RHS | 4,096; 8,192; 12,288 | 1; 1; 1 |
+| FP64 uniform RNG | 1,048,576; 16,777,216; 67,108,864 | 640; 173; 54 |
+| FP64 square-sum reduction | 1,048,576; 16,777,216; 67,108,864 | 1,932; 532; 167 |
+
+Every condition uses one untimed warm-up and five trials. End-to-end repeat is
+1. A plotted value is the median of the two wave medians; each wave median uses
+six node medians, each from five trials. Trials are not pooled and slow hosts
+are not removed. `elapsed_sec` is already normalized per repeat; milliseconds
+are obtained by multiplying by 1,000, with no further repeat division. The six
+figures use the C/C++ renderer and the same library/end-to-end format.
+
+### Representative results
+
+The table shows the largest measured case in each family, in milliseconds per
+operation. It summarizes these measurements, not a performance guarantee or a
+prediction for arbitrary application data. CPU/CUDA/OpenACC values in each row
+use the same problem size and scope.
+
+| Workload | Scope | CPU (ms) | CUDA (ms) | OpenACC (ms) |
+| --- | --- | ---: | ---: | ---: |
+| FFT, length 16,384, batch 4,096 | library | 19.4552 | 0.608429 | 0.607016 |
+| FFT, length 16,384, batch 4,096 | end-to-end | 18.8932 | 90.3182 | 90.5407 |
+| DGEMM, N=4,096 | library | 43.9567 | 2.83481 | 2.83562 |
+| DGEMM, N=4,096 | end-to-end | 43.2811 | 52.0653 | 51.9868 |
+| SpMV, N=4,194,304 | library | 0.651655 | 0.243668 | 0.243935 |
+| SpMV, N=4,194,304 | end-to-end | 289.105 | 34.4982 | 34.2344 |
+| LU + solve, N=12,288, 16 RHS | library | 574.346 | 119.198 | 119.371 |
+| LU + solve, N=12,288, 16 RHS | end-to-end | 576.151 | 239.122 | 239.666 |
+| RNG, N=67,108,864 | library | 85.1295 | 0.865131 | 0.866266 |
+| RNG, N=67,108,864 | end-to-end | 86.5594 | 33.9473 | 33.5872 |
+| Square sum, N=67,108,864 | library | 37.0525 | 0.372409 | 0.298288 |
+| Square sum, N=67,108,864 | end-to-end | 39.0119 | 55.3018 | 53.4921 |
+
+At these largest sizes, data-resident GPU library calls are faster than the
+corresponding CPU baseline. In the one-shot comparison, GPU advantages remain
+for Sparse, Solver and RAND, while FFT, BLAS and Thrust take longer than CPU.
+Smaller cases can differ: for example, the smallest Sparse case is faster on
+CPU in both scopes. Use the scope matching your application's data residency
+and setup reuse. These intervals do not isolate the time of allocation,
+transfers, library setup or synchronization individually.
+
+### Provenance and interpretation limits
+
+| Measurement identity | Value |
+| --- | --- |
+| Source commit, clean measurement tree | `6481f47ce4b097f76aa642d7cf2fa1b55f899ad3` |
+| Effective config SHA-256 | `6129ba22a4c532a5887077638d56ce908d5969da96ca7615589c99010061ceed` |
+| Executable manifest SHA-256 | `db1b9aff9f6a5d74b6bd1ad4ac961fc2a9b7b996f0029a0a2804aaada045abae` |
+| Runtime-environment SHA-256 | `cbd8e7b2b9a1c862bdbe01cf38589c66e8233edd6790c02d520f125296ca7b5c` |
+
+The retained manifest identifies all 18 binaries; all 6,480 rows matched their
+source/config/runtime/binary provenance. A later documentation commit does not
+change the measured source version. The earlier unsuccessful Thrust build and
+smoke preparation remain failed attempts with their original logs. They are
+not counted as successful stages or merged into production data. Historical
+Fortran campaigns remain separate from this replacement comparison.
+
+- RNG compares the same distribution/output type, not identical algorithms or
+  random streams. CPU intrinsic RNG and reduction are serial baselines.
+- Requested library thread counts do not establish actual worker counts.
+  Resolved link identities do not prove every library actually loaded at runtime.
+- No component timing or profiling is included. The results do not identify
+  the separate causes of a CUDA/OpenACC time difference or attribute a C/C++
+  versus Fortran difference solely to language.
+- The results apply to the recorded software, inputs and hardware. They do not
+  validate a later system update, another installation or unmeasured sizes.
+- Raw measurements, execution logs, figures and teaching PowerPoint files remain
+  non-distributed artifacts. The public [measurement workflow](PORTABILITY.md#measuring-on-your-own-system)
+  allows readers to generate their own results without those files.
 
 ## AMD Fortran production validation
 
@@ -1081,26 +1210,16 @@ probes do not cover every library version. Original files were hash-checked
 before and after analysis and preserved. These presurvey rows remain separate
 from production data; five-trial, six-node, two-wave production has not run.
 
-<a id="fortran-production-validation"></a>
+<a id="fortran-production-validation-history"></a>
 
-### Fortran production validation and figures
+### Historical Fortran production validation and figures
 
 The historical campaign below predates the current NVIDIA Fortran timing
-alignment. Its numerical passes remain valid for its recorded binaries; its
-timings do not validate the revised measurement path. The revised source requires
-a new Pegasus build of all 18 benchmarks, numerical smoke and performance
-measurement before replacement figures can be published. No historical raw
-record or figure is rewritten by this source change.
-
-Local checks cover the shared driver's callback/timer sequence, GPU-branch
-preprocessing and CPU calls against controlled FFTW/oneMKL fixtures, plus the
-intrinsic RNG/reduction paths. These checks do not establish NVHPC compilation,
-CUDA/OpenACC execution or GPU performance. The revised Fortran build settings
-now follow the published C/C++ profiles, including the explicit NVIDIA OpenACC
-`-fast -O3` exception and nvc++ Thrust wrapper. They still require Pegasus
-build/smoke and new Fortran measurements; see
-[the Fortran timing contract](BENCHMARK_PROTOCOL.md#fortran-binding-of-this-protocol).
-The C/C++ and AMD sources, build policies and saved results are unchanged.
+alignment. Its numerical passes remain valid for its recorded binaries, but
+these timings are not mixed into the [current aligned comparison](#fortran-production-validation).
+The later 18-benchmark rebuild, numerical smoke and new performance measurements
+are recorded there. The historical raw records, figures and limitations below
+remain unchanged. C/C++ and AMD results are separate campaigns.
 
 The completed Pegasus production campaign measured commit
 `9567d6e9fdd5e2bb9190fb523ca073ca2a68ee1c`. Its retained, non-distributed
