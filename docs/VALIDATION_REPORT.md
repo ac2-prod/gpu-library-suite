@@ -2,8 +2,10 @@
 
 ## Current coexistence status
 
-Retained logs reviewed on 2026-10-18 (JST) establish the following bounded
-coverage. No new execution is implied by this documentation update.
+This report distinguishes source compatibility checks, real numerical execution
+and performance measurements. The current summary includes the AMD Fortran
+evaluation completed on 2026-10-21. Each result applies to its recorded source
+and environment; historical sections retain the status at the time of that run.
 
 | Evidence | Confirmed result | Source boundary |
 | --- | --- | --- |
@@ -11,17 +13,90 @@ coverage. No new execution is implied by this documentation update.
 | NVIDIA local/fixture compatibility after AMD addition | Existing CMake, CPU-provider, CLI/schema/manifest, runner/aggregation/plot and Fortran checks passed | Synthetic providers and local compilers are not GPU or performance evidence. |
 | NVIDIA C/C++ and Fortran on Pegasus | 36 benchmark artifacts built; 72/72 numerical smoke cases passed, including Fortran Thrust CUDA/OpenACC interoperation | Clean commit `eb9e594be3ea4f1dc4bef6fb562223961c60a43a`; details and private evidence identities are recorded below. |
 | AMD three-size pilot on Sirius | 108/108 numerical records passed; PBS `45781.pbs`, exit 0, walltime 00:12:59 | One APU, one trial per condition; retained dirty source snapshot `a3697cae…`. No physical-node or multi-trial dispersion evidence. |
+| AMD C/C++ performance on Sirius | Completed comparisons, with replacement campaigns for corrected BLIS links and rocSPARSE v2 | See the [C/C++ comparison record](#amd-production-comparison) and [rocSPARSE evidence](../amd/c-cpp/rocsparse/README.md#validation-and-limits); keep their distinct source identities. |
+| AMD Fortran on Sirius | 36 initial artifacts and 18 teaching examples verified; after timing alignment, 18 rebuilt benchmarks, 72 numerical smoke rows and 6,480 production rows passed | Clean measurement commit `b69847694c3e34fd220a3c44b7b1a98da22d6b63`; [details below](#amd-fortran-production-validation). |
 
-The requested source coexistence review and minimal NVIDIA real build/smoke
-are complete within this coverage. This does not certify an AMD run at the
-Pegasus-tested commit, production statistics, effective CPU worker counts, or
-complete loaded-library provenance. The later pilot separately confirms the
-three configured sizes on one APU, as recorded below. The
-[next minimal performance plan](IMPLEMENTATION_PLAN.md#minimal-performance-evaluation-plan)
-keeps those gates separate. Historical failures and intermediate pending states
-below retain their original meaning; later successful runs do not rewrite them.
+The NVIDIA coexistence result does not validate a different AMD measurement
+snapshot. Effective external-library CPU worker counts and complete
+loaded-library provenance remain unverified. Historical failures and intermediate
+pending states below retain their original meaning; later successful runs do
+not rewrite them. Saved raw data, job logs and teaching slides are not distributed
+in this repository. Public configs and source allow users to make their own
+measurements with the [build guide](BUILDING.md) and [measurement protocol](BENCHMARK_PROTOCOL.md).
+
+## AMD Fortran production validation
+
+The six AMD Fortran families have real CPU, HIP and OpenMP target execution
+evidence. The initial build produced 18 examples and 18 benchmarks; the examples
+and 72 numerical smoke records passed, including rocThrust interoperation.
+After aligning benchmark timing with AMD C/C++, the changed benchmarks were
+rebuilt and checked again before measuring. The current comparison uses only
+those aligned binaries and their 6,480 records, not C/C++ data or the earlier
+5,400-row provisional Fortran comparison.
+
+| Stage | Saved run | Result |
+| --- | --- | --- |
+| Initial examples and benchmarks | `sirius-amd-fortran-build-20261021T044526Z-402336eb` | 36 artifacts built; subsequent smoke ran all 18 examples and passed 72 benchmark records |
+| Aligned benchmark build | `sirius-amd-fortran-clean18-20261021T123440Z-a02098a3` | 18/18 built; CPU/APU checks and runtime-input collection completed |
+| Aligned numerical smoke | `sirius-amd-fortran-smoke-20261021T123440Z-a02098a3` | 72/72 passed, including both rocThrust GPU paths |
+| Aligned production | `sirius-amd-fortran-production-20261021T133446Z-a02098a3` | Wave 0: 3,240/3,240; wave 1: 3,240/3,240; no failed or excluded rows |
+
+All four aligned build/smoke/wave jobs returned PBS exit 0. The production
+matrix is six libraries × three sizes × three implementations × two scopes ×
+five trials × six hosts × two waves. Both waves used the same six physical
+hosts, one process with a matched 24-CPU/APU allocation on each host. HIP and
+OpenMP device identity was checked. All recorded times were finite and positive,
+with consistent repeat normalization. See the [Sirius procedure](../jobs/sirius/README.md#amd-fortran-current-workflow)
+for allocation and runtime setup.
+
+The measured build used GNU Fortran 14.2.1, AMD LLVM Flang 22.0.0, ROCm 7.2.0
+with matching hipFORT, CMake 3.31.8 and AOCL 5.1.0. BLAS calls Fortran `dgemm`
+and links multithreaded `libblis-mt.so.5.1.0`. Solver calls Fortran `dgetrf` /
+`dgetrs` through `libflame.so` with the same multithreaded BLIS dependency.
+FFTW uses its single-precision OpenMP thread library. AOCL Sparse LP64,
+Fortran `random_number` and intrinsic `sum` complete the CPU providers.
+The latter two are serial. Shared backend identifiers containing `cblas` or
+`lapacke` do not describe the Fortran API calls.
+
+| Measurement identity | Value |
+| --- | --- |
+| Source commit | `b69847694c3e34fd220a3c44b7b1a98da22d6b63` |
+| Source snapshot SHA-256 | `a02098a3bb99c509ea5c6e6185235d2237be8156e55442108d98d9c25ccaaf78` |
+| Effective config SHA-256 | `d5b4b6589799188fe3066ab3fe087f7509708ea233e4a97b8c7e8e508fd0456f` |
+| Production manifest SHA-256 | `730ea2a21a7d9ebbff2aa8dbab95b799be9643ea85088c6cac214399d44f3eb2` |
+| Production runtime-input SHA-256 | `70f62d55e50ab13d1a3ba5c9208248524baa1d8262ecf9a227ae0b08fed4b4f4` |
+
+The retained manifest contains all 18 binary hashes. Its values are tied to
+this build; a later documentation commit does not change the measured source
+identity. The private completion report, per-wave validation and aggregation
+review record 6,480 numerical passes, zero failures, 12 complete node/wave
+blocks, and 108 elapsed-time points checked against the raw data. Six figures
+use the same renderer and library/end-to-end format as C/C++. Each node/wave
+block contributes its trial median; each wave contributes the median across
+its six nodes; the final value is the median of the two equally weighted wave
+values. Trials are not pooled and slow nodes are not removed.
+
+Interpretation limits remain:
+
+- The 24-thread requests for FFT/BLAS/Sparse/Solver are not observed worker
+  counts; RAND and reduction remain serial baselines.
+- Configured links and resolved library identities were verified, but complete
+  actual loaded-library identity was not measured.
+- Timing boundaries, synchronization and repetitions follow AMD C/C++;
+  compiler, language binding and RNG differences still prevent attributing a
+  language-to-language time difference solely to the language.
+- The two waves sample repeated use of six hosts, not twelve different hosts.
+- Earlier failed waves and provisional data are retained separately. A later
+  successful run does not prove the cause of an earlier device failure or
+  establish that a system defect has been fixed.
+- These results describe the recorded software environment before the planned
+  system update. They do not validate the updated installation or NVIDIA
+  Fortran timing alignment.
 
 ## AMD three-size pilot and timing review
+
+This section records the C/C++ pilot and preparation status before the later
+[completed comparisons](#amd-production-comparison).
 
 The retained run `sirius-amd-pilot-20261017T183416Z-a3697cae` completed as
 PBS `45781.pbs`, state `F`, exit 0; SSH exit was 0. All 108 actual rows passed

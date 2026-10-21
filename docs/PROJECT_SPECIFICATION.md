@@ -115,17 +115,17 @@ gpu-library-suite/
 
 This tree is a target architecture, not permission to create empty directories.
 Implemented source families are NVIDIA C/C++, NVIDIA Fortran with its common
-support, all six AMD C/C++ families, and the new AMD Fortran source family.
+support, all six AMD C/C++ families, and all six AMD Fortran families.
 Recorded Pegasus and Sirius builds,
 numerical checks, and measurements have distinct source identities; see
 `VALIDATION_REPORT.md` and each library README for coverage and limits.
 In particular, current rocSPARSE v2/csr_rowsplit evidence is documented in
 `amd/c-cpp/rocsparse/README.md`; older adaptive measurements remain historical.
 Recorded success does not establish another environment or later source edits.
-AMD Fortran is implementation-stage source; existing AMD C/C++ measurements
-are not Fortran validation. Its real compiler/module ABI, GPU build and smoke
-remain unverified until separately executed. Do not create empty future-area
-directories, dummy targets, or placeholder implementations.
+AMD Fortran has its own [Sirius build, numerical and performance evidence](VALIDATION_REPORT.md#amd-fortran-production-validation),
+including compiler/hipFORT compatibility and rocThrust interoperation.
+Existing C/C++ measurements are not substituted for Fortran results. Do not
+create empty future-area directories, dummy targets, or placeholder implementations.
 
 NVIDIA Fortran uses the same library directories and stems as the table below, with
 the `.f90` extension for all 18 examples and 18 benchmark entry points.

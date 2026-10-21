@@ -10,6 +10,10 @@
 
 [一覧](../README.ja.md#start-here)から各ライブラリのREADMEを開き、「最小ビルドの選択」の変数ブロックをBashへ設定してください。`CPU_OPTIONS`はそのCPUライブラリを明示選択する配列です。以下はすべてリポジトリ直下・同じBashセッションで実行します。必要な方式の節だけを使い、失敗したコマンドの後は停止してください。
 
+**AMD Fortran**には専用の[CPU・GPUビルド手順](../amd/fortran/README.ja.md)を使います。
+互換のhipFORT module、Fortranリンカー、rocThrustの補助コードを選択するためです。
+本書の5・6節に示すAMD GPUコマンドはC/C++用です。
+
 | 方式 | 必要環境 |
 | --- | --- |
 | C/C++ CPU | CMake 3.20+、C17／C++17、演算ごとのCPU依存 |
@@ -17,8 +21,9 @@
 | NVIDIA C/C++ CUDA | NVIDIA GPU／ドライバ、CUDA Toolkit／nvcc、対応するhost compiler |
 | NVIDIA C/C++ OpenACC | 同じCUDA Toolkit＋NVHPC nvc／nvc++ |
 | NVIDIA Fortran GPU | NVHPC nvfortran、CUDA Toolkit。ThrustにはNVCC／CCCLも必要 |
-| AMD HIP | AMD GPU／ドライバ、ROCm、HIP対応Clang、CMake 3.21+ |
-| AMD OpenMP target | ROCmと対応するAMD Clang。rocThrustにはHIP ClangとCMake 3.21+も必要 |
+| AMD C/C++ HIP | AMD GPU／ドライバ、ROCm、HIP対応Clang、CMake 3.21+ |
+| AMD C/C++ OpenMP target | ROCmと対応するAMD Clang。rocThrustにはHIP ClangとCMake 3.21+も必要 |
+| AMD Fortran GPU | 互換のFortranコンパイラとhipFORT。OpenMP targetはAMD LLVM Flang、rocThrustはnative HIP ClangとCMake 3.29+も必要 |
 
 compiler・GPU target・ROCm／CUDAのprefixは自分の環境で確認した値を使います。別のvendor・言語・compiler・実行方式への変更には新しいbuild treeを作ります。初期configure後にcompilerを切り替えないでください。
 ```bash
@@ -112,7 +117,7 @@ cmake --build "$BUILD_ROOT/openacc" --target "$DIRECTIVE_TARGET" --parallel 2 &&
 
 <a id="hip"></a>
 
-## 5. AMD HIP
+## 5. AMD C/C++ HIP
 
 native HIPの`CMAKE_HIP_COMPILER`は対応するClangです。`hipcc` wrapperをここへ指定しません。手動コンパイルでは`hipcc`を使えます。
 ```bash
@@ -134,7 +139,7 @@ cmake --build "$BUILD_ROOT/hip" --target "$GPU_TARGET" --parallel 2 &&
 
 <a id="openmp"></a>
 
-## 6. AMD OpenMP target
+## 6. AMD C/C++ OpenMP target
 
 OpenMPがmapした配列をGPUライブラリへ渡します。USMやcopy省略を仮定しません。rocThrustのOpenMP callerと`rocthrust_wrapper.hip`は別翻訳単位としてリンクされます。
 ```bash
@@ -172,7 +177,9 @@ CPU依存だけが不足している場合は、CPUを無効にしたGPU手順�
 | C/C++ BLAS | `GPU_SUITE_CPU_BLAS_BACKEND=ONEMKL`, `OPENBLAS`, `GENERIC_CBLAS` |
 | C/C++ Solver | `GPU_SUITE_CPU_LAPACK_BACKEND=ONEMKL`, `OPENBLAS`, `GENERIC_LAPACKE`; LAPACKE API |
 | C/C++ Sparse | NVIDIA: `ONEMKL`; AMD: `ONEMKL` / `AOCLSPARSE`. REFERENCEは教材の代替ではありません。 |
-| Fortran BLAS / Sparse / Solver | oneMKL LP64, `mkl_rt`, `mkl_service.h`; Sparse: `mkl_spblas.f90`; `MKLROOT` |
+| NVIDIA Fortran BLAS / Sparse / Solver | oneMKL LP64, `mkl_rt`, `mkl_service.h`; Sparse: `mkl_spblas.f90`; `MKLROOT` |
+| AMD Fortran BLAS / Solver | 明示選択したLP64 Fortran BLAS／LAPACK。AOCLではBLIS／libFLAMEと共通のGENERIC provider設定を使う |
+| AMD Fortran Sparse | 明示選択した`AOCLSPARSE`と付属の`aocl_sparse_c.f90` binding |
 | RAND / Thrust | C++標準ライブラリ／Fortran組込みだけで逐次CPU教材を実行可能。 |
 
 CMakeの探索範囲外にある場合は、`CMAKE_PREFIX_PATH`や下記の入力を`CPU_OPTIONS`へ追加します。headerとlibraryは同じprovider・ABIから選んでください。AOCL BLIS／libFLAMEはC/C++のGENERICプロバイダで指定でき、並列版を測る場合は意図した並列ライブラリとその依存を選択します。

@@ -92,8 +92,10 @@ Performance preparation follows `docs/IMPLEMENTATION_PLAN.md` and requires
 separate execution approval; a passed baseline does not validate later edits.
 The owner-approved AMD Fortran source family follows the 2026-10-20 teaching
 material under `amd/fortran`, with CPU, HIP/hipFORT and OpenMP target examples
-and benchmarks. This source addition is not evidence of an AMD Fortran real
-build, GPU smoke or performance measurement. Miyabi and TSUBAME4.0 remain
+and benchmarks. Its recorded Sirius build, numerical smoke and aligned
+6,480-row production evaluation are scoped to the source/binary identities in
+`docs/VALIDATION_REPORT.md#amd-fortran-production-validation`; they do not
+validate another environment or later edits. Miyabi and TSUBAME4.0 remain
 future scope. Do not create empty
 future directories or dummy implementations. System support belongs under
 `jobs/pegasus` and `jobs/sirius`; do not create Furo job directories.

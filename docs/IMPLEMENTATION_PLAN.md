@@ -32,8 +32,11 @@ The later focused jobs completed basic numerical smoke for the five remaining
 families. NVIDIA local/fixture coexistence checks and the separately approved
 Pegasus 36-artifact build/72-case smoke passed. Their source boundaries and
 unresolved evidence are in [VALIDATION_REPORT](VALIDATION_REPORT.md#current-coexistence-status).
-The next step is the [minimal performance plan](#minimal-performance-evaluation-plan),
-not a new full regression campaign. Further real execution requires separate approval.
+AMD C/C++ performance evaluation and the aligned AMD Fortran build, smoke and
+two-wave evaluation are also complete at their recorded versions. The
+[Fortran completion status](#amd-fortran-source-implementation) and validation
+report distinguish current results from earlier preparation milestones.
+Further real execution requires separate approval.
 
 ## Planning baseline and cross-phase constraints
 
@@ -1512,10 +1515,21 @@ human-supplied site values.
 
 ## AMD Fortran source implementation
 
-The owner requested the six-library CPU/HIP/OpenMP source family under
-`amd/fortran`, with 18 teaching and 18 benchmark entry programs. CMake, explicit
-helper/link inputs, Fortran result identity and a small smoke input are supplied.
-Local CPU and declaration-fixture checks do not establish GPU launch readiness.
-The next separately approved step is an actual compiler/hipFORT/module/API build,
-followed by numerical smoke only after that build succeeds. No hardware run or
-performance campaign is part of this source task. See the [usage guide](../amd/fortran/README.md).
+The six-library CPU/HIP/OpenMP family under `amd/fortran` supplies 18 teaching
+programs, 18 benchmarks, explicit helper/link inputs, language-marked results
+and a small numerical smoke config. The [usage guide](../amd/fortran/README.md)
+is the entry point for application developers.
+
+The initial Sirius build and numerical checks completed. Benchmark timing was
+then aligned with AMD C/C++ at commit `b69847694c3e34fd220a3c44b7b1a98da22d6b63`.
+That version passed a fresh 18-benchmark build, 72-row smoke and two full
+six-host waves with 6,480 verified records. Aggregation and all six figures
+were checked against those records. The [validation report](VALIDATION_REPORT.md#amd-fortran-production-validation)
+owns run identities, coverage and limitations.
+
+The earlier 5,400-row provisional comparison and failed waves remain
+historical evidence, separate from the aligned campaign. Measurements after a
+system update require a new environment identity and separate execution scope.
+Effective external-library worker counts and complete loaded-library identity
+remain unknown; they are disclosed rather than inferred from requested threads.
+NVIDIA Fortran timing alignment is outside this completed AMD work.

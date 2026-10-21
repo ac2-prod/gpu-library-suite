@@ -1,4 +1,4 @@
-# Sirius: approved execution route and AMD validation
+# Building and measuring on Sirius
 
 This document owns Sirius operating rules. AMD teaching and mathematical rules
 belong to [PROJECT_SPECIFICATION](../../docs/PROJECT_SPECIFICATION.md); staged
@@ -6,30 +6,23 @@ acceptance belongs to [IMPLEMENTATION_PLAN](../../docs/IMPLEMENTATION_PLAN.md).
 
 ## Current status and execution route
 
-The rocFFT baseline completed normally in the recorded run
-`sirius-rocfft-smoke-20261017T062713Z-b29643fc`: all three fresh builds,
-teaching examples, and 96 serial/threaded CPU/HIP/OpenMP smoke records passed.
-See [the validation evidence](../../docs/VALIDATION_REPORT.md#amd-rocfft-sirius-baseline).
-Earlier build-only runs and authentication failures remain historical evidence;
-their artifacts must not be combined with the successful snapshot.
+This guide is for users running the suite on Sirius. For a first example on a
+general Linux system, use the [build guide](../../docs/BUILDING.md) or
+[AMD Fortran guide](../../amd/fortran/README.md). Site modules and allocation
+values here describe the tested Sirius environment; check them against the
+current installation before preparing a new job.
 
-The later six-family build
-`sirius-amd-build-20261017T104351Z-a3697cae` (PBS `45731.pbs`) completed with
-all 36 artifacts verified: CPU 12, HIP 12 and OpenMP 12, including the explicit
-AOCL Sparse CPU pair. PBS and SSH exits were zero. This is compile/link
-evidence only; no produced program or numerical smoke ran in that build job.
-Subsequent focused smoke jobs below verified all five remaining families.
-The subsequent [NVIDIA coexistence check](../../docs/VALIDATION_REPORT.md#nvidia-coexistence-review-after-amd-addition)
-passed its local/fixture and Pegasus build/basic-smoke gates. Complete loaded-DSO
-identity, effective worker counts and full performance evaluation remain open. The
-first one-size pilot and the later three-size pilot both completed. The latter
-passed 108/108 numerical rows in 00:12:59 PBS walltime; AMD production
-preparation now follows without changing either saved run. See
-[the complete build evidence](../../docs/VALIDATION_REPORT.md#amd-six-family-build-with-aocl-sparse)
-for its exact source snapshot, hashes and operation counts.
+AMD C/C++ and Fortran have completed real builds, numerical checks and
+performance evaluation. The aligned Fortran comparison contains 6,480 verified
+records from six hosts over two waves. Start with the
+[current Fortran workflow](#amd-fortran-current-workflow) below; the later
+sections retain the historical preparation and failure records. The
+[validation report](../../docs/VALIDATION_REPORT.md) identifies the measured
+source versions and limits. Effective CPU worker counts and complete actual
+loaded-library identity remain unverified.
 
-The owner's current execution policy supersedes earlier terminal/login-build
-instructions retained in the history below:
+The current execution policy supersedes historical terminal/login-build
+instructions:
 
 - Use the local Shell tool, never Computer Use terminal interaction.
 - Remote commands use noninteractive SSH to the explicitly approved host.
@@ -41,8 +34,8 @@ instructions retained in the history below:
 - Report SSH argv, stdout, stderr, exit code and the job ID after submission.
 - Deletion, overwriting run artifacts, cancellation and bulk resubmission require
   prior approval. Each new execution uses a new `runs/<RUN_ID>`; retain old runs.
-- Current work is local AMD implementation and validation. No additional SSH,
-  scheduler execution or performance campaign is authorized by that work.
+- Source editing or a local test pass does not authorize an SSH connection,
+  scheduler operation or performance campaign.
 
 The owner confirmed on 2026-10-18 that this allocation uses the
 interdisciplinary joint-use category, with `debug` and `mcrp` available. The
@@ -59,7 +52,62 @@ walltime appropriate to the approved work; consider `mcrp` for work exceeding
 30 minutes. These documented limits do not establish current availability or
 authorize another job, parallel submissions, or a queue change.
 
-### AMD Fortran: first 36-artifact build preparation
+### AMD Fortran: current workflow
+
+Use the [Fortran examples and dependencies](../../amd/fortran/README.md) to
+select an operation. The site scripts support both a complete source build and
+a benchmark-only build; keep CPU, HIP and OpenMP in separate build trees.
+
+| Step | Inputs and checks |
+| --- | --- |
+| Build examples and benchmarks | `AMD_BUILD_SOURCE_LANGUAGE=fortran`, `AMD_BUILD_MODE=all`: 36 artifacts, including explicit Fortran helpers and rocThrust HIP objects |
+| Build measurement binaries | `AMD_BUILD_MODE=clean-benchmarks`: 18 benchmarks from a clean fixed commit, CPU/APU mapping checks and runtime collection; preserve all previous build directories |
+| Check numerical execution | Use the new manifests and the [Fortran smoke matrix](../../configs/amd/fortran/smoke.json): 72 records, CPU/HIP/OpenMP and both scopes; stop on a missing or failed record |
+| Measure | Review [pilot](amd-fortran-pilot.json) / [production](amd-fortran-benchmark.json) inputs and use `amd_prepare.py`, `amd_production.py` and `amd_wave.py` with one immutable config, manifest and runtime input per campaign |
+| Review results | Check scheduler completion, every node's status and expected row count, numerical verification, finite timings and provenance before aggregating |
+
+The tested module stack is `gcc/14.2.1`, `aocl/5.1.0/gcc14.2.1` and
+`rocm/7.2.0`. Measurement launch also uses `openmpi/5.0.10/rocm7.2.0`.
+`rocfft_compute_modules.sh` initializes modules and preserves GCC runtime-library
+precedence after loading them. CPU uses GNU Fortran 14.2.1; GPU uses AMD LLVM
+Flang 22.0.0 with matching ROCm 7.2.0 hipFORT modules/archive. Native HIP Clang
+compiles the rocThrust wrapper and the Fortran driver performs the final link.
+The recorded target is `gfx942:sramecc+:xnack-`, with no implicit USM assumption.
+Verify ROCm's version file before submission and again inside the allocation;
+an installed path alone does not establish the approved version.
+
+The completed aligned build reserved one physical node with `select=4` and
+`place=exclhost`, `mcrp`, one-hour limit. The smoke used one APU. Each production
+wave reserved six physical nodes with `select=24`, `place=exclhost`, `mcrp`,
+90 minutes. The launcher starts one worker per physical host and exports
+`PATH` and `LD_LIBRARY_PATH` explicitly to MPI workers. Placement preflight
+checks CPU affinity, NUMA and the selected HIP/OpenMP APU on every host before
+measurement; six ranks alone do not prove correct placement.
+
+The [completed validation](../../docs/VALIDATION_REPORT.md#amd-fortran-production-validation)
+used clean source `b69847694c3e34fd220a3c44b7b1a98da22d6b63` and source snapshot
+`a02098a3bb99c509ea5c6e6185235d2237be8156e55442108d98d9c25ccaaf78`:
+
+| Stage | Run suffix after `sirius-amd-fortran-` | PBS job | Result |
+| --- | --- | --- | --- |
+| Clean benchmark build | `clean18-20261021T123440Z-a02098a3` | `46909.pbs` | 18 artifacts, runtime and placement checks passed |
+| Numerical smoke | `smoke-20261021T123440Z-a02098a3` | `46910.pbs` | 72/72 records passed |
+| Production wave 0 | `production-20261021T133446Z-a02098a3` | `46911.pbs` | 3,240/3,240 passed; walltime 00:17:09 |
+| Production wave 1 | Same campaign | `46913.pbs` | 3,240/3,240 passed; walltime 00:16:51 |
+
+Use a new `runs/<RUN_ID>` for new execution. The saved manifests, runtime inputs,
+raw data and completion reports remain in their original directories and are
+not distributed with the repository. Earlier failed waves and provisional
+results remain historical evidence; do not reuse their outputs or claim that
+later success establishes the cause of an earlier failure.
+
+<a id="amd-fortran-first-36-artifact-build-preparation"></a>
+
+### Historical AMD Fortran build preparation
+
+The following records the initial preparation and corrections, before the
+[completed aligned workflow](#amd-fortran-current-workflow). Its pending gates
+describe that earlier stage, not the current validation status.
 
 The [AMD Fortran sources](../../amd/fortran/README.md) are a new family; the
 recorded C/C++ builds and measurements do not validate them. Set
@@ -68,7 +116,8 @@ recorded C/C++ builds and measurements do not validate them. Set
 18-benchmark production preparation retain their existing behavior. After an
 approved clean measurement commit, Fortran may also select `clean-benchmarks`
 for 18 benchmarks plus the existing CPU/APU checks and runtime collection.
-This mode is locally checked; a real Fortran clean production build is pending.
+At this initial stage, the mode had local checks only. The clean production
+build and subsequent measurements are recorded in the current workflow above.
 
 The proposed build uses one `mcrp` allocation, `select=1` (24 CPU cores / one
 APU), one hour, serial build commands and three fresh build trees beneath
@@ -174,9 +223,9 @@ untouched.
 [amd-fortran-pilot.json](amd-fortran-pilot.json) and
 [amd-fortran-benchmark.json](amd-fortran-benchmark.json) are separate Fortran
 inputs. The latter keeps the C/C++ three-size/five-trial matrix: 540 rows per
-node, 3,240 per six-node wave, and 6,480 over two waves. Before production,
-obtain approval for the measurement commit, build 18 fresh clean benchmarks,
-and collect Fortran compiler/hipFORT/provider and link-dependency identities.
+node, 3,240 per six-node wave, and 6,480 over two waves. A new production
+campaign needs a fixed measurement commit, 18 clean benchmarks and collected
+Fortran compiler/hipFORT/provider and link-dependency identities.
 Fortran link depfiles use the `amd/fortran` build directory and its relative
 `<library>/<target>` output, rather than the C/C++ family build directories.
 No compiler, hash, runtime equality or CPU-backend gate is relaxed.
@@ -186,8 +235,8 @@ The planned allocation follows the confirmed C/C++ procedure: one full host
 `place=exclhost` for six physical hosts per measurement wave, one MPI process
 and one matched 24-CPU/APU pair per host. Use `mcrp`, 90 minutes per wave, the
 recorded four-module stack and explicit `-x PATH -x LD_LIBRARY_PATH`. Proceed
-wave by wave after checking each result. These are preparation conditions, not
-records of completed Fortran production jobs. Effective worker counts and
+wave by wave after checking each result. These preparation conditions were
+used by the completed aligned campaign above. Effective worker counts and
 complete actual loaded-library identity remain unverified; add no profiler or
 worker-diagnostic campaign solely for those open items.
 

@@ -1253,8 +1253,10 @@ segments and divide once by `repeat`.
 
 The earlier AMD Fortran results predate this alignment and remain historical,
 provisional measurements; their source/binary identities must not be relabelled
-or mixed with rebuilt, aligned measurements. Real build/smoke and remeasurement
-of the changed benchmark binaries are required before replacing those results.
+or mixed with rebuilt, aligned measurements. Replacement results must use
+rebuilt binaries with their own numerical and measurement evidence. The
+[aligned 6,480-row Sirius evaluation](VALIDATION_REPORT.md#amd-fortran-production-validation)
+meets that requirement for its recorded source and environment.
 This timing alignment does not equate CPU RNG algorithms or remove native
 BLAS/LAPACK binding and compiler differences. It does not change NVIDIA sources
 or the retained rocFFT-versus-cuFFT timing exception.
@@ -1276,8 +1278,9 @@ agreement is assumed; HIP completion precedes OpenMP copyback. Real validation
 must use `OMP_TARGET_OFFLOAD=MANDATORY` and the matched compiler/hipFORT stack.
 
 Local syntax, declaration fixtures and CPU checks establish only those checked
-properties. Recorded AMD Fortran build, basic smoke and pilot validation have
-their own source/binary provenance in the [Sirius execution record](../jobs/sirius/README.md#amd-fortran-first-36-artifact-build-preparation).
-Clean production runtime identity and multi-node performance remain unverified;
-historical C/C++ measurements do not validate this source family. Preparation
-does not itself authorize a new measurement campaign.
+properties. AMD Fortran real build, numerical smoke and multi-node performance
+have separate source/binary provenance in the [validation report](VALIDATION_REPORT.md#amd-fortran-production-validation).
+Recorded runtime inputs were checked across that campaign; effective workers
+and complete actual loaded-library identity remain unverified. Historical
+C/C++ measurements do not validate this source family. Operating steps for a
+new campaign belong to the [Sirius procedure](../jobs/sirius/README.md#amd-fortran-current-workflow).

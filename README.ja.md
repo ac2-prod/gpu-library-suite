@@ -10,9 +10,9 @@ NVIDIA C/C++・NVIDIA Fortran・AMD C/C++・AMD Fortranを収録しています�
 
 ## 使いたい実装を選ぶ
 
-必要なGPUとコンパイラがある列を選び、まず1つの演算を動かしてください。CPUサンプルだけならGPUは不要です。一般のLinux環境で利用でき、Pegasus／Siriusのアカウントは必要ありません。AMD FortranはSiriusでbuild・基本数値smokeを確認済みです。性能の本評価は未実施です。
+必要なGPUとコンパイラがある列を選び、まず1つの演算を動かしてください。CPUサンプルだけならGPUは不要です。一般のLinux環境で利用でき、Pegasus／Siriusのアカウントは必要ありません。AMD FortranはSiriusでビルド・数値検証・6ノード×2 waveの性能評価を完了しています。[検証した版・環境と限界](docs/VALIDATION_REPORT.md#amd-fortran-production-validation)を参照してください。
 
-| 演算 | NVIDIA C/C++：CUDA・OpenACC | NVIDIA Fortran：CUDA Fortran・OpenACC | AMD C/C++：HIP・OpenMP target | AMD Fortran: HIP / OpenMP target |
+| 演算 | NVIDIA C/C++：CUDA・OpenACC | NVIDIA Fortran：CUDA Fortran・OpenACC | AMD C/C++：HIP・OpenMP target | AMD Fortran：HIP・OpenMP target |
 | --- | --- | --- | --- | --- |
 | FFT | [cufft](nvidia/c-cpp/cufft/README.ja.md) | [cufft](nvidia/fortran/cufft/README.ja.md) | [rocfft](amd/c-cpp/rocfft/README.ja.md) | [rocfft](amd/fortran/rocfft/examples) |
 | BLAS | [cublas](nvidia/c-cpp/cublas/README.ja.md) | [cublas](nvidia/fortran/cublas/README.ja.md) | [rocblas](amd/c-cpp/rocblas/README.ja.md) | [rocblas](amd/fortran/rocblas/examples) |
@@ -76,7 +76,7 @@ AMD FFTは入力復元要件に合わせて計測しており、NVIDIA FFTとrep
 
 ## 公開物と確認範囲
 
-NVIDIA C/C++・FortranとAMD C/C++のソース、設定、ツール、テスト、文書を公開しています。測定raw、実行ログ、PPTX、非配布の保存資料はcheckoutに含みません。ソースを利用するために、著者の保存データや会話履歴は必要ありません。
+NVIDIA・AMDのC/C++版とFortran版のソース、設定、ツール、テスト、文書を公開しています。測定raw、実行ログ、PPTX、非配布の保存資料はcheckoutに含みません。ソースを利用するために、著者の保存データや会話履歴は必要ありません。
 
 PegasusでNVIDIA、SiriusでAMDのbuild・数値検証・性能測定の記録があります。[検証報告](docs/VALIDATION_REPORT.md)と各分野の確認範囲を参照してください。これらは記録された版・環境の結果であり、別環境や後続変更の動作保証ではありません。CPU実効worker数や完全な実ロードライブラリ来歴など、未確認事項は保持しています。
 

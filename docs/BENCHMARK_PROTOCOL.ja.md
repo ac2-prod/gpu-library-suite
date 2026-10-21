@@ -595,3 +595,28 @@ warm-upは選択スコープに従い、非計測です。各raw試行は復元�
 runを比較するときは、精度、演算、パラメータ、検証閾値、CPUプロバイダ、要求／有効スレッド数の根拠、コンパイラフラグ、GPU/ソフトウェアバージョン、測定スコープを明示してください。設定した全要素1または解析的な問題は制御された例であり、実世界の入力分布の調査ではありません。cuRANDは異なるRNGアルゴリズムを比較し、cuRAND/ThrustのCPU系列は単一スレッドです。その比を、最適化された並列CPU実装に一般化してはいけません。failed、skipped、nonfinite試行はrawデータに残して数値集計から除外し、都合の悪いデータとして消去しません。
 
 設定の正確な編集箇所と実行可能なコマンド列は、[読者向けワークフロー](PORTABILITY.ja.md#measuring-on-your-own-system)を参照してください。
+
+<a id="amd-fortran-binding"></a>
+
+## AMD Fortranの計測と比較
+
+AMD FortranはCPU・HIP・OpenMP targetを、対応するAMD C/C++版と同じ問題・精度・
+サイズ・計測境界・同期・反復手順で測定します。表示名は**library／end-to-end**、
+内部scope名は`compute`／`end-to-end`です。分野ごとの正確な区間とOpenMPの
+mapping解放位置は[英語版の対応表](BENCHMARK_PROTOCOL.md#amd-fortran-binding)を参照してください。
+rocFFTは入力復元を各計測区間の外に置き、各FFTと完了待ちを個別に計時します。
+rocSOLVERのrepeatは両scopeとも1です。
+
+CPU BLAS／SolverはFortranの`dgemm`／`dgetrf`／`dgetrs`を呼びます。
+共通のbackend識別名にCBLAS／LAPACKEが含まれていても、実際の呼出しを
+そのC APIと解釈しないでください。RANDは`random_number`、二乗和は`sum`による
+逐次実装です。外部ライブラリへの要求スレッド数と実効worker数は区別します。
+同じ計測境界でも、コンパイラ・言語の呼出し規約・乱数生成器の違いは残るため、
+言語間の差を言語だけの効果とは断定できません。NVIDIA Fortranの計測手順は
+今回のAMD版の統一対象には含みません。
+
+計測手順統一後の[6,480行の検証結果](VALIDATION_REPORT.md#amd-fortran-production-validation)は、
+以前の暫定5,400行と別のcampaignです。6ノード×2 waveを、試行中央値→ノード間中央値→
+等重みのwave間中央値の順に集計し、古いsource・binary・runtimeの結果は混在させません。
+記録したruntime入力の一致は確認済みですが、全実ロードライブラリや外部CPUライブラリの
+実効worker数を測定したものではありません。

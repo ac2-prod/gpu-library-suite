@@ -5,12 +5,11 @@
 Compare native Fortran CPU code, direct HIP/roc-library calls through hipFORT,
 and OpenMP target data management. Each library has three teaching programs in
 `examples/` and three separate benchmark programs in `benchmarks/`.
-Sirius built all 36 CPU/HIP/OpenMP artifacts, then passed 18 teaching programs
-and 72 numerical smoke rows, including rocThrust interoperation. A subsequent
-108-row performance pilot was independently validated from its saved data; its
-postprocessing failure remains recorded. Production performance is still pending.
-See the [Sirius build record](../../jobs/sirius/README.md#amd-fortran-first-36-artifact-build-preparation).
-Existing AMD C/C++ measurements do not validate these new Fortran programs.
+Start with a CPU example, then compare the HIP and OpenMP versions of the same
+operation. CMake supplies the required helper sources and mixed-language links.
+The [validation report](../../docs/VALIDATION_REPORT.md#amd-fortran-production-validation)
+records successful Sirius builds, numerical checks including rocThrust, and
+6,480 performance records from six physical nodes over two waves.
 
 ## Source files
 
@@ -54,6 +53,8 @@ For a CPU-only CMake tree:
 cmake -S . -B build/amd-fortran-cpu \
   -DGPU_SUITE_VENDOR=amd -DGPU_SUITE_SOURCE_LANGUAGE=fortran \
   -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=Release \
+  '-DGPU_SUITE_AMD_LIBRARIES=rocrand;rocthrust' \
+  -DGPU_SUITE_BUILD_BENCHMARKS=OFF -DGPU_SUITE_BUILD_TESTS=OFF \
   -DGPU_SUITE_BUILD_CPU=ON -DGPU_SUITE_BUILD_HIP=OFF \
   -DGPU_SUITE_BUILD_OPENMP=OFF -DGPU_SUITE_BUILD_CUDA=OFF \
   -DGPU_SUITE_BUILD_OPENACC=OFF
@@ -67,6 +68,10 @@ Select the same explicit provider options as [AMD C/C++](../c-cpp/rocblas/README
 `GPU_SUITE_CPU_BLAS_BACKEND` and `GPU_SUITE_CPU_LAPACK_BACKEND`. For AOCL,
 use `GENERIC_CBLAS` / `GENERIC_LAPACKE`, explicit header/library paths and all
 ordered extra libraries; libFLAME must resolve BLAS from the intended BLIS.
+For a multithreaded baseline, select the parallel BLIS provider (the Sirius
+measurement used `libblis-mt`), not a sequential library with a similar name.
+The `GENERIC_CBLAS` / `GENERIC_LAPACKE` option names are shared build identifiers;
+these Fortran programs call Fortran BLAS/LAPACK, not CBLAS or LAPACKE entry points.
 Sparse requires explicit `GPU_SUITE_CPU_SPARSE_BACKEND=AOCLSPARSE`.
 CMake checks provider headers and complete Fortran example links. Read the
 enabled/disabled target summary: configure success alone is not build success.
@@ -97,25 +102,35 @@ in their callers for hipFORT versions whose interfaces are incompatible or
 missing. They call the same public C symbols; RAND retains explicit DEFAULT
 ordering, seed/offset restoration and generator initialization.
 
-Example GPU-tree options, replacing environment variables with verified values:
+The following builds and runs only the HIP DGEMM teaching example. Set `FC` to
+your compatible Fortran compiler, `HIPFORT_MOD_DIR` / `HIPFORT_LIBRARY` to its
+hipFORT installation, and `ROCM_PATH` to the ROCm prefix. `HIP_CLANG` and
+`GPU_ARCH` select the native HIP compiler and GPU architecture when building
+rocThrust. Use values from your installation, not paths copied from another site.
 
 ```bash
 cmake -S . -B build/amd-fortran-hip \
   -DGPU_SUITE_VENDOR=amd -DGPU_SUITE_SOURCE_LANGUAGE=fortran \
   -DCMAKE_Fortran_COMPILER="$FC" -DCMAKE_BUILD_TYPE=Release \
+  -DGPU_SUITE_AMD_LIBRARIES=rocblas \
+  -DGPU_SUITE_BUILD_BENCHMARKS=OFF -DGPU_SUITE_BUILD_TESTS=OFF \
   -DGPU_SUITE_BUILD_CPU=OFF -DGPU_SUITE_BUILD_HIP=ON \
   -DGPU_SUITE_BUILD_OPENMP=OFF -DGPU_SUITE_BUILD_CUDA=OFF \
   -DGPU_SUITE_BUILD_OPENACC=OFF \
   -DGPU_SUITE_HIPFORT_MODULE_DIR="$HIPFORT_MOD_DIR" \
   -DGPU_SUITE_HIPFORT_LIBRARY="$HIPFORT_LIBRARY" \
   -DGPU_SUITE_ROCM_ROOT="$ROCM_PATH" \
-  -DCMAKE_HIP_COMPILER="$HIP_CLANG" -DCMAKE_HIP_ARCHITECTURES="$GPU_ARCH"
-cmake --build build/amd-fortran-hip --target gpu_suite_partial_manifest
+  -DCMAKE_HIP_COMPILER="$HIP_CLANG" -DCMAKE_HIP_ARCHITECTURES="$GPU_ARCH" &&
+cmake --build build/amd-fortran-hip --target blas_gpu &&
+build/amd-fortran-hip/amd/fortran/rocblas/blas_gpu
 ```
 
 For OpenMP, use a new tree, disable HIP targets, enable OpenMP targets and add
-`-DGPU_SUITE_AMD_GPU_TARGET="$GPU_ARCH"`. Native HIP settings are still needed
-for the rocThrust wrapper. The compile/link probes do not execute GPU code.
+`-DGPU_SUITE_AMD_GPU_TARGET="$GPU_ARCH"`. Build target `openmp_rocblas` and run
+`OMP_TARGET_OFFLOAD=MANDATORY build/amd-fortran-openmp/amd/fortran/rocblas/openmp_rocblas`.
+For another library, change the library selection and target using the source
+table above. Native HIP settings are still needed for the rocThrust wrapper.
+The compile/link probes do not execute GPU code.
 `--device` selects the HIP device; `OMP_DEFAULT_DEVICE` independently selects
 the OpenMP device. Benchmarks reject host fallback and mapped allocations that
 do not belong to the requested HIP device. Neither ordinal is silently remapped.
@@ -141,18 +156,51 @@ Teaching examples never link the benchmark driver.
 6 libraries × 3 implementations × 2 scopes × 2 trials. It chooses FFTW serial,
 generic BLAS/LAPACK providers, AOCL Sparse and intrinsic RNG/sum. Match these
 backend identities to your built manifests; an unavailable backend is an error,
-not permission to substitute another one. This is a smoke input, not an approved
-performance campaign or a Sirius submission script.
+not permission to substitute another one. Use this small numerical check before
+performance measurement; it is not a production config or a job submission script.
 
 Use `--scope compute` for the displayed **library** scope and
 `--scope end-to-end` for **end-to-end**. The
-[benchmark protocol](../../docs/BENCHMARK_PROTOCOL.md) owns the exact timing.
+[AMD Fortran timing specification](../../docs/BENCHMARK_PROTOCOL.md#amd-fortran-binding)
+defines the exact boundaries. They follow the corresponding AMD C/C++ timer,
+synchronization and repetition sequence. This alignment does not make compiler,
+language binding or RNG-algorithm differences disappear.
 All AMD FFT implementations restore canonical input outside each timed execute.
 Solver uses `repeat=1`; other mutable state is restored after warm-up and before
 each trial. CPU thread settings are requests: external-library effective worker
 counts remain unknown; intrinsic RAND and reduction remain serial.
 
+For measurement, configure new trees with `GPU_SUITE_BUILD_BENCHMARKS=ON`.
 Generate the partial manifest with `gpu_suite_partial_manifest` in each tree,
 then use the [shared measurement workflow](../../docs/PORTABILITY.md) with the
 Fortran config and only Fortran manifests. `source_language=fortran` separates
 these records from C/C++; do not merge existing C/C++ measurements into them.
+
+## Tested configuration and interpretation limits
+
+The recorded configuration used GNU Fortran 14.2.1 for CPU code, AMD LLVM Flang
+22.0.0 and matching hipFORT from ROCm 7.2.0 for GPU code, and AOCL 5.1.0.
+These are tested versions, not universal installation requirements. The
+[Sirius procedure](../../jobs/sirius/README.md#amd-fortran-current-workflow)
+describes site-specific modules, runtime inputs and allocations.
+
+| Operation | CPU implementation used in the recorded comparison |
+| --- | --- |
+| FFT | AOCL FFTW, single precision, OpenMP thread library |
+| BLAS | AOCL BLIS, native Fortran `dgemm`, linked to multithreaded BLIS |
+| Sparse | AOCL Sparse LP64, called through its C binding |
+| Solver | AOCL libFLAME `dgetrf` / `dgetrs`, linked with the same multithreaded BLIS |
+| RAND | Serial Fortran `random_number` |
+| Reduction | Serial Fortran `sum(values*values)` |
+
+The first four series request 24 CPU threads; their effective worker counts
+were not measured. A label such as “24 C” does not establish 24 active workers.
+RAND and reduction are serial baselines. Recorded link inputs and resolved
+library files do not establish every library actually loaded during execution.
+
+Performance figures use five trials per condition, node medians within each
+wave, then equally weighted wave medians. Both waves used the same six hosts;
+they are repeated observations, not twelve different machines. The latest
+6,480-row campaign replaces the earlier 5,400-row provisional comparison for
+this source version; old data and failure records remain separate. Software or
+hardware changes require a new comparison rather than relabelling saved results.

@@ -10,7 +10,7 @@ The repository includes NVIDIA C/C++, NVIDIA Fortran, AMD C/C++, and AMD Fortran
 
 ## Choose your implementation
 
-Choose the column matching your GPU and language, then run one example. CPU-only examples need no GPU. General Linux usage does not require Pegasus or Sirius access. AMD Fortran has passed the recorded Sirius build and basic numerical smoke; production performance measurement is pending.
+Choose the column matching your GPU and language, then run one example. CPU-only examples need no GPU. General Linux usage does not require Pegasus or Sirius access. AMD Fortran has completed build, numerical validation and a six-node, two-wave performance evaluation on Sirius; see the [tested versions and limits](docs/VALIDATION_REPORT.md#amd-fortran-production-validation).
 
 | Operation | NVIDIA C/C++: CUDA / OpenACC | NVIDIA Fortran: CUDA Fortran / OpenACC | AMD C/C++: HIP / OpenMP target | AMD Fortran: HIP / OpenMP target |
 | --- | --- | --- | --- | --- |
@@ -76,7 +76,7 @@ AMD FFT timing accommodates required input restoration and differs from NVIDIA F
 
 ## What is included and verified
 
-Published material includes NVIDIA C/C++, NVIDIA Fortran, and AMD C/C++ sources, configurations, tools, tests, and documentation. Saved raw measurements, execution logs, PPTX files, and private review material are not part of the checkout. Using the examples does not require the authors’ saved data or conversation history.
+Published material includes NVIDIA and AMD sources in both C/C++ and Fortran, together with configurations, tools, tests, and documentation. Saved raw measurements, execution logs, PPTX files, and private review material are not part of the checkout. Using the examples does not require the authors’ saved data or conversation history.
 
 Builds, numerical checks, and measurements have been recorded for NVIDIA on Pegasus and AMD on Sirius. See the [validation report](docs/VALIDATION_REPORT.md) and each family’s recorded coverage. These establish evidence for those versions/environments, not a guarantee for another installation or later edits. Unobserved effective CPU workers and complete loaded-library identity remain explicit limitations.
 

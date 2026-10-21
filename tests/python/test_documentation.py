@@ -253,7 +253,7 @@ class DocumentationTests(unittest.TestCase):
         # All approved AMD families contain complete canonical entry points,
         # never empty future placeholders.
         self.assertFalse((REPOSITORY_ROOT / "jobs/furo").exists())
-        self.assertEqual({path.name for path in (REPOSITORY_ROOT / "amd").iterdir()}, {"c-cpp"})
+        self.assertEqual({path.name for path in (REPOSITORY_ROOT / "amd").iterdir()}, {"c-cpp", "fortran"})
         amd_stems = {"rocfft": "fft", "rocblas": "blas", "rocsparse": "sparse",
                      "rocsolver": "solver", "rocrand": "rand", "rocthrust": "reduce"}
         self.assertEqual({path.name for path in (REPOSITORY_ROOT / "amd/c-cpp").iterdir()}, set(amd_stems))

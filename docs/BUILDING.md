@@ -10,6 +10,10 @@ Build one teaching example without building benchmarks, running a full test suit
 
 Choose a library from the [source map](../README.md#start-here) and run its “Select a minimal build” variable block in Bash. `CPU_OPTIONS` explicitly selects that example’s CPU provider. Run the following from the repository root in the same Bash session. Use only the sections you need, and stop after a failed command.
 
+For **AMD Fortran**, start with its [CPU and GPU recipes](../amd/fortran/README.md).
+They select the matching hipFORT modules and Fortran linker, including the
+rocThrust helper. The AMD GPU commands in sections 5–6 below are for C/C++.
+
 | Variant | Requirements |
 | --- | --- |
 | C/C++ CPU | CMake 3.20+, C17 / C++17, and the family’s CPU dependencies |
@@ -17,8 +21,9 @@ Choose a library from the [source map](../README.md#start-here) and run its “S
 | NVIDIA C/C++ CUDA | NVIDIA GPU/driver, CUDA Toolkit / nvcc, compatible host compiler |
 | NVIDIA C/C++ OpenACC | Same CUDA Toolkit plus NVHPC nvc / nvc++ |
 | NVIDIA Fortran GPU | NVHPC nvfortran and CUDA Toolkit; Thrust also needs NVCC / CCCL |
-| AMD HIP | AMD GPU/driver, ROCm, HIP-capable Clang, CMake 3.21+ |
-| AMD OpenMP target | ROCm and compatible AMD Clang; rocThrust also needs HIP Clang and CMake 3.21+ |
+| AMD C/C++ HIP | AMD GPU/driver, ROCm, HIP-capable Clang, CMake 3.21+ |
+| AMD C/C++ OpenMP target | ROCm and compatible AMD Clang; rocThrust also needs HIP Clang and CMake 3.21+ |
+| AMD Fortran GPU | Compatible Fortran compiler and hipFORT; OpenMP target needs AMD LLVM Flang; rocThrust also needs native HIP Clang and CMake 3.29+ |
 
 Choose compiler paths, GPU targets, and ROCm / CUDA prefixes from your installation. Use a new build tree for another vendor, language, compiler, or execution profile; do not change the compiler in an already configured tree.
 ```bash
@@ -112,7 +117,7 @@ cmake --build "$BUILD_ROOT/openacc" --target "$DIRECTIVE_TARGET" --parallel 2 &&
 
 <a id="hip"></a>
 
-## 5. AMD HIP
+## 5. AMD C/C++ HIP
 
 Native HIP uses a supported Clang as `CMAKE_HIP_COMPILER`, not the `hipcc` wrapper. Manual compilation may use `hipcc`.
 ```bash
@@ -134,7 +139,7 @@ cmake --build "$BUILD_ROOT/hip" --target "$GPU_TARGET" --parallel 2 &&
 
 <a id="openmp"></a>
 
-## 6. AMD OpenMP target
+## 6. AMD C/C++ OpenMP target
 
 OpenMP maps arrays and passes their device addresses to the GPU library. Do not assume USM or omitted copies. The rocThrust OpenMP caller and `rocthrust_wrapper.hip` are linked as separate translation units.
 ```bash
@@ -172,7 +177,9 @@ If only CPU dependencies are missing, you can still use the GPU-only recipes. Th
 | C/C++ BLAS | `GPU_SUITE_CPU_BLAS_BACKEND=ONEMKL`, `OPENBLAS`, `GENERIC_CBLAS` |
 | C/C++ Solver | `GPU_SUITE_CPU_LAPACK_BACKEND=ONEMKL`, `OPENBLAS`, `GENERIC_LAPACKE`; LAPACKE API |
 | C/C++ Sparse | NVIDIA: `ONEMKL`; AMD: `ONEMKL` / `AOCLSPARSE`. REFERENCE is not a substitute for the teaching target. |
-| Fortran BLAS / Sparse / Solver | oneMKL LP64, `mkl_rt`, `mkl_service.h`; Sparse: `mkl_spblas.f90`; `MKLROOT` |
+| NVIDIA Fortran BLAS / Sparse / Solver | oneMKL LP64, `mkl_rt`, `mkl_service.h`; Sparse: `mkl_spblas.f90`; `MKLROOT` |
+| AMD Fortran BLAS / Solver | Native LP64 Fortran BLAS/LAPACK with the explicitly selected provider; AOCL uses BLIS / libFLAME and the shared GENERIC provider options |
+| AMD Fortran Sparse | Explicit `AOCLSPARSE` provider and the supplied `aocl_sparse_c.f90` binding |
 | RAND / Thrust | Serial CPU teaching needs only C++ standard library / Fortran intrinsics. |
 
 For installations outside the search path, add `CMAKE_PREFIX_PATH` or the following inputs to `CPU_OPTIONS`. Keep headers and libraries from the same provider / ABI. AOCL BLIS / libFLAME can use the C/C++ GENERIC providers; when measuring parallel CPU code, select the intended parallel library and its dependencies.
