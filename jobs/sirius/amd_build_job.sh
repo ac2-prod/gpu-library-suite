@@ -22,6 +22,8 @@ done
 export AMD_BUILD_CPU_SPARSE_BACKEND=${AMD_BUILD_CPU_SPARSE_BACKEND:-ONEMKL}
 [[ $AMD_BUILD_CPU_SPARSE_BACKEND == ONEMKL || $AMD_BUILD_CPU_SPARSE_BACKEND == AOCLSPARSE ]] || fail 'invalid explicit CPU Sparse provider'
 export AMD_BUILD_MODE=${AMD_BUILD_MODE:-all}
+export AMD_BUILD_SOURCE_LANGUAGE=${AMD_BUILD_SOURCE_LANGUAGE:-c-cpp}
+[[ $AMD_BUILD_SOURCE_LANGUAGE == c-cpp || $AMD_BUILD_SOURCE_LANGUAGE == fortran ]] || fail 'invalid source language'
 case $AMD_BUILD_MODE in
     all) export SIRIUS_COMPUTE_MPI_MODULE='' ;;
     clean-benchmarks)
@@ -56,8 +58,11 @@ TERM=dumb timeout --signal=TERM --kill-after=15 "$((AMD_BUILD_TIMEOUT_SECONDS + 
 source "$1" || exit $?
 shift
 extra=()
+if [[ $AMD_BUILD_SOURCE_LANGUAGE == fortran ]]; then
+    extra+=(--source-language fortran --configure-timeout 300 --build-timeout 900)
+fi
 if [[ $AMD_BUILD_MODE == clean-benchmarks ]]; then
-    extra=(--clean-benchmarks --expected-git-commit "$AMD_BUILD_EXPECTED_COMMIT" --rocm-version-file "$AMD_BUILD_ROCM_VERSION_FILE")
+    extra+=(--clean-benchmarks --expected-git-commit "$AMD_BUILD_EXPECTED_COMMIT" --rocm-version-file "$AMD_BUILD_ROCM_VERSION_FILE")
 fi
 exec "$AMD_BUILD_PYTHON" -B "$1" \
   --source-root "$AMD_BUILD_SOURCE_ROOT" --run-root "$AMD_BUILD_RUN_ROOT" \

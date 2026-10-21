@@ -151,6 +151,8 @@ def _amd_dependency_names(entry: Mapping[str, Any]) -> set:
     library = entry["library"]
     if entry["implementation"] != "cpu":
         names = {"hip", library}
+        if entry.get("compiler_language") == "fortran":
+            names.add("hipfort")
         if library == "rocsolver":
             names.add("rocblas")
         if library == "rocthrust":

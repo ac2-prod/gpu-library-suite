@@ -20,3 +20,6 @@ __pycache__/
 # Owner-supplied teaching deck and its local rocSPARSE review copy.
 /HAIRDESC_AMD_GPU_Library_C_20261020.pptx
 /HAIRDESC_AMD_GPU_Library_C_20261020_rocsparse_v2_rowsplit.pptx
+
+# Owner-supplied AMD Fortran teaching deck (not distributed).
+/HAIRDESC_AMD_GPU_Library_F_20261020.pptx

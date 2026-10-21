@@ -1125,3 +1125,35 @@ are summarized in [VALIDATION_REPORT](VALIDATION_REPORT.md#current-coexistence-s
 with their exact source boundaries. Numerical success does not complete the
 remaining loaded-runtime binding or production-campaign provenance gates.
 No saved NVIDIA schema or artifact is silently migrated to AMD values.
+
+
+### AMD Fortran source and artifact identity
+
+AMD Fortran reuses the additive `source_language: "fortran"` configuration and
+`parameters.source_language="fortran"` raw marker defined above, together with
+`vendor: "amd"`, the existing six roc-library benchmark IDs and `cpu`/`hip`/
+`openmp` implementation values. This does not rename scopes, change schema
+version, or migrate historical C/C++ or NVIDIA results. Fortran is a distinct
+source-language grouping and must not be silently mixed with C/C++ raw rows.
+
+Manifest/backend variants identify the Fortran artifacts; `compiler_language`
+is `fortran`. Record the selected Fortran compiler and flags, compiler-compatible
+hipFORT module/library inputs, explicit mathematical/binding helpers, and any
+HIP wrapper plus its compiler/link inputs. A native Fortran call to a selected
+BLAS/LAPACK provider does not change that provider's recorded backend identity.
+An unavailable provider or incompatible module ABI is unavailable, not evidence
+of a successful GPU build.
+
+GPU rows augment the existing runtime object once with observed HIP driver/
+runtime versions and the linked roc-library version. CPU RAND records
+`cpu_engine="Fortran random_number"` and `[0,1)`; GPU rocRAND records
+`generator_algorithm="ROCRAND_RNG_PSEUDO_DEFAULT"` and `(0,1]`, with the actual
+verification sample count. Backend interval evidence is distinct from the
+shared statistical comparison. Intrinsic CPU reduction and RAND retain serial
+identity; unobserved BLAS/Sparse/Solver or threaded-FFTW worker counts stay null.
+
+Existing immutable source, binary, manifest, configuration and runtime identity
+requirements apply unchanged. Local fixture rows are not production results;
+no AMD Fortran hardware build, loaded-library verification or performance data
+is established by adding these sources. Historical raw data and failed runs
+remain intact.

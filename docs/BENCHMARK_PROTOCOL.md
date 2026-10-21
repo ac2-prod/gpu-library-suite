@@ -1207,3 +1207,49 @@ Reject mismatches even when FFT dimensions match. Existing NVIDIA configuration,
 meaning must remain compatible; the completed bounded coexistence review and
 its limits are recorded separately in [VALIDATION_REPORT](VALIDATION_REPORT.md#nvidia-coexistence-review-after-amd-addition).
 See the result-schema owner for the AMD representation and provenance gates.
+
+
+## AMD Fortran binding
+
+`amd/fortran` implements the six AMD mathematical workloads in native Fortran,
+using the same CLI, common monotonic wall timer, verification thresholds, raw
+trials and repeat normalization. Displayed scopes remain **library** and
+**end-to-end**; the internal library scope is still `compute`. The AMD-specific
+Fortran driver is separate from the unchanged NVIDIA driver. C/C++ bridge code
+handles CLI/timing/serialization and mapped-pointer checks, not a substitute
+C/C++ workload.
+
+For rocFFT, **CPU, HIP and OpenMP** all restore canonical input/output before
+every timed transform, then sum the individual transform/completion intervals,
+as required by the AMD rocFFT contract above. rocFFT may overwrite out-of-place
+input; warm-up and trial restoration obey the same rule. Plan/workspace and
+array lifetimes follow the existing selected scope. End-to-end restores host
+input outside each one-shot interval, times setup/copy/library/completion/result
+retrieval, and performs explicit cleanup afterward. OpenMP mapping entry and
+result-copyback/release remain inside that scope. rocRAND resets seed/offset/
+ordering after warm-up and before each trial, explicitly initializes its GPU
+generator before library timing, and advances the stream within a repeated
+library interval. Solver repeat remains one.
+
+CPU FFTW thread modes and explicit LP64 BLAS/LAPACK provider selection remain
+separate backend identities; the native Fortran API does not establish an
+observed thread count. AOCL Sparse uses its explicitly selected C ABI through
+Fortran declarations, with zero-based CSR values. RAND and reduction use
+`cpu-fortran-random-serial` and `cpu-fortran-sum-serial`, recording effective
+count 1 and compiler identity, not C++ MT19937/STL. A requested count alone is
+never observed parallelism. Missing providers do not silently select fallback
+implementations.
+
+HIP uses `--device`; OpenMP retains its independent `OMP_DEFAULT_DEVICE`.
+Before library use, reject host fallback and check that translated mapped
+pointers are HIP device allocations on the requested HIP device. Matching
+integer ordinals is not proof of physical identity. No USM or implicit stream
+agreement is assumed; HIP completion precedes OpenMP copyback. Real validation
+must use `OMP_TARGET_OFFLOAD=MANDATORY` and the matched compiler/hipFORT stack.
+
+Local syntax, declaration fixtures and CPU checks establish only those checked
+properties. Recorded AMD Fortran build, basic smoke and pilot validation have
+their own source/binary provenance in the [Sirius execution record](../jobs/sirius/README.md#amd-fortran-first-36-artifact-build-preparation).
+Clean production runtime identity and multi-node performance remain unverified;
+historical C/C++ measurements do not validate this source family. Preparation
+does not itself authorize a new measurement campaign.

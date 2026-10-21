@@ -316,7 +316,10 @@ class SiriusProductionTests(unittest.TestCase):
         compiler.write_text("fixture compiler")
         links = self.work / "links.json"
         production.save(links, {e["artifact_id"]: "fixture" for e in self.manifest["entries"]})
-        metadata = {e["build_metadata_sha256"]: {"cxx": {"compiler_path": str(compiler)}}
+        fortran_compiler = self.work / "fortran-compiler"
+        fortran_compiler.write_text("separate fixture Fortran compiler")
+        metadata = {e["build_metadata_sha256"]: {"cxx": {"compiler_path": str(compiler)},
+                    "fortran": {"compiler_path": str(fortran_compiler)}}
                     for e in self.manifest["entries"]}
         request = dict(self.plan, sirius_runtime_request_schema_version=1,
                        ldd=self.plan["mpirun"], rocm_version_file=self.identity(version),
@@ -350,6 +353,7 @@ class SiriusProductionTests(unittest.TestCase):
             self.assertFalse(first["loaded_libraries_verified"])
             self.assertIsNone(first["observed_cpu_worker_count"])
             self.assertIn(str(compiler), [f["path"] for f in first["sirius_execution_checks"]["files"]])
+            self.assertIn(str(fortran_compiler), [f["path"] for f in first["sirius_execution_checks"]["files"]])
             os.environ.update(PBS_JOBID="43.fixture", ROCR_VISIBLE_DEVICES="1", TMPDIR="/different/job/cache")
             with mock.patch.object(production.socket, "gethostname", return_value="different-host"):
                 second = production.collect_runtime(request, self.work / "runtime-wave1",

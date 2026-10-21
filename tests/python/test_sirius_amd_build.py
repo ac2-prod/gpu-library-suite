@@ -101,7 +101,8 @@ class FakeProcesses:
                 if profile == "cpu":
                     for family in self.missing_cpu:
                         reason = "explicit GENERIC provider not found" if flags.get("GPU_SUITE_CPU_BLAS_BACKEND") == "GENERIC_CBLAS" else "ONEMKL provider not found"
-                        output += "-- " + family + " CPU targets: DISABLED (" + reason + ")\n"
+                        label = "AMD Fortran " + family + " cpu" if t.args.source_language == "fortran" else family + " CPU targets"
+                        output += "-- " + label + ": DISABLED (" + reason + ")\n"
                 return 0, output, ""
             if "--build" in argv:
                 directory = Path(argv[argv.index("--build") + 1])
@@ -148,10 +149,13 @@ class FakeProcesses:
         rows = [row for row in build.slots(flags["GPU_SUITE_BUILD_EXAMPLES"] == "OFF") if row["profile"] == profile
                 and not (profile == "cpu" and row["library"] in self.missing_cpu)]
         entries = []
+        fortran = t.args.source_language == "fortran"
         for row in rows:
-            target = directory / "amd/c-cpp" / row["library"] / row["target"]
+            target = directory / "amd" / t.args.source_language / row["library"] / row["target"]
             target.parent.mkdir(parents=True, exist_ok=True)
             language = "hip" if profile == "hip" else "cxx" if profile == "openmp" or row["library"] in {"rocrand", "rocthrust"} else "c"
+            if fortran:
+                language = "fortran"
             backends = []
             if profile == "cpu":
                 backends = ["cpu-fftw-serial", "cpu-fftw-threaded"] if row["library"] == "rocfft" else ["cpu-onemkl"]
@@ -162,6 +166,9 @@ class FakeProcesses:
                 if self.clean:
                     backends = {"rocrand": ["cpu-std-random-serial"],
                                 "rocthrust": ["cpu-stl-serial"]}.get(row["library"], backends)
+                if fortran:
+                    backends = {"rocrand": ["cpu-fortran-random-serial"],
+                                "rocthrust": ["cpu-fortran-sum-serial"]}.get(row["library"], backends)
             entries.append({"target_name": row["target"], "library": row["library"],
                             "executable_path": str(target), "implementation": profile,
                             "build_profile": profile, "executable_role": row["role"],
@@ -179,6 +186,20 @@ class FakeProcesses:
         for language, compiler in (("c", t.args.cpu_c_compiler), ("cxx", cxx), ("hip", t.args.amd_cxx_compiler)):
             metadata[language] = {"compiler": "Fake", "compiler_version": "1.0", "compiler_path": str(compiler), "global_configure_flags": "-O2"}
         metadata["hip"]["architectures"] = t.args.gpu_arch
+        if fortran:
+            metadata["fortran"] = {"compiler": "FakeFortran", "compiler_version": "1.0",
+                "compiler_path": flags["CMAKE_Fortran_COMPILER"], "global_configure_flags": "-O2",
+                "numerical_target_options": "-fno-fast-math;-ffp-contract=off",
+                "openmp_target_options": "-fopenmp;--offload-arch=" + t.args.gpu_arch if profile == "openmp" else "",
+                "hipfort_module_directory": flags.get("GPU_SUITE_HIPFORT_MODULE_DIR", "")}
+            if profile != "cpu":
+                metadata["dependencies"]["hipfort"] = {"path": str(t.args.hipfort_library.resolve()),
+                    "sha256": build.file_identity(t.args.hipfort_library)["sha256"]}
+                for path in t.args.hipfort_module_dir.glob("*.mod"):
+                    metadata["dependencies"][path.stem + "_module"] = {"path": str(path.resolve()),
+                        "sha256": build.file_identity(path)["sha256"]}
+                if self.corrupt == "hipfort":
+                    metadata["dependencies"]["hipfort_types_module"]["sha256"] = "0" * 64
         names = {"cblas", "lapacke", "mkl_sparse", "fftw3f", "fftw3f_omp"} if profile == "cpu" else set(build.FAMILIES) | {"hip", "rocprim"}
         if profile == "cpu" and t.args.cpu_sparse_backend == "AOCLSPARSE":
             names.discard("mkl_sparse")
@@ -219,12 +240,17 @@ class FakeProcesses:
                 parts = metadata["amd_build_inputs"][key].split(";")
                 parts[1:3] = reversed(parts[1:3])
                 metadata["amd_build_inputs"][key] = ";".join(parts)
-        if profile == "openmp":
-            wrapper = "amd/c-cpp/rocthrust/examples/rocthrust_wrapper.hip"
+        if profile == "openmp" or (fortran and profile == "hip"):
+            wrapper = "amd/" + t.args.source_language + "/rocthrust/examples/rocthrust_wrapper.hip"
             metadata["rocthrust_interop"] = {"source": wrapper, "source_sha256": build.file_identity(t.source / wrapper)["sha256"],
                 "compiler_language": "hip", "compiler_path": str(t.args.amd_cxx_compiler), "compile_flags": "-O2",
                 "caller_language": "cxx", "caller_compile_flags": "-fopenmp -target", "link_flags": "-fopenmp -target",
                 "linker_language": "cxx", "linker_path": str(t.args.amd_cxx_compiler)}
+            if fortran:
+                caller_flags = " ".join(metadata["fortran"][key] for key in
+                                        ("global_configure_flags", "numerical_target_options", "openmp_target_options"))
+                metadata["rocthrust_interop"].update(caller_language="fortran", linker_language="fortran",
+                    linker_path=flags["CMAKE_Fortran_COMPILER"], caller_compile_flags=caller_flags, link_flags=caller_flags)
             if self.corrupt == "wrapper":
                 metadata["rocthrust_interop"]["source_sha256"] = "0" * 64
         if self.corrupt == "dependency" and profile == "hip":
@@ -300,6 +326,106 @@ class SiriusAmdBuildTests(unittest.TestCase):
     def artifact_builds(self, fake):
         names = {row["target"] for row in build.slots()}
         return [argv for argv in fake.calls if "--build" in argv and argv[-1] in names]
+
+    def fortran_fixture(self, hipfort=True):
+        self.args = build.parser().parse_args(self.argv + ["--source-language", "fortran"])
+        wrapper = "amd/fortran/rocthrust/examples/rocthrust_wrapper.hip"
+        path = self.source / wrapper
+        path.parent.mkdir(parents=True)
+        path.write_text("synthetic Fortran HIP wrapper")
+        self.source_paths.append(wrapper)
+        self.args.expected_source_sha256 = source_snapshot_sha256(self.source, self.source_paths)
+        for name, path in (("gfortran", self.tools["cc"].parent / "gfortran"),
+                           ("amdflang", self.rocm / "bin/amdflang")):
+            path.parent.mkdir(exist_ok=True)
+            path.write_text("Fake executable; never run")
+            path.chmod(0o700)
+            self.tools[name] = path
+        if hipfort:
+            modules = self.rocm / "include/hipfort/amdgcn"
+            modules.mkdir(parents=True)
+            for name in ("hipfort", "hipfort_types", "hipfort_rocfft", "hipfort_rocblas", "hipfort_rocsolver", "hipfort_rocrand"):
+                (modules / (name + ".mod")).write_text("synthetic module " + name)
+            (self.rocm / "lib").mkdir()
+            (self.rocm / "lib/libhipfort-amdgcn.a").write_text("synthetic library")
+
+    def test_fortran_36_builds_use_selected_compilers_and_two_thrust_links(self):
+        self.fortran_fixture()
+        self.opt_in_aocl(self.sparse_fixture())
+        self.args.cpu_sparse_backend = "AOCLSPARSE"
+        job, fake = self.execute()
+        self.assertEqual([row["status"] for row in job.slots], ["BUILT"] * 36)
+        self.assertEqual(len(self.artifact_builds(fake)), 36)
+        self.assertEqual(sum(name == "gpu_suite_amd_fortran_support" for _, name in fake.build_attempts), 3)
+        self.assertFalse(any(name == "rocthrust_openmp_wrapper" for _, name in fake.build_attempts))
+        for profile in build.PROFILES:
+            values = job.profiles[profile]
+            for artifact in values["artifacts"].values():
+                self.assertEqual(artifact["manifest_entry"]["compiler_language"], "fortran")
+                self.assertIn("/amd/fortran/", artifact["identity"]["path"])
+            if profile != "cpu":
+                self.assertEqual(values["build_metadata"]["rocthrust_interop"]["linker_language"], "fortran")
+        configures = [argv for argv in fake.calls if "-S" in argv]
+        self.assertEqual(len(configures), 3)
+        for argv in configures:
+            self.assertIn("-DGPU_SUITE_SOURCE_LANGUAGE=fortran", argv)
+            gpu = not argv[argv.index("-B") + 1].endswith("build-cpu")
+            self.assertIn("-DCMAKE_Fortran_COMPILER=" + str(self.tools["amdflang" if gpu else "gfortran"]), argv)
+        self.assertTrue(all(not os.access(item["identity"]["path"], os.X_OK) for p in job.profiles.values() for item in p["artifacts"].values()))
+        self.args.clean_benchmarks = True
+        self.args.expected_git_commit = "a" * 40
+        self.args.rocm_version_file = self.rocm / "version"
+        build.validate(self.args, self.env)
+
+    def test_fortran_clean_18_manifest_retains_language_and_depfile_directories(self):
+        prepare = self.clean_mode()
+        self.fortran_fixture()
+        config = self.source / "jobs/sirius/amd-fortran-benchmark.json"
+        config.parent.mkdir(parents=True)
+        config.write_bytes((ROOT / "jobs/sirius/amd-fortran-benchmark.json").read_bytes())
+        self.source_paths.append("jobs/sirius/amd-fortran-benchmark.json")
+        self.args.expected_source_sha256 = source_snapshot_sha256(self.source, self.source_paths)
+        self.opt_in_aocl(self.sparse_fixture())
+        self.args.cpu_sparse_backend = "AOCLSPARSE"
+        with mock.patch.object(prepare, "preflight", return_value={}):
+            job, fake = self.execute(clean=True)
+        self.assertEqual(len(job.slots), 18)
+        self.assertTrue(all(r["status"] == "BUILT" and r["role"] == "benchmark" for r in job.slots), job.slots)
+        self.assertEqual(len(self.artifact_builds(fake)), 18)
+        job.preparation_inputs = {k: prepare.identity(self.tools["cmake"])
+                                  for k in ("mpirun", "ldd", "rocm_version_file")}
+        for result in job.profiles.values():
+            for target, artifact in result["artifacts"].items():
+                directory = Path(artifact["identity"]["path"]).parent.parent / "CMakeFiles" / (target + ".dir")
+                directory.mkdir(parents=True)
+                (directory / "link.d").write_text("fixture recorded link dependency\n")
+        output = job.root / "frozen"
+        output.mkdir()
+        request = prepare.freeze_inputs(job, output)
+        config, manifest, _ = prepare.production.artifact_inputs(request)
+        self.assertEqual(config["source_language"], "fortran")
+        self.assertTrue(all(e["compiler_language"] == "fortran" and not e["git_dirty"] for e in manifest["entries"]))
+        links = build.load_json(output / "link-evidence.json")
+        for entry in manifest["entries"]:
+            self.assertEqual(links[entry["artifact_id"]], str(Path(entry["executable_path"]).parent.parent /
+                             "CMakeFiles" / (entry["target_name"] + ".dir") / "link.d"))
+
+    def test_fortran_missing_dependencies_are_not_success_or_gpu_fallback(self):
+        self.fortran_fixture(hipfort=False)
+        job, fake = self.execute(missing_cpu=("rocfft",))
+        self.assertEqual(sum(row["status"] == "BUILT" for row in job.slots), 10)
+        self.assertEqual(sum(row["status"] == "NOT_BUILT_DEPENDENCY" for row in job.slots), 26)
+        self.assertFalse(any("-S" in argv and not argv[argv.index("-B") + 1].endswith("build-cpu") for argv in fake.calls))
+        self.assertIn("hipFORT", job.profiles["openmp"]["preflight_error"])
+        with mock.patch.object(build.shutil, "which", return_value=None):
+            self.assertEqual(set(build.fortran_preflight(job)["profile_errors"]), set(build.PROFILES))
+
+    def test_fortran_hipfort_identity_mismatch_rejects_gpu_artifacts(self):
+        self.fortran_fixture()
+        job, fake = self.execute(corrupt="hipfort")
+        self.assertEqual(sum(row["status"] == "BUILT" for row in job.slots), 12)
+        self.assertEqual(sum(row["status"] == "FAILED" for row in job.slots), 24)
+        self.assertEqual(len(self.artifact_builds(fake)), 36)
 
     def clean_mode(self):
         sys.path.insert(0, str(ROOT / "jobs/sirius"))

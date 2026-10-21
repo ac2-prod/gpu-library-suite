@@ -160,8 +160,10 @@ def freeze_inputs(job, root):
             entry = artifact["manifest_entry"]
             entries.append(entry)
             program = Path(entry["executable_path"])
-            directory = program.parent / "CMakeFiles" / (target + ".dir")
-            if profile == "hip":
+            fortran = entry["compiler_language"] == "fortran"
+            link_root = program.parent.parent if fortran else program.parent
+            directory = link_root / "CMakeFiles" / (target + ".dir")
+            if profile == "hip" and not fortran:
                 command = job.commands[result["target_builds"][target]["command_index"] - 1]
                 links[entry["artifact_id"]] = dict(mode="native-hip-link-command",
                     link_command=identity(directory / "link.txt"), build_stdout=identity(command["stdout"]),
@@ -171,7 +173,10 @@ def freeze_inputs(job, root):
     production.require(len(entries) == 18 and all(r["status"] == "BUILT" for r in job.slots), "18 successful benchmarks required")
     entries = production.runner.merge_entries([entries])
     production.save(root / "executables-manifest.json", dict(manifest_schema_version=1, entries=entries))
-    config = production.load_config(job.args.source_root / "jobs/sirius/amd-benchmark.json")
+    config_name = "amd-fortran-benchmark.json" if job.args.source_language == "fortran" else "amd-benchmark.json"
+    config = production.load_config(job.args.source_root / "jobs/sirius" / config_name)
+    production.require(config.get("source_language", "c-cpp") == job.args.source_language,
+                       "Production configuration language differs from the build")
     for family, settings in config["benchmarks"].items():
         cpu = next(e for e in entries if e["library"] == family and e["implementation"] == "cpu")
         for series in settings["series"]:

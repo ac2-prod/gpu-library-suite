@@ -23,6 +23,13 @@ source/provenance authority, not evidence of compilation or GPU execution.
 The original extraction is retained separately in the ignored
 `manual-validation/fortran-input/` directory. C/C++ defaults are unchanged.
 
+The owner-approved AMD Fortran baseline is
+`HAIRDESC_AMD_GPU_Library_F_20261020.pptx` (57 slides). Slides prioritize readable
+library-call flow; they are not a literal completeness specification. The
+owner decides which details to show. Distributed programs supply the API
+arguments, explicit helper inputs, initialization, verification and cleanup
+needed to run; this does not authorize rewriting the slides.
+
 ## Project identity and hierarchy
 
 The repository name is `gpu-library-suite`. Users traverse source code in this
@@ -86,7 +93,8 @@ gpu-library-suite/
       rocsolver/              same examples/benchmarks layout
       rocrand/                same examples/benchmarks layout
       rocthrust/              OpenMP also links rocthrust_wrapper.hip
-    fortran/                 future; do not create as an empty placeholder
+    fortran/                 same six AMD libraries; CPU / HIP / OpenMP
+      common/                AMD Fortran benchmark driver and C ABI bridges
   common/
     c-cpp/
       include/
@@ -107,16 +115,19 @@ gpu-library-suite/
 
 This tree is a target architecture, not permission to create empty directories.
 Implemented source families are NVIDIA C/C++, NVIDIA Fortran with its common
-support, and all six AMD C/C++ families. Recorded Pegasus and Sirius builds,
+support, all six AMD C/C++ families, and the new AMD Fortran source family.
+Recorded Pegasus and Sirius builds,
 numerical checks, and measurements have distinct source identities; see
 `VALIDATION_REPORT.md` and each library README for coverage and limits.
 In particular, current rocSPARSE v2/csr_rowsplit evidence is documented in
 `amd/c-cpp/rocsparse/README.md`; older adaptive measurements remain historical.
 Recorded success does not establish another environment or later source edits.
-AMD Fortran remains future work. Do not create empty future-area directories,
-dummy targets, or placeholder implementations.
+AMD Fortran is implementation-stage source; existing AMD C/C++ measurements
+are not Fortran validation. Its real compiler/module ABI, GPU build and smoke
+remain unverified until separately executed. Do not create empty future-area
+directories, dummy targets, or placeholder implementations.
 
-Fortran uses the same library directories and stems as the table below, with
+NVIDIA Fortran uses the same library directories and stems as the table below, with
 the `.f90` extension for all 18 examples and 18 benchmark entry points.
 `nvidia/fortran/thrust/examples/thrust_wrapper.cu` is shared by both GPU
 implementations. The incomplete p.13 stream-sharing fragment is not a target.
@@ -232,6 +243,58 @@ HIP libraries; actual offload and device agreement must be verified. Separate
 library workspaces are explicit allocations and are never freed through two
 owners. Only rocThrust uses the two-translation-unit teaching exception.
 
+### AMD Fortran inventory and explicit helpers
+
+All following files live under `amd/fortran/<library>/examples/`. The three
+benchmark entry points use the same stems plus `_bench.f90` under
+`benchmarks/`; each links its library's `<stem>_workload.F90`.
+
+| Library | CPU example | HIP example | OpenMP target example | Workload stem |
+| --- | --- | --- | --- | --- |
+| rocfft | `fft_cpu.f90` | `fft_gpu.f90` | `openmp_rocfft.f90` | `fft` |
+| rocblas | `blas_cpu.f90` | `blas_gpu.f90` | `openmp_rocblas.f90` | `blas` |
+| rocsparse | `sparse_cpu.f90` | `sparse_gpu.f90` | `openmp_rocsparse.f90` | `sparse` |
+| rocsolver | `solver_cpu.f90` | `solver_gpu.f90` | `openmp_rocsolver.f90` | `solver` |
+| rocrand | `rand_cpu.f90` | `rand_gpu.f90` | `openmp_rocrand.f90` | `rand` |
+| rocthrust | `reduce_cpu.f90` | `reduce_gpu.f90` | `openmp_rocthrust.f90` | `reduce` |
+
+These 18 teaching programs retain the AMD C/C++ teaching sizes, precision and
+mathematics. CPU FFT uses FFTW's Fortran interface; BLAS and Solver call native
+LP64 Fortran BLAS/LAPACK. CPU RAND uses `random_seed`/`random_number`, and CPU
+Thrust uses `sum(values*values)`, with distinct intrinsic backend identities.
+GPU programs call hipFORT interfaces, except explicit ISO_C_BINDING declarations
+for rocSPARSE v2, the rocThrust wrapper, rocSOLVER `getrf` and rocRAND ordering.
+The latter two are declared in their callers against the public C ABI where
+hipFORT declarations are incompatible or absent; no algorithm is substituted.
+OpenMP uses separate mapped arrays,
+`use_device_addr` and `c_loc`; complete HIP work before OpenMP retrieves results.
+Physical shared HBM does not imply unified shared memory.
+
+The following are explicit compile/link inputs, not hidden implementations:
+
+- `amd/fortran/rocsparse/make_poisson2d_csr.f90` generates zero-based CSR offsets
+  and column values for both AOCL Sparse and rocSPARSE. Fortran array subscripts
+  remain one-based. NVIDIA Fortran's separate one-based CSR helper is unchanged.
+- `amd/fortran/rocsparse/aocl_sparse_c.f90` declares the AOCL Sparse CPU C ABI;
+  `amd/fortran/rocsparse/rocsparse_v2_c.f90` declares the GPU v2/rowsplit ABI.
+  The respective binding module and the CSR generator precede their caller.
+- `common/fortran/make_dense_system.f90` is linked by Solver examples and
+  benchmarks; CPU teaching uses `dgesv`, benchmarks staged `dgetrf`/`dgetrs`.
+- `amd/fortran/rocthrust/examples/rocthrust_wrapper.hip` is linked by both GPU
+  implementations. Its three-argument C ABI returns integer status and writes
+  a double result; exceptions do not cross the C boundary.
+- `amd/fortran/common/benchmark_support.f90` and `benchmark_bridge.cpp` supply
+  benchmark lifecycle, CLI, timer and serialization. The computational workload
+  remains in Fortran; `hip_device_bridge.cpp` only checks mapped pointer/device
+  agreement. These are benchmark inputs, not teaching-program dependencies.
+
+hipFORT module files must match the selected Fortran compiler. Configure vendor,
+language and execution modes in separate build trees; compiler/module ABI and
+HIP-wrapper link compatibility are prerequisites, not inferred from C/C++ smoke.
+See [AMD Fortran usage](../amd/fortran/README.md) for build inputs and current
+limitations, and [Fortran timing](BENCHMARK_PROTOCOL.md#amd-fortran-binding) for
+measurement behavior.
+
 ## Teaching-example policy
 
 `examples/` is the source of truth for code printed in the teaching material.
@@ -250,9 +313,10 @@ Each example must:
 - contain no architecture-specific compiler option.
 
 For C/C++, `make_poisson2d_csr` and `make_dense_system` must be defined in each
-example that uses them. Fortran instead links the explicitly documented
+example that uses them. NVIDIA Fortran instead links the explicitly documented
 `common/fortran/make_poisson2d_csr.f90` and `make_dense_system.f90` helpers,
-as approved to fill the slide omissions without duplicating their bodies.
+as approved to fill the slide omissions without duplicating their bodies. AMD
+Fortran uses the explicit helper/binding inventory above.
 
 ## Canonical teaching problems
 

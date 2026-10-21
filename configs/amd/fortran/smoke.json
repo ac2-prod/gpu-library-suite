@@ -1,0 +1,349 @@
+{
+  "config_schema_version": 1,
+  "continue_on_failure": true,
+  "cpu_threads": 1,
+  "output_format": "jsonl",
+  "run_mode": "smoke",
+  "vendor": "amd",
+  "benchmarks": {
+    "rocfft": {
+      "cases": [
+        {
+          "parameters": {
+            "nfft": 32,
+            "batch": 2,
+            "transform": "c2c-forward"
+          },
+          "scopes": {
+            "compute": {
+              "warmup": 1,
+              "repeat": 2,
+              "trials": 2
+            },
+            "end-to-end": {
+              "warmup": 1,
+              "repeat": 2,
+              "trials": 2
+            }
+          }
+        }
+      ],
+      "default_speedup_cpu_backend": "cpu-fftw-serial",
+      "enabled": true,
+      "precision": "fp32",
+      "series": [
+        {
+          "cpu_backend": "cpu-fftw-serial",
+          "cpu_backend_role": "production",
+          "cpu_parallelism": "serial",
+          "cpu_threads_effective": 1,
+          "implementation": "cpu",
+          "series_role": "primary"
+        },
+        {
+          "cpu_backend": null,
+          "cpu_backend_role": null,
+          "cpu_parallelism": null,
+          "cpu_threads_effective": null,
+          "implementation": "hip",
+          "series_role": "primary"
+        },
+        {
+          "cpu_backend": null,
+          "cpu_backend_role": null,
+          "cpu_parallelism": null,
+          "cpu_threads_effective": null,
+          "implementation": "openmp",
+          "series_role": "primary"
+        }
+      ],
+      "verification": {
+        "abs_tolerance": 0.0001,
+        "rel_tolerance": 1e-05
+      }
+    },
+    "rocblas": {
+      "cases": [
+        {
+          "parameters": {
+            "size": 16,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          "scopes": {
+            "compute": {
+              "warmup": 1,
+              "repeat": 2,
+              "trials": 2
+            },
+            "end-to-end": {
+              "warmup": 1,
+              "repeat": 2,
+              "trials": 2
+            }
+          }
+        }
+      ],
+      "default_speedup_cpu_backend": "cpu-generic-cblas",
+      "enabled": true,
+      "precision": "fp64",
+      "series": [
+        {
+          "cpu_backend": "cpu-generic-cblas",
+          "cpu_backend_role": "production",
+          "cpu_parallelism": "unknown",
+          "cpu_threads_effective": null,
+          "implementation": "cpu",
+          "series_role": "primary"
+        },
+        {
+          "cpu_backend": null,
+          "cpu_backend_role": null,
+          "cpu_parallelism": null,
+          "cpu_threads_effective": null,
+          "implementation": "hip",
+          "series_role": "primary"
+        },
+        {
+          "cpu_backend": null,
+          "cpu_backend_role": null,
+          "cpu_parallelism": null,
+          "cpu_threads_effective": null,
+          "implementation": "openmp",
+          "series_role": "primary"
+        }
+      ],
+      "verification": {
+        "abs_tolerance": 1e-12,
+        "rel_tolerance": 1e-10
+      }
+    },
+    "rocsparse": {
+      "cases": [
+        {
+          "parameters": {
+            "size": 64,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          "scopes": {
+            "compute": {
+              "warmup": 1,
+              "repeat": 2,
+              "trials": 2
+            },
+            "end-to-end": {
+              "warmup": 1,
+              "repeat": 2,
+              "trials": 2
+            }
+          }
+        }
+      ],
+      "default_speedup_cpu_backend": "cpu-aocl-sparse",
+      "enabled": true,
+      "precision": "fp64",
+      "series": [
+        {
+          "cpu_backend": "cpu-aocl-sparse",
+          "cpu_backend_role": "production",
+          "cpu_parallelism": "unknown",
+          "cpu_threads_effective": null,
+          "implementation": "cpu",
+          "series_role": "primary"
+        },
+        {
+          "cpu_backend": null,
+          "cpu_backend_role": null,
+          "cpu_parallelism": null,
+          "cpu_threads_effective": null,
+          "implementation": "hip",
+          "series_role": "primary"
+        },
+        {
+          "cpu_backend": null,
+          "cpu_backend_role": null,
+          "cpu_parallelism": null,
+          "cpu_threads_effective": null,
+          "implementation": "openmp",
+          "series_role": "primary"
+        }
+      ],
+      "verification": {
+        "abs_tolerance": 1e-12,
+        "rel_tolerance": 1e-10
+      }
+    },
+    "rocsolver": {
+      "cases": [
+        {
+          "parameters": {
+            "size": 16,
+            "nrhs": 2
+          },
+          "scopes": {
+            "compute": {
+              "warmup": 1,
+              "repeat": 1,
+              "trials": 2
+            },
+            "end-to-end": {
+              "warmup": 1,
+              "repeat": 1,
+              "trials": 2
+            }
+          }
+        }
+      ],
+      "default_speedup_cpu_backend": "cpu-generic-lapacke",
+      "enabled": true,
+      "precision": "fp64",
+      "series": [
+        {
+          "cpu_backend": "cpu-generic-lapacke",
+          "cpu_backend_role": "production",
+          "cpu_parallelism": "unknown",
+          "cpu_threads_effective": null,
+          "implementation": "cpu",
+          "series_role": "primary"
+        },
+        {
+          "cpu_backend": null,
+          "cpu_backend_role": null,
+          "cpu_parallelism": null,
+          "cpu_threads_effective": null,
+          "implementation": "hip",
+          "series_role": "primary"
+        },
+        {
+          "cpu_backend": null,
+          "cpu_backend_role": null,
+          "cpu_parallelism": null,
+          "cpu_threads_effective": null,
+          "implementation": "openmp",
+          "series_role": "primary"
+        }
+      ],
+      "verification": {
+        "abs_tolerance": 1e-12,
+        "rel_tolerance": 1e-10
+      }
+    },
+    "rocrand": {
+      "cases": [
+        {
+          "parameters": {
+            "size": 4096,
+            "generator": "pseudo-default",
+            "distribution": "uniform-double",
+            "seed": 1234,
+            "offset": 0,
+            "order": "default"
+          },
+          "scopes": {
+            "compute": {
+              "warmup": 1,
+              "repeat": 2,
+              "trials": 2
+            },
+            "end-to-end": {
+              "warmup": 1,
+              "repeat": 2,
+              "trials": 2
+            }
+          }
+        }
+      ],
+      "default_speedup_cpu_backend": "cpu-fortran-random-serial",
+      "enabled": true,
+      "precision": "fp64",
+      "series": [
+        {
+          "cpu_backend": "cpu-fortran-random-serial",
+          "cpu_backend_role": "production",
+          "cpu_parallelism": "serial",
+          "cpu_threads_effective": 1,
+          "implementation": "cpu",
+          "series_role": "primary"
+        },
+        {
+          "cpu_backend": null,
+          "cpu_backend_role": null,
+          "cpu_parallelism": null,
+          "cpu_threads_effective": null,
+          "implementation": "hip",
+          "series_role": "primary"
+        },
+        {
+          "cpu_backend": null,
+          "cpu_backend_role": null,
+          "cpu_parallelism": null,
+          "cpu_threads_effective": null,
+          "implementation": "openmp",
+          "series_role": "primary"
+        }
+      ],
+      "verification": {
+        "expected_mean": 0.5,
+        "expected_second_central_moment": 0.08333333333333333,
+        "sigma_multiplier": 6.0
+      }
+    },
+    "rocthrust": {
+      "cases": [
+        {
+          "parameters": {
+            "size": 4096,
+            "operation": "transform-reduce-square-sum"
+          },
+          "scopes": {
+            "compute": {
+              "warmup": 1,
+              "repeat": 2,
+              "trials": 2
+            },
+            "end-to-end": {
+              "warmup": 1,
+              "repeat": 2,
+              "trials": 2
+            }
+          }
+        }
+      ],
+      "default_speedup_cpu_backend": "cpu-fortran-sum-serial",
+      "enabled": true,
+      "precision": "fp64",
+      "series": [
+        {
+          "cpu_backend": "cpu-fortran-sum-serial",
+          "cpu_backend_role": "production",
+          "cpu_parallelism": "serial",
+          "cpu_threads_effective": 1,
+          "implementation": "cpu",
+          "series_role": "primary"
+        },
+        {
+          "cpu_backend": null,
+          "cpu_backend_role": null,
+          "cpu_parallelism": null,
+          "cpu_threads_effective": null,
+          "implementation": "hip",
+          "series_role": "primary"
+        },
+        {
+          "cpu_backend": null,
+          "cpu_backend_role": null,
+          "cpu_parallelism": null,
+          "cpu_threads_effective": null,
+          "implementation": "openmp",
+          "series_role": "primary"
+        }
+      ],
+      "verification": {
+        "abs_tolerance": 1e-12,
+        "rel_tolerance": 1e-10
+      }
+    }
+  },
+  "source_language": "fortran"
+}

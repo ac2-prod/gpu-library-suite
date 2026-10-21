@@ -159,6 +159,9 @@ def artifact_inputs(plan):
     require(len(entries) == 18 and {(e["library"], e["implementation"]) for e in entries} == expected
             and all(e["executable_role"] == "benchmark" for e in entries),
             "Expected exactly 18 AMD benchmarks")
+    fortran = config.get("source_language", "c-cpp") == "fortran"
+    require(all((e["compiler_language"] == "fortran") == fortran for e in entries),
+            "Production configuration and artifact source languages differ")
     metadata = runner.load_build_metadata([checked_file(item) for item in plan["build_metadata"]])
     runner.validate_manifest_artifacts(manifest, metadata, "production", False)
     commits = {e["git_commit"] for e in entries}
@@ -223,7 +226,7 @@ def inputs(plan):
             "Missing per-artifact resolved-library identity")
     recorded_files = {f["path"] for f in check["files"]}
     compiler_paths = {m[language]["compiler_path"] for m in metadata.values()
-                      for language in ("c", "cxx", "hip")
+                      for language in ("c", "cxx", "hip", "fortran")
                       if isinstance(m.get(language), dict) and m[language].get("compiler_path")}
     require(compiler_paths and compiler_paths <= recorded_files
             and {plan["mpirun"]["path"], sys.executable} <= recorded_files,
@@ -256,7 +259,7 @@ def collect_runtime(request, output, *, processes=None, environment=None):
     paths = {request[field]["path"] for field in ("mpirun", "ldd", "rocm_version_file")}
     paths.add(sys.executable)
     paths.update(m[language]["compiler_path"] for m in metadata.values()
-                 for language in ("c", "cxx", "hip")
+                 for language in ("c", "cxx", "hip", "fortran")
                  if isinstance(m.get(language), dict) and m[language].get("compiler_path"))
     files = [{"path": path, "sha256": sha256_file(path)} for path in sorted(paths)]
     output.mkdir()

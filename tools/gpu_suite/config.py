@@ -219,8 +219,6 @@ def validate_config(config: Mapping[str, Any]) -> Dict[str, Any]:
              "invalid source_language")
     vendor = config.get("vendor", "nvidia")
     _require(vendor in {"nvidia", "amd"}, "invalid vendor")
-    _require(vendor != "amd" or config.get("source_language", "c-cpp") == "c-cpp",
-             "AMD Fortran is not implemented")
     if config.get("config_schema_version") != 1:
         raise ConfigError("unsupported config_schema_version")
     _require(config["run_mode"] in {"smoke", "pilot", "production"}, "invalid run_mode")

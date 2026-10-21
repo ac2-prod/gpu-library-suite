@@ -1498,7 +1498,7 @@ left to the implementer:
 - AMD teaching inputs and Sirius site evidence needed for the later approved
   development stages above; approval of Stage 1 does not supply these facts or
   authorize later execution.
-- Future AMD Fortran, Miyabi, and TSUBAME4.0 implementation. Furo remains outside
+- Future Miyabi and TSUBAME4.0 implementation. Furo remains outside
   the approved job scope.
 
 The owner has approved MIT and the copyright-holder attribution described in
@@ -1509,3 +1509,13 @@ does not authorize AMD/Sirius Git writes or publication.
 No empty directory, dummy target, or placeholder implementation is created for
 deferred source areas. Configuration examples use explicit placeholders for
 human-supplied site values.
+
+## AMD Fortran source implementation
+
+The owner requested the six-library CPU/HIP/OpenMP source family under
+`amd/fortran`, with 18 teaching and 18 benchmark entry programs. CMake, explicit
+helper/link inputs, Fortran result identity and a small smoke input are supplied.
+Local CPU and declaration-fixture checks do not establish GPU launch readiness.
+The next separately approved step is an actual compiler/hipFORT/module/API build,
+followed by numerical smoke only after that build succeeds. No hardware run or
+performance campaign is part of this source task. See the [usage guide](../amd/fortran/README.md).

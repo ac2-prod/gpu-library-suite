@@ -59,6 +59,138 @@ walltime appropriate to the approved work; consider `mcrp` for work exceeding
 30 minutes. These documented limits do not establish current availability or
 authorize another job, parallel submissions, or a queue change.
 
+### AMD Fortran: first 36-artifact build preparation
+
+The [AMD Fortran sources](../../amd/fortran/README.md) are a new family; the
+recorded C/C++ builds and measurements do not validate them. Set
+`AMD_BUILD_SOURCE_LANGUAGE=fortran` and `AMD_BUILD_MODE=all` in a reviewed
+`amd_build_job.sh` packet. The default C/C++ 36-artifact mode and its existing
+18-benchmark production preparation retain their existing behavior. After an
+approved clean measurement commit, Fortran may also select `clean-benchmarks`
+for 18 benchmarks plus the existing CPU/APU checks and runtime collection.
+This mode is locally checked; a real Fortran clean production build is pending.
+
+The proposed build uses one `mcrp` allocation, `select=1` (24 CPU cores / one
+APU), one hour, serial build commands and three fresh build trees beneath
+`runs/<RUN_ID>/amd-build/`. It requests six libraries × CPU/HIP/OpenMP ×
+example/benchmark = **36 artifacts**. The controller has a 3,300-second total
+budget, a 300-second configure limit and a shared 900-second build limit per
+profile. It never runs the artifacts, CTest, smoke, a GPU query or a profiler.
+
+Saved evidence fixes the starting module stack to `gcc/14.2.1`,
+`aocl/5.1.0/gcc14.2.1`, then `rocm/7.2.0`. The existing module helper preserves
+GCC runtime-library precedence after all loads. MPI is not needed for this
+single-allocation build; no MPI module or launcher is added. The inventory also
+contains an `_amdflang` OpenMPI module, but its name alone does not establish
+hipFORT availability or compiler compatibility.
+
+| Profile | Selected compiler policy | Dependencies / checks |
+| --- | --- | --- |
+| CPU | `gfortran` from the loaded GCC prefix; record actual path and version | AOCL single-precision FFTW plus `fftw3.f03`, OpenMP FFTW, multithreaded BLIS, libFLAME then that same BLIS, explicit AOCL Sparse LP64; intrinsic Fortran RAND/reduction |
+| HIP | `amdflang` from the loaded ROCm prefix; record actual path and version | hipFORT modules/library compatible with that compiler; ROCm libraries; native HIP Clang for the rocThrust wrapper |
+| OpenMP target | The same `amdflang` and hipFORT inputs, in a separate tree | OpenMP target compile/link with `gfx942:sramecc+:xnack-`; native HIP Clang for the wrapper |
+
+The module list and C/C++ compiler paths are recorded in the saved
+`sirius-module-avail-20261017T050840Z-c342a1f5`,
+`sirius-amd-build-20261017T104351Z-a3697cae` and
+`sirius-amd-blis-build-20261018T124826Z-1798941b` run directories. **Those logs do
+not establish the gfortran/amdflang paths, hipFORT installation or `.mod`
+compatibility, or availability of `fftw3.f03`.** These remain first-build gates.
+The allocated-job preflight inspects only fixed hipFORT include/lib candidates
+within the observed ROCm prefix and its `hipfort` subdirectory. It records all
+candidates and requires a unique complete module directory and library (shared
+preferred to static). Missing/ambiguous inputs stop the affected profiles, with
+no automatic package installation, compiler substitution or module fallback.
+File presence is not success: CMake must compile/link the full examples, and
+the build controller checks all 36 result slots, binaries and manifests.
+
+Both GPU rocThrust pairs explicitly compile
+`amd/fortran/rocthrust/examples/rocthrust_wrapper.hip` with the observed native
+HIP Clang driver, then link through Fortran with the C++ runtime. The wrapper
+status return plus output argument, source hash, HIP compiler, Fortran caller
+and final linker are checked. `hipcc` is not the CMake HIP compiler.
+
+This is development build evidence, not a clean production campaign: retain
+the current HEAD, dirty status and complete source snapshot (including new
+Fortran sources), and verify that snapshot before submission and before/after
+builds. Existing C/C++ artifacts, measurements, logs and teaching slides remain
+untouched. SSH/submission require separate approval; completion of this build
+does not authorize smoke or performance measurement.
+
+The first Fortran build, `sirius-amd-fortran-build-20261021T022811Z-5a780b1d`
+(PBS `46548.pbs`, `a22[2]`), ended with PBS exit 1 and SSH exit 2: **12 CPU
+artifacts built, 24 GPU slots failed at configure**. It recorded gfortran
+14.2.1, amdflang 22.0.0 from ROCm 7.2.0, CMake 3.31.8, hipFORT modules in
+`/opt/rocm-7.2.0/include/hipfort/amdgcn` and
+`/opt/rocm-7.2.0/lib/libhipfort-amdgcn.a`. The evidence remains in that run's
+`amd-build/summary.json`, `amd-build/fortran-preflight.json` and compile/link probe logs.
+CPU provider links passed; no generated program was run.
+
+The local corrections address incompatible `getrf` and missing RAND ordering
+bindings, unsupported explicit OpenMP `device` clauses, the mixed-language
+rocThrust probe's linker selection, and semicolons in configure status reasons.
+They preserve algorithms, timing boundaries, the independently selected OpenMP
+default/HIP device checks and old artifacts/logs. The rocThrust probe now uses
+the Fortran linker, requiring CMake 3.29+ (the observed 3.31.8 meets it).
+The subsequent build and smoke below validated the corrected source snapshot.
+The first failed run remains unchanged and does not authorize retries.
+
+### AMD Fortran build, smoke and performance pilot
+
+The corrected build `sirius-amd-fortran-build-20261021T044526Z-402336eb`
+(PBS `46564.pbs`) built all **36 artifacts** in 00:05:37. CPU uses gfortran
+14.2.1; HIP/OpenMP use amdflang 22.0.0 and the recorded ROCm 7.2.0 hipFORT
+modules/archive. All four GPU rocThrust mixed-language links passed. The
+separate smoke `sirius-amd-fortran-smoke-20261021T051107Z-402336eb`
+(PBS `46570.pbs`) passed **18 examples and 72 benchmark rows** in 00:01:48.
+
+Performance pilot `sirius-amd-fortran-pilot-20261021T054624Z-402336eb`
+(PBS `46574.pbs`, `a10[1]`, `mcrp`, one APU, 00:06:05 used) ran the 18 retained
+benchmarks once per library/case/implementation/scope: **108 successful child
+processes and 108 numerically verified raw rows**. Both library and end-to-end
+use the same sizes, precision, warm-up and repeats as the C/C++ pilot.
+The pilot requests 24 CPU threads, retains unknown effective counts for
+FFTW/BLAS/Sparse/Solver, and uses the serial intrinsic Fortran RAND/sum backends.
+One trial per condition cannot establish dispersion or node variability.
+
+The run-owned postprocessing code omitted `source_language` when reconstructing
+case keys. Consequently **PBS exit 1, SSH exit 2 and `PILOT_FAILED` remain the
+original execution outcome**, despite all benchmark children exiting zero.
+A separate local review corrected that lookup using the canonical helper,
+validated every row's case, numerical thresholds, timing, provenance and command
+logs, and checked all 18 binary hashes and the unchanged source snapshot.
+`pilot-offline-review.json` and `pilot-offline-timings.json` under that run retain
+this independent **`PILOT_DATA_VALIDATED_OFFLINE`** result; they do not overwrite
+`pilot/summary.json`, raw, stderr, completion marker or scheduler evidence.
+No remeasurement or additional SSH was used for the review.
+
+These runs used dirty HEAD `efda265a8d4fd10a77764bd9500217567d2660ee` with source
+snapshot `402336ebe0267f709ef59990537b9e597515b07c068c66c72d47f8cbcb98492b`.
+They remain development/pilot evidence, never relabelled clean production data.
+The saved build manifests own the per-artifact binary hashes. Old failed builds,
+all previous C/C++ results, the teaching deck and authentication records remain
+untouched.
+
+[amd-fortran-pilot.json](amd-fortran-pilot.json) and
+[amd-fortran-benchmark.json](amd-fortran-benchmark.json) are separate Fortran
+inputs. The latter keeps the C/C++ three-size/five-trial matrix: 540 rows per
+node, 3,240 per six-node wave, and 6,480 over two waves. Before production,
+obtain approval for the measurement commit, build 18 fresh clean benchmarks,
+and collect Fortran compiler/hipFORT/provider and link-dependency identities.
+Fortran link depfiles use the `amd/fortran` build directory and its relative
+`<library>/<target>` output, rather than the C/C++ family build directories.
+No compiler, hash, runtime equality or CPU-backend gate is relaxed.
+
+The planned allocation follows the confirmed C/C++ procedure: one full host
+(`select=4`, `place=exclhost`) for clean build/preparation; `select=24` plus
+`place=exclhost` for six physical hosts per measurement wave, one MPI process
+and one matched 24-CPU/APU pair per host. Use `mcrp`, 90 minutes per wave, the
+recorded four-module stack and explicit `-x PATH -x LD_LIBRARY_PATH`. Proceed
+wave by wave after checking each result. These are preparation conditions, not
+records of completed Fortran production jobs. Effective worker counts and
+complete actual loaded-library identity remain unverified; add no profiler or
+worker-diagnostic campaign solely for those open items.
+
 ### NVIDIA-aligned AMD pilot and production plan
 
 The first pilot, `sirius-amd-pilot-20261017T173138Z-a3697cae` (PBS

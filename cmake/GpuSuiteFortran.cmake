@@ -16,7 +16,7 @@ macro(gpu_suite_enable_fortran)
   if(_all_fortran_flags MATCHES "(^| )(-fast|-Ofast|-ffast-math|-fassociative-math|-ffinite-math-only|-Mflushz|-Mdaz|-Knoieee|-Mconcur|-stdpar|-acc|-mp|-gpu=|-fopenmp|-ftree-parallelize-loops|-floop-parallelize-all|-i8|-r8|-fdefault-integer-8|-fdefault-real-8)( |$|=|[^ ]+)")
     message(FATAL_ERROR "Unapproved numerical/parallel/offload option in Fortran flags: ${_all_fortran_flags}")
   endif()
-  if(GPU_SUITE_BUILD_CPU AND (NOT GPU_SUITE_CPU_BLAS_BACKEND STREQUAL "ONEMKL" OR
+  if(GPU_SUITE_VENDOR STREQUAL "nvidia" AND GPU_SUITE_BUILD_CPU AND (NOT GPU_SUITE_CPU_BLAS_BACKEND STREQUAL "ONEMKL" OR
      NOT GPU_SUITE_CPU_LAPACK_BACKEND STREQUAL "ONEMKL" OR
      NOT GPU_SUITE_CPU_SPARSE_BACKEND STREQUAL "ONEMKL" OR
      NOT GPU_SUITE_CPU_THRUST_BACKEND STREQUAL "STL"))
@@ -34,8 +34,11 @@ macro(gpu_suite_enable_fortran)
     set(GPU_SUITE_FORTRAN_SAFE_OPTIONS -Kieee -Mnoflushz -Mnodaz)
   elseif(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
     set(GPU_SUITE_FORTRAN_SAFE_OPTIONS -fno-fast-math -ffp-contract=off)
+  elseif(GPU_SUITE_VENDOR STREQUAL "amd" AND
+         CMAKE_Fortran_COMPILER_ID MATCHES "^(LLVMFlang|Flang)$")
+    set(GPU_SUITE_FORTRAN_SAFE_OPTIONS -fno-fast-math -ffp-contract=off)
   else()
-    message(FATAL_ERROR "Fortran flags are validated for GNU and NVHPC only")
+    message(FATAL_ERROR "Use GNU/NVHPC, or AMD LLVM Flang for the AMD family")
   endif()
   set(GPU_SUITE_FORTRAN_GPU_OPTIONS "")
   if(GPU_SUITE_BUILD_CUDA OR GPU_SUITE_BUILD_OPENACC)
@@ -106,6 +109,12 @@ function(gpu_suite_generate_fortran_metadata)
   endif()
   file(READ "${GPU_SUITE_BUILD_METADATA_FILE}" _metadata)
   set(_fortran_json "\"fortran\":{\"compiler\":\"${_compiler_json}\",\"compiler_version\":\"${_version_json}\",\"cuda_target_options\":\"${_gpu_json}\",\"global_configure_flags\":\"${_flags_json}\",\"numerical_target_options\":\"${_numerical_json}\",\"openacc_target_option\":\"${_acc_json}\"},")
+  if(GPU_SUITE_VENDOR STREQUAL "amd")
+    _gpu_suite_escape_json_string("${CMAKE_Fortran_COMPILER}" _compiler_path)
+    _gpu_suite_escape_json_string("${GPU_SUITE_HIPFORT_MODULE_DIR}" _hipfort_mod)
+    _gpu_suite_escape_json_string("${GPU_SUITE_OPENMP_COMPILE_OPTIONS}" _omp_json)
+    set(_fortran_json "\"fortran\":{\"compiler\":\"${_compiler_json}\",\"compiler_path\":\"${_compiler_path}\",\"compiler_version\":\"${_version_json}\",\"global_configure_flags\":\"${_flags_json}\",\"hipfort_module_directory\":\"${_hipfort_mod}\",\"numerical_target_options\":\"${_numerical_json}\",\"openmp_target_options\":\"${_omp_json}\"},")
+  endif()
   string(REPLACE "\"git_commit\":" "${_fortran_json}\"git_commit\":" _metadata "${_metadata}")
   file(WRITE "${GPU_SUITE_BUILD_METADATA_FILE}" "${_metadata}")
   # The common metadata header must identify the final (Fortran-extended) file.
@@ -117,7 +126,14 @@ function(gpu_suite_generate_fortran_metadata)
 endfunction()
 
 function(gpu_suite_fortran_probe output)
-  cmake_parse_arguments(P "" "" "SOURCES;LIBRARIES;OPTIONS;INCLUDES" ${ARGN})
+  cmake_parse_arguments(P "" "LINKER_LANGUAGE" "SOURCES;LIBRARIES;OPTIONS;INCLUDES" ${ARGN})
+  set(_linker_options "")
+  if(P_LINKER_LANGUAGE)
+    if(CMAKE_VERSION VERSION_LESS 3.29)
+      message(FATAL_ERROR "An explicit mixed-language probe linker requires CMake 3.29 or newer")
+    endif()
+    list(APPEND _linker_options LINKER_LANGUAGE "${P_LINKER_LANGUAGE}")
+  endif()
   set(_options ${GPU_SUITE_FORTRAN_SAFE_OPTIONS} ${P_OPTIONS})
   foreach(_include IN LISTS P_INCLUDES)
     list(APPEND _options "-I${_include}")
@@ -127,6 +143,7 @@ function(gpu_suite_fortran_probe output)
     COMPILE_DEFINITIONS ${_options}
     LINK_LIBRARIES ${P_LIBRARIES}
     LINK_OPTIONS ${GPU_SUITE_FORTRAN_SAFE_OPTIONS} ${P_OPTIONS}
+    ${_linker_options}
     OUTPUT_VARIABLE _log)
   file(WRITE "${CMAKE_BINARY_DIR}/fortran-probes/${output}.log" "${_log}")
   set(${output} "${_works}" PARENT_SCOPE)

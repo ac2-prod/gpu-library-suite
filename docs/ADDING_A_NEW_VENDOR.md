@@ -12,7 +12,9 @@ Saved NVIDIA and AMD performance campaigns are also recorded there; current
 rocSPARSE v2/csr_rowsplit coverage is in its [README](../amd/c-cpp/rocsparse/README.md).
 These records do not authorize new execution. Use the
 [implementation plan](IMPLEMENTATION_PLAN.md) when extending the project.
-AMD Fortran remains outside this increment.
+AMD Fortran sources are now implemented separately under `amd/fortran`; see
+[its usage and validation status](../amd/fortran/README.md). Hardware validation
+remains outstanding and is not implied by the C/C++ evidence.
 
 Implementation is not the same as real-device validation. The retained Sirius
 six-family build verified all 36 artifacts with explicit AOCL Sparse; rocFFT

@@ -1,5 +1,15 @@
 find_package(Python3 3.9 COMPONENTS Interpreter QUIET)
 
+if(GPU_SUITE_VENDOR STREQUAL "amd" AND GPU_SUITE_SOURCE_LANGUAGE STREQUAL "fortran"
+   AND TARGET rand_cpu_bench AND TARGET reduce_cpu_bench AND Python3_Interpreter_FOUND)
+  add_test(NAME amd_fortran_cpu_contract
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tests/python/check_amd_fortran.py"
+            --build "${CMAKE_BINARY_DIR}")
+  set_tests_properties(amd_fortran_cpu_contract PROPERTIES
+    ENVIRONMENT "PYTHONPYCACHEPREFIX=${CMAKE_BINARY_DIR}/pycache"
+    LABELS "amd-fortran")
+endif()
+
 function(gpu_suite_add_c_test name source)
   add_executable(${name} "c/${source}")
   target_link_libraries(${name} PRIVATE gpu_suite::common)

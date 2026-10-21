@@ -137,6 +137,20 @@ class SiriusAmdSmokeEvidenceTests(unittest.TestCase):
         self.assertEqual(set(evidence.select_artifact_dependencies(example, metadata)), {"fftw3f"})
         self.assertEqual(set(evidence.select_artifact_dependencies(benchmark, metadata)),
                          set(metadata["fftw_threading"]["dependency_names"]))
+        metadata["fortran"] = {"compiler": "FixtureFortran"}
+        for entry in [example, benchmark] + [self.entry(family, variant=variant, backends=backends)
+                                            for family, variant, backends, _ in rows]:
+            entry = dict(entry, compiler_language="fortran")
+            family = entry["library"]
+            expected = evidence.select_artifact_dependencies(
+                dict(entry, compiler_language="cxx"), metadata)
+            entry["backend_variant"] = "aocl-sparse" if family == "rocsparse" else "fortran-cpu-" + family
+            if family in {"rocrand", "rocthrust"}:
+                entry["supported_cpu_backends"] = ["cpu-fortran-random-serial" if family == "rocrand" else "cpu-fortran-sum-serial"]
+            with self.subTest(fortran=family):
+                self.assertEqual(evidence.select_artifact_dependencies(entry, metadata), expected)
+                with self.assertRaisesRegex(ValueError, "Fortran artifact"):
+                    evidence.select_artifact_dependencies(dict(entry, backend_variant="unapproved"), metadata)
 
     def test_gpu_families_profiles_and_header_only_inputs(self):
         for profile in ("hip", "openmp"):
@@ -153,6 +167,11 @@ class SiriusAmdSmokeEvidenceTests(unittest.TestCase):
                         for name in names:
                             self.assertEqual(selected[name]["kind"],
                                              "header" if name in {"rocthrust", "rocprim"} else "elf")
+                        fortran = dict(entry, compiler_language="fortran", backend_variant="fortran-" + profile + "-" + family)
+                        native = dict(metadata, fortran={"compiler": "FixtureFortran"},
+                                      dependencies=dict(metadata["dependencies"],
+                                          hipfort=self.identity(self.file("libhipfort.a", b"!<arch>\nfixture"))))
+                        self.assertEqual(set(evidence.select_artifact_dependencies(fortran, native)), names | {"hipfort"})
 
     def test_fftw_pthread_combined_serial_and_legacy_selection(self):
         entry = self.entry("rocfft", variant="fftw3f-serial+threaded", backends=["cpu-fftw-serial", "cpu-fftw-threaded"])
@@ -312,6 +331,18 @@ class SiriusAmdSmokeEvidenceTests(unittest.TestCase):
                 self.assertEqual([item["sha256"] for item in link["prerequisites"]],
                                  [self.identity(archive)["sha256"]] * 3)
                 self.assertEqual(result["dependencies"]["aocl_sparse"]["kind"], "static-archive")
+        self.program = self.file("build/amd/fortran/rocsparse/program")
+        entry.update(executable_path=str(self.program), compiler_language="fortran", target_name="program")
+        metadata["fortran"] = {"compiler": "FixtureFortran"}
+        self.depfile = self.file("build/amd/fortran/CMakeFiles/program.dir/link.d", b"")
+        relative = "../../common/c-cpp/libprovider.a"
+        self.links([relative], target="rocsparse/program")
+        result = evidence.validate_link_evidence(entry, metadata, self.depfile)
+        self.assertEqual(result["link_dependency_file"]["build_directory"], str(self.program.parent.parent))
+        self.assertEqual(result["link_dependency_file"]["prerequisites"][0]["path"], str(archive))
+        self.links([relative], target="rocfft/program")
+        with self.assertRaisesRegex(ValueError, "another artifact"):
+            evidence.validate_link_evidence(entry, metadata, self.depfile)
 
     def test_depfile_missing_persistent_inputs_are_rejected_by_both_observation_routes(self):
         entry, metadata, primary = self.sparse_inputs()

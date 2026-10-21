@@ -25,7 +25,7 @@ ENVIRONMENT = ("PATH", "HOME", "LOADEDMODULES", "MODULEPATH", "AOCL_ROOT", "MKLR
                "ROCM_PATH", "HIP_PATH", "LD_LIBRARY_PATH", "LIBRARY_PATH", "CPATH",
                "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "CMAKE_PREFIX_PATH",
                "CMAKE_INCLUDE_PATH", "CMAKE_LIBRARY_PATH", "FFTW3f_ROOT", "FFTW3f_THREADING",
-               "CC", "CXX", "CFLAGS", "CXXFLAGS", "LDFLAGS", "HIP_VISIBLE_DEVICES",
+               "CC", "CXX", "FC", "CFLAGS", "CXXFLAGS", "FFLAGS", "LDFLAGS", "HIP_VISIBLE_DEVICES",
                "ROCR_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES", "GPU_DEVICE_ORDINAL")
 CPU_PATH_OPTIONS = {
     "GPU_SUITE_GENERIC_" + provider + "_" + kind
@@ -383,7 +383,7 @@ def cpu_hints(env):
 def configure_argv(args, cmake, build, profile, env, selected_cpu_options=None):
     flags = {"CMAKE_BUILD_TYPE": "Release", "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
              "GPU_SUITE_VENDOR": "amd", "GPU_SUITE_AMD_LIBRARIES": ";".join(FAMILIES),
-             "GPU_SUITE_SOURCE_LANGUAGE": "c-cpp", "GPU_SUITE_BUILD_CUDA": "OFF",
+             "GPU_SUITE_SOURCE_LANGUAGE": args.source_language, "GPU_SUITE_BUILD_CUDA": "OFF",
              "GPU_SUITE_BUILD_OPENACC": "OFF", "GPU_SUITE_BUILD_TESTS": "OFF",
              "GPU_SUITE_BUILD_EXAMPLES": "OFF" if args.clean_benchmarks else "ON",
              "GPU_SUITE_BUILD_BENCHMARKS": "ON",
@@ -400,7 +400,65 @@ def configure_argv(args, cmake, build, profile, env, selected_cpu_options=None):
                      CMAKE_HIP_ARCHITECTURES=args.gpu_arch)
         if profile == "openmp":
             flags["GPU_SUITE_AMD_GPU_TARGET"] = args.gpu_arch
+    if args.source_language == "fortran":
+        flags["CMAKE_Fortran_COMPILER"] = str(args.cpu_fortran_compiler if profile == "cpu" else args.amd_fortran_compiler)
+        if profile != "cpu":
+            flags["GPU_SUITE_HIPFORT_MODULE_DIR"] = str(args.hipfort_module_dir)
+            flags["GPU_SUITE_HIPFORT_LIBRARY"] = str(args.hipfort_library)
     return [str(cmake), "-S", str(args.source_root), "-B", str(build)] + ["-D" + k + "=" + v for k, v in flags.items()]
+
+
+def fortran_preflight(job):
+    """Inspect the loaded stack in the allocation; no module install or GPU use.
+
+    Presence is not compiler/module compatibility. CMake must still compile and
+    link the full examples with the selected compiler before enabling targets.
+    """
+    args = job.args
+    result = {"profile_errors": {}, "compilers": {}, "module_candidates": [], "library_candidates": []}
+    for name, attribute, prefix, profiles in (
+            ("gfortran", "cpu_fortran_compiler", args.cpu_c_compiler.parent, ("cpu",)),
+            ("amdflang", "amd_fortran_compiler", args.rocm_root, ("hip", "openmp"))):
+        value = shutil.which(name, path=job.env.get("PATH"))
+        path = Path(value) if value else None
+        valid = (path is not None and path.is_absolute() and path.is_file() and os.access(path, os.X_OK)
+                 and prefix.resolve() in path.resolve().parents)
+        setattr(args, attribute, path if valid else None)
+        result["compilers"][name] = file_identity(path) if valid else {"status": "NOT_FOUND_IN_SELECTED_STACK", "candidate": value}
+        if not valid:
+            for profile in profiles:
+                result["profile_errors"][profile] = name + " is not an executable in the selected compiler prefix"
+    modules = ("hipfort", "hipfort_types", "hipfort_rocfft", "hipfort_rocblas", "hipfort_rocsolver", "hipfort_rocrand")
+    complete, libraries = {}, {}
+    for root in (args.rocm_root, args.rocm_root / "hipfort"):
+        for suffix in ("include/hipfort/amdgcn", "include/hipfort", "include"):
+            path = root / suffix
+            missing = [name for name in modules if not (path / (name + ".mod")).is_file()]
+            result["module_candidates"].append({"path": str(path), "missing_modules": missing})
+            if not missing:
+                complete[str(path.resolve())] = path
+        for suffix in ("lib", "lib64"):
+            for name in ("libhipfort-amdgcn.so", "libhipfort-amdgcn.a"):
+                path = root / suffix / name
+                if path.is_file():
+                    identity = file_identity(path)
+                    result["library_candidates"].append(identity)
+                    libraries[identity["resolved_path"]] = path
+    # Match CMake's shared-library preference; aliases of the same file count once.
+    shared = {key: path for key, path in libraries.items() if path.name.endswith(".so")}
+    libraries = shared or libraries
+    if len(complete) != 1 or len(libraries) != 1:
+        reason = "hipFORT needs one complete module directory and one library in the selected ROCm prefix; inspect fortran-preflight.json"
+        for profile in ("hip", "openmp"):
+            result["profile_errors"][profile] = result["profile_errors"].get(profile, "") + ("; " if profile in result["profile_errors"] else "") + reason
+    else:
+        args.hipfort_module_dir = next(iter(complete.values()))
+        args.hipfort_library = next(iter(libraries.values()))
+        result["hipfort"] = {"module_directory": str(args.hipfort_module_dir),
+                             "library": file_identity(args.hipfort_library),
+                             "modules": {name: file_identity(args.hipfort_module_dir / (name + ".mod")) for name in modules},
+                             "compiler_compatibility": "UNVERIFIED_UNTIL_CMAKE_COMPILE_LINK"}
+    return result
 
 
 def provider_inventory(env, deadline, clock=time.monotonic):
@@ -566,7 +624,7 @@ def profile_targets(job, profile, build, configure_output):
         if any(entry.get(key) != value for key, value in (
                 ("library", row["library"]), ("implementation", profile), ("build_profile", profile),
                 ("executable_role", row["role"]),
-                ("executable_path", str(build / "amd/c-cpp" / row["library"] / name)))):
+                ("executable_path", str(build / "amd" / job.args.source_language / row["library"] / name)))):
             raise ValueError("Configured target identity mismatch")
         names.append(name)
     for library in FAMILIES:
@@ -575,7 +633,9 @@ def profile_targets(job, profile, build, configure_output):
         if 0 < len(present) < len(rows):
             raise ValueError("Only one of the required example/benchmark pair was configured")
         if not present:
-            pattern = r"^-- " + library + r" " + profile + r" targets: DISABLED \((.+)\)\s*$"
+            label = "AMD Fortran " if job.args.source_language == "fortran" else ""
+            suffix = "" if label else " targets"
+            pattern = r"^-- " + label + library + r" " + profile + suffix + r": DISABLED \((.+)\)\s*$"
             reasons = re.findall(pattern, configure_output, re.MULTILINE | re.IGNORECASE)
             if len(reasons) != 1 or not reasons[0].strip():
                 raise ValueError("Missing target pair lacks exactly one dependency reason: " + library)
@@ -605,6 +665,9 @@ def verify_artifacts(job, profile, build, names):
         raise ValueError("Production build metadata must record clean source")
     compilers = {"c": job.args.cpu_c_compiler,
                  "cxx": job.args.amd_cxx_compiler if profile == "openmp" else job.args.cpu_cxx_compiler}
+    fortran = job.args.source_language == "fortran"
+    if fortran:
+        compilers["fortran"] = job.args.cpu_fortran_compiler if profile == "cpu" else job.args.amd_fortran_compiler
     if profile != "cpu":
         compilers["hip"] = job.args.amd_cxx_compiler
     for language, compiler in compilers.items():
@@ -637,6 +700,8 @@ def verify_artifacts(job, profile, build, names):
             continue
         if profile != "cpu":
             required_dependencies.update(("hip", row["library"]))
+            if fortran:
+                required_dependencies.add("hipfort")
             if row["library"] == "rocsolver":
                 required_dependencies.add("rocblas")
             if row["library"] == "rocthrust":
@@ -647,6 +712,13 @@ def verify_artifacts(job, profile, build, names):
                                           "rocsolver": {"lapacke"}, "rocsparse": sparse_dependencies}.get(row["library"], set()))
     if not required_dependencies.issubset(dependencies):
         raise ValueError("Required configured dependency identities are missing")
+    if fortran and profile != "cpu":
+        selected = job.fortran_inputs["hipfort"]
+        if metadata["fortran"].get("hipfort_module_directory") != selected["module_directory"]:
+            raise ValueError("hipFORT module directory differs from the selected input")
+        for key, identity in [("hipfort", selected["library"])] + [(name + "_module", item) for name, item in selected["modules"].items()]:
+            if metadata["dependencies"].get(key) != {"path": identity["resolved_path"], "sha256": identity["sha256"]}:
+                raise ValueError("hipFORT identity mismatch: " + key)
     if profile == "cpu" and job.args.cpu_sparse_backend == "AOCLSPARSE" and any(name in names for name in ("sparse_cpu", "sparse_cpu_bench")):
         # Manual ordered inputs are an explicit contract too. Merely recording
         # an unrelated but internally consistent dependency is not sufficient.
@@ -662,19 +734,28 @@ def verify_artifacts(job, profile, build, names):
         expected_extras = extras.split(";") if extras else []
         if actual[1:1 + len(expected_extras)] != expected_extras:
             raise ValueError("Explicit AOCL Sparse extra link order differs from build metadata")
-    if profile == "openmp" and any(name in names for name in ("openmp_rocthrust", "openmp_rocthrust_bench")):
+    if (profile == "openmp" or (fortran and profile == "hip")) and any(name in names for name in ("reduce_gpu", "reduce_gpu_bench", "openmp_rocthrust", "openmp_rocthrust_bench")):
         interop = metadata.get("rocthrust_interop") or {}
         if not isinstance(interop, dict):
             raise ValueError("Invalid rocThrust interop metadata")
-        wrapper = "amd/c-cpp/rocthrust/examples/rocthrust_wrapper.hip"
+        wrapper = "amd/" + job.args.source_language + "/rocthrust/examples/rocthrust_wrapper.hip"
+        caller = "fortran" if fortran else "cxx"
+        caller_compiler = job.args.amd_fortran_compiler if fortran else job.args.amd_cxx_compiler
+        normalize = lambda value: " ".join(value.replace(";", " ").split())
+        caller_flags = metadata["openmp"].get("compile_flags", "")
+        link_flags = metadata["openmp"].get("link_flags", "")
+        if fortran:
+            caller_flags = " ".join(metadata["fortran"].get(key, "") for key in
+                                    ("global_configure_flags", "numerical_target_options", "openmp_target_options"))
+            link_flags = caller_flags
         if (interop.get("source") != wrapper or interop.get("source_sha256") != file_identity(job.args.source_root / wrapper)["sha256"]
-                or interop.get("compiler_language") != "hip" or interop.get("caller_language") != "cxx"
+                or interop.get("compiler_language") != "hip" or interop.get("caller_language") != caller
                 or Path(interop.get("compiler_path", "")).resolve() != job.args.amd_cxx_compiler.resolve()
                 or interop.get("compile_flags") != metadata["hip"].get("global_configure_flags")
-                or interop.get("caller_compile_flags") != metadata["openmp"].get("compile_flags")
-                or interop.get("link_flags") != metadata["openmp"].get("link_flags")
-                or interop.get("linker_language") != "cxx"
-                or Path(interop.get("linker_path", "")).resolve() != job.args.amd_cxx_compiler.resolve()):
+                or normalize(interop.get("caller_compile_flags", "")) != normalize(caller_flags)
+                or normalize(interop.get("link_flags", "")) != normalize(link_flags)
+                or interop.get("linker_language") != caller
+                or Path(interop.get("linker_path", "")).resolve() != caller_compiler.resolve()):
             raise ValueError("rocThrust HIP/OpenMP translation-unit provenance mismatch")
     metadata_hash = file_identity(build / "build-metadata.json")["sha256"]
     entries = manifest.get("entries", [])
@@ -688,7 +769,7 @@ def verify_artifacts(job, profile, build, names):
     artifacts = {}
     for entry in entries:
         name, row = entry["target_name"], expected[entry["target_name"]]
-        path = build / "amd/c-cpp" / row["library"] / name
+        path = build / "amd" / job.args.source_language / row["library"] / name
         if (path.is_symlink() or not path.is_file() or path.resolve() != path
                 or any(entry.get(key) != value for key, value in (("library", row["library"]),
                     ("implementation", profile), ("build_profile", profile), ("executable_role", row["role"]),
@@ -696,7 +777,7 @@ def verify_artifacts(job, profile, build, names):
             raise ValueError("Manifest artifact identity mismatch: " + name)
         identity = file_identity(path)
         language = entry.get("compiler_language")
-        expected_language = "hip" if profile == "hip" else "cxx" if profile == "openmp" or row["library"] in {"rocrand", "rocthrust"} else "c"
+        expected_language = "fortran" if fortran else "hip" if profile == "hip" else "cxx" if profile == "openmp" or row["library"] in {"rocrand", "rocthrust"} else "c"
         if (language != expected_language or entry.get("compiler") != metadata[language]["compiler"]
                 or entry.get("compiler_version") != metadata[language]["compiler_version"]
                 or entry.get("global_configure_flags") != metadata[language].get("global_configure_flags")):
@@ -757,7 +838,9 @@ def build_profile(job, profile, build, names, cmake):
         for name in names:
             row = rows[name]
             dependencies = ["gpu_suite_common"] if row["role"] == "benchmark" else []
-            if profile == "openmp" and row["library"] == "rocthrust":
+            if job.args.source_language == "fortran" and row["role"] == "benchmark":
+                dependencies.append("gpu_suite_amd_fortran_support")
+            if job.args.source_language == "c-cpp" and profile == "openmp" and row["library"] == "rocthrust":
                 dependencies.append("rocthrust_openmp_wrapper")
             blocked = None
             for dependency in dependencies:
@@ -853,9 +936,13 @@ def execute(job):
             write_json(job.root / "cpu-provider-selection.json", job.aocl_selection)
         tools = {name: file_identity(path) for name, path in (("cmake", cmake), ("cpu_c", job.args.cpu_c_compiler),
                  ("cpu_cxx", job.args.cpu_cxx_compiler), ("amd_cxx", job.args.amd_cxx_compiler), ("python", sys.executable))}
+        if job.args.source_language == "fortran":
+            job.fortran_inputs = fortran_preflight(job)
+            write_json(job.root / "fortran-preflight.json", job.fortran_inputs)
+            tools.update({name: value for name, value in job.fortran_inputs["compilers"].items() if "sha256" in value})
         write_json(job.root / "toolchain.json", {"tools": tools, "environment": {name: job.env.get(name) for name in ENVIRONMENT},
                    "cpu_options": job.cpu_flags, "effective_cpu_hints": cpu_hints(job.env),
-                   "gpu_architecture": job.args.gpu_arch})
+                   "gpu_architecture": job.args.gpu_arch, "source_language": job.args.source_language})
         for name, identity in tools.items():
             job.run(name + "-version", [identity["path"], "--version"])
         write_json(job.root / "cpu-provider-inventory.json", provider_inventory(job.env, min(job.deadline, job.clock() + 30), job.clock))
@@ -874,6 +961,12 @@ def execute(job):
             try:
                 if os.path.lexists(build):
                     raise ValueError("Refusing existing profile build tree")
+                if job.args.source_language == "fortran" and profile in job.fortran_inputs["profile_errors"]:
+                    reason = job.fortran_inputs["profile_errors"][profile]
+                    job.profiles[profile] = {"preflight_error": reason}
+                    for row in profile_rows:
+                        row.update(status="NOT_BUILT_DEPENDENCY", reason=reason)
+                    continue
                 if profile == "cpu" and job.aocl_selection:
                     validate_aocl_selection(job.aocl_selection)
                 output = job.run("configure-" + profile, configure_argv(job.args, cmake, build, profile, job.env, job.cpu_flags), job.args.configure_timeout)
@@ -913,6 +1006,7 @@ def parser():
     for name in ("run-id", "expected-source-sha256", "gpu-arch"):
         result.add_argument("--" + name, required=True)
     result.add_argument("--timeout-seconds", type=int, default=1500)
+    result.add_argument("--source-language", choices=("c-cpp", "fortran"), default="c-cpp")
     result.add_argument("--configure-timeout", type=int, default=180)
     result.add_argument("--build-timeout", type=int, default=600)
     result.add_argument("--clean-benchmarks", action="store_true",
@@ -963,7 +1057,7 @@ def main(argv=None):
         # These are real device-runtime checks, never benchmark executions.
         summary["gpu_query_count"] = None
         summary["device_check_commands"] = [r for r in job.commands if r["stage"] == "placement-mpi"] if job else []
-    summary.update(ended=utc(), slots=job.slots if job else slots(args.clean_benchmarks),
+    summary.update(ended=utc(), source_language=args.source_language, slots=job.slots if job else slots(args.clean_benchmarks),
                    mode="clean-benchmarks" if args.clean_benchmarks else "all",
                    commands=job.commands if job else [], profiles=job.profiles if job else {},
                    aocl_cpu_provider_selection=job.aocl_selection if job else None)

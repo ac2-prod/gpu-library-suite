@@ -112,11 +112,28 @@ def select_artifact_dependencies(entry: Mapping, metadata: Mapping):
     if (not isinstance(backends, list) or any(not isinstance(b, str) for b in backends)
             or len(set(backends)) != len(backends)):
         raise ValueError("invalid supported CPU backends")
+    fortran = entry.get("compiler_language") == "fortran"
+    if fortran:
+        expected_variant = ("aocl-sparse" if (profile, family) == ("cpu", "rocsparse")
+                            else "fortran-" + profile + "-" + family)
+        if variant != expected_variant or not isinstance(metadata.get("fortran"), Mapping):
+            raise ValueError("Fortran artifact/backend metadata mismatch")
+        # Normalize only for provider selection below; retain the original
+        # Fortran entry, backend names, compiler and manifest identities.
+        if profile != "cpu":
+            variant = profile + "-" + family
+        elif family == "rocfft":
+            variant = "fftw3f-serial+threaded" if "cpu-fftw-threaded" in backends else "fftw3f-serial"
+        elif family in {"rocblas", "rocsolver"}:
+            option = "GPU_SUITE_CPU_BLAS_BACKEND" if family == "rocblas" else "GPU_SUITE_CPU_LAPACK_BACKEND"
+            variant = str(inputs.get(option, "")).lower()
     names = []
     if profile != "cpu":
         if backends or variant != profile + "-" + family:
             raise ValueError("GPU artifact/backend mismatch")
         names = ["hip", family]
+        if fortran:
+            names.append("hipfort")
         if family == "rocsolver":
             names.append("rocblas")
         if family == "rocthrust":
@@ -158,10 +175,14 @@ def select_artifact_dependencies(entry: Mapping, metadata: Mapping):
                     or str((_absolute(include) / "aoclsparse.h").resolve(strict=True)) != header.get("path")):
                 raise ValueError("AOCL Sparse consumed header identity differs")
     elif family == "rocrand":
-        if variant != "std-random-serial" or backends != ["cpu-std-random-serial"]:
+        expected_variant = "fortran-cpu-rocrand" if fortran else "std-random-serial"
+        expected_backend = "cpu-fortran-random-serial" if fortran else "cpu-std-random-serial"
+        if variant != expected_variant or backends != [expected_backend]:
             raise ValueError("random CPU artifact/backend mismatch")
     else:
-        if variant == "stl-serial" and backends == ["cpu-stl-serial"]:
+        if fortran and variant == "fortran-cpu-rocthrust" and backends == ["cpu-fortran-sum-serial"]:
+            pass  # Native Fortran reduction has no C++ STL/OpenMP CPU provider.
+        elif variant == "stl-serial" and backends == ["cpu-stl-serial"]:
             if inputs.get("GPU_SUITE_CPU_THRUST_BACKEND") != "STL":
                 raise ValueError("STL selection mismatch")
         elif variant == "openmp" and backends == ["cpu-openmp"]:
@@ -335,7 +356,7 @@ def _native_hip_link_evidence(entry, metadata, selected, descriptor):
                    "scope": "explicit inputs of recorded successful link command; not linker depfile or inferred -l resolution"}
 
 
-def _parse_link_dependency_rule(text, program):
+def _parse_link_dependency_rule(text, program, build_directory=None):
     """Parse Sirius' simple Make depfiles without resolving any prerequisite.
 
     The first rule owns the link inputs. Later empty rules are only Make's
@@ -352,7 +373,8 @@ def _parse_link_dependency_rule(text, program):
     token_pattern = r"[A-Za-z0-9_./+\-]+"
     if re.fullmatch(token_pattern, target) is None:
         raise ValueError("unsupported link dependency target")
-    if target not in {program.name, str(program)}:
+    relative_target = program.name if build_directory is None else str(program.relative_to(build_directory))
+    if target not in {relative_target, str(program)}:
         raise ValueError("link dependency file belongs to another artifact")
     tokens = dependencies.split()
     if not tokens or any(re.fullmatch(token_pattern, token) is None for token in tokens):
@@ -367,7 +389,7 @@ def _parse_link_dependency_rule(text, program):
     return target, tokens
 
 
-def _artifact_link_dependencies(path, program):
+def _artifact_link_dependencies(path, program, build_directory=None):
     """Separate historical object names from current persistent file proof.
 
     Compiler-created OpenMP image-wrapper objects normally disappear after
@@ -380,7 +402,8 @@ def _artifact_link_dependencies(path, program):
         raise ValueError("link dependency file must be a bounded regular non-symlink")
     identity, _ = _file_identity(path)
     text = _recorded_bytes(identity, 1024 * 1024)
-    target, tokens = _parse_link_dependency_rule(text, program)
+    target, tokens = _parse_link_dependency_rule(text, program, build_directory)
+    directory = program.parent if build_directory is None else build_directory
     paths, prerequisites = set(), []
     for token in tokens:
         if token.endswith(".o"):
@@ -389,12 +412,12 @@ def _artifact_link_dependencies(path, program):
             continue
         candidate = Path(token)
         if not candidate.is_absolute():
-            candidate = program.parent / candidate
+            candidate = directory / candidate
         actual, _ = _file_identity(candidate)
         paths.add(Path(actual["path"]))
         prerequisites.append(dict(actual, token=token, kind="persistent-input",
                                   current_file_verified=True))
-    return paths, dict(identity, target=target, build_directory=str(program.parent),
+    return paths, dict(identity, target=target, build_directory=str(directory),
                        raw_prerequisites=tokens, prerequisites=prerequisites,
                        scope="recorded linker prerequisites; object tokens are historical, not current file identities")
 
@@ -410,7 +433,14 @@ def _link_evidence(entry, metadata, selected, link_dependencies):
     # CMake's relative first target is the executable filename; absolute targets
     # must match the full immutable artifact path.
     program = _absolute(entry["executable_path"])
-    paths, evidence = _artifact_link_dependencies(Path(link_dependencies), program)
+    directory = None
+    if entry.get("compiler_language") == "fortran":
+        directory = program.parent.parent
+        expected = directory / "CMakeFiles" / (program.name + ".dir") / "link.d"
+        if (program.parent.name != entry["library"] or program.name != entry.get("target_name")
+                or Path(link_dependencies) != expected):
+            raise ValueError("Fortran link depfile working directory/target mismatch")
+    paths, evidence = _artifact_link_dependencies(Path(link_dependencies), program, directory)
     if any(Path(identity["path"]) not in paths for identity in linked):
         raise ValueError("configured input absent from actual link dependency file")
     return paths, evidence

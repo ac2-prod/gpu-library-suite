@@ -4,24 +4,24 @@
 
 Learn how to use GPU libraries in your application by comparing CPU, direct GPU-library calls, and directive-managed GPU data. The examples cover FFTs, matrix multiplication, sparse matrix-vector multiplication, linear solves, random generation, and reductions.
 
-The repository includes NVIDIA C/C++, NVIDIA Fortran, and AMD C/C++. Start with `examples/`: small programs showing input preparation, library calls, and result checking. Use the separate `benchmarks/` when you need controlled performance measurements.
+The repository includes NVIDIA C/C++, NVIDIA Fortran, AMD C/C++, and AMD Fortran. Start with `examples/`: small programs showing input preparation, library calls, and result checking. Use the separate `benchmarks/` when you need controlled performance measurements.
 
 <a id="start-here"></a>
 
 ## Choose your implementation
 
-Choose the column matching your GPU and language, then run one example. CPU-only examples need no GPU. General Linux usage does not require Pegasus or Sirius access. AMD Fortran is not implemented.
+Choose the column matching your GPU and language, then run one example. CPU-only examples need no GPU. General Linux usage does not require Pegasus or Sirius access. AMD Fortran has passed the recorded Sirius build and basic numerical smoke; production performance measurement is pending.
 
-| Operation | NVIDIA C/C++: CUDA / OpenACC | NVIDIA Fortran: CUDA Fortran / OpenACC | AMD C/C++: HIP / OpenMP target |
-| --- | --- | --- | --- |
-| FFT | [cufft](nvidia/c-cpp/cufft/README.md) | [cufft](nvidia/fortran/cufft/README.md) | [rocfft](amd/c-cpp/rocfft/README.md) |
-| BLAS | [cublas](nvidia/c-cpp/cublas/README.md) | [cublas](nvidia/fortran/cublas/README.md) | [rocblas](amd/c-cpp/rocblas/README.md) |
-| Sparse | [cusparse](nvidia/c-cpp/cusparse/README.md) | [cusparse](nvidia/fortran/cusparse/README.md) | [rocsparse](amd/c-cpp/rocsparse/README.md) |
-| Solver | [cusolver](nvidia/c-cpp/cusolver/README.md) | [cusolver](nvidia/fortran/cusolver/README.md) | [rocsolver](amd/c-cpp/rocsolver/README.md) |
-| RAND | [curand](nvidia/c-cpp/curand/README.md) | [curand](nvidia/fortran/curand/README.md) | [rocrand](amd/c-cpp/rocrand/README.md) |
-| Thrust | [thrust](nvidia/c-cpp/thrust/README.md) | [thrust](nvidia/fortran/thrust/README.md) | [rocthrust](amd/c-cpp/rocthrust/README.md) |
+| Operation | NVIDIA C/C++: CUDA / OpenACC | NVIDIA Fortran: CUDA Fortran / OpenACC | AMD C/C++: HIP / OpenMP target | AMD Fortran: HIP / OpenMP target |
+| --- | --- | --- | --- | --- |
+| FFT | [cufft](nvidia/c-cpp/cufft/README.md) | [cufft](nvidia/fortran/cufft/README.md) | [rocfft](amd/c-cpp/rocfft/README.md) | [rocfft](amd/fortran/rocfft/examples) |
+| BLAS | [cublas](nvidia/c-cpp/cublas/README.md) | [cublas](nvidia/fortran/cublas/README.md) | [rocblas](amd/c-cpp/rocblas/README.md) | [rocblas](amd/fortran/rocblas/examples) |
+| Sparse | [cusparse](nvidia/c-cpp/cusparse/README.md) | [cusparse](nvidia/fortran/cusparse/README.md) | [rocsparse](amd/c-cpp/rocsparse/README.md) | [rocsparse](amd/fortran/rocsparse/examples) |
+| Solver | [cusolver](nvidia/c-cpp/cusolver/README.md) | [cusolver](nvidia/fortran/cusolver/README.md) | [rocsolver](amd/c-cpp/rocsolver/README.md) | [rocsolver](amd/fortran/rocsolver/examples) |
+| RAND | [curand](nvidia/c-cpp/curand/README.md) | [curand](nvidia/fortran/curand/README.md) | [rocrand](amd/c-cpp/rocrand/README.md) | [rocrand](amd/fortran/rocrand/examples) |
+| Thrust | [thrust](nvidia/c-cpp/thrust/README.md) | [thrust](nvidia/fortran/thrust/README.md) | [rocthrust](amd/c-cpp/rocthrust/README.md) | [rocthrust](amd/fortran/rocthrust/examples) |
 
-The [build and run guide](docs/BUILDING.md) builds only your chosen teaching target. See the [Fortran guide](nvidia/fortran/README.md) for language-specific requirements.
+The [build and run guide](docs/BUILDING.md) builds only your chosen teaching target. See the [NVIDIA Fortran](nvidia/fortran/README.md) and [AMD Fortran](amd/fortran/README.md) guides for language-specific requirements.
 
 <a id="first-example"></a>
 

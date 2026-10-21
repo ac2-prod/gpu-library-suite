@@ -4,24 +4,24 @@
 
 GPUライブラリを自分のアプリケーションへ取り入れるための、CPU版・GPU直接呼び出し版・ディレクティブ版の比較サンプル集です。FFT、行列積、疎行列積、連立一次方程式、乱数生成、リダクションを扱います。
 
-NVIDIA C/C++・NVIDIA Fortran・AMD C/C++を収録しています。各`examples/`は入力生成からライブラリ呼び出し、結果確認までを読める教材です。性能を測りたい場合には、別の`benchmarks/`を使います。
+NVIDIA C/C++・NVIDIA Fortran・AMD C/C++・AMD Fortranを収録しています。各`examples/`は入力生成からライブラリ呼び出し、結果確認までを読める教材です。性能を測りたい場合には、別の`benchmarks/`を使います。
 
 <a id="start-here"></a>
 
 ## 使いたい実装を選ぶ
 
-必要なGPUとコンパイラがある列を選び、まず1つの演算を動かしてください。CPUサンプルだけならGPUは不要です。一般のLinux環境で利用でき、Pegasus／Siriusのアカウントは必要ありません。AMD Fortranは未実装です。
+必要なGPUとコンパイラがある列を選び、まず1つの演算を動かしてください。CPUサンプルだけならGPUは不要です。一般のLinux環境で利用でき、Pegasus／Siriusのアカウントは必要ありません。AMD FortranはSiriusでbuild・基本数値smokeを確認済みです。性能の本評価は未実施です。
 
-| 演算 | NVIDIA C/C++：CUDA・OpenACC | NVIDIA Fortran：CUDA Fortran・OpenACC | AMD C/C++：HIP・OpenMP target |
-| --- | --- | --- | --- |
-| FFT | [cufft](nvidia/c-cpp/cufft/README.ja.md) | [cufft](nvidia/fortran/cufft/README.ja.md) | [rocfft](amd/c-cpp/rocfft/README.ja.md) |
-| BLAS | [cublas](nvidia/c-cpp/cublas/README.ja.md) | [cublas](nvidia/fortran/cublas/README.ja.md) | [rocblas](amd/c-cpp/rocblas/README.ja.md) |
-| Sparse | [cusparse](nvidia/c-cpp/cusparse/README.ja.md) | [cusparse](nvidia/fortran/cusparse/README.ja.md) | [rocsparse](amd/c-cpp/rocsparse/README.ja.md) |
-| Solver | [cusolver](nvidia/c-cpp/cusolver/README.ja.md) | [cusolver](nvidia/fortran/cusolver/README.ja.md) | [rocsolver](amd/c-cpp/rocsolver/README.ja.md) |
-| RAND | [curand](nvidia/c-cpp/curand/README.ja.md) | [curand](nvidia/fortran/curand/README.ja.md) | [rocrand](amd/c-cpp/rocrand/README.ja.md) |
-| Thrust | [thrust](nvidia/c-cpp/thrust/README.ja.md) | [thrust](nvidia/fortran/thrust/README.ja.md) | [rocthrust](amd/c-cpp/rocthrust/README.ja.md) |
+| 演算 | NVIDIA C/C++：CUDA・OpenACC | NVIDIA Fortran：CUDA Fortran・OpenACC | AMD C/C++：HIP・OpenMP target | AMD Fortran: HIP / OpenMP target |
+| --- | --- | --- | --- | --- |
+| FFT | [cufft](nvidia/c-cpp/cufft/README.ja.md) | [cufft](nvidia/fortran/cufft/README.ja.md) | [rocfft](amd/c-cpp/rocfft/README.ja.md) | [rocfft](amd/fortran/rocfft/examples) |
+| BLAS | [cublas](nvidia/c-cpp/cublas/README.ja.md) | [cublas](nvidia/fortran/cublas/README.ja.md) | [rocblas](amd/c-cpp/rocblas/README.ja.md) | [rocblas](amd/fortran/rocblas/examples) |
+| Sparse | [cusparse](nvidia/c-cpp/cusparse/README.ja.md) | [cusparse](nvidia/fortran/cusparse/README.ja.md) | [rocsparse](amd/c-cpp/rocsparse/README.ja.md) | [rocsparse](amd/fortran/rocsparse/examples) |
+| Solver | [cusolver](nvidia/c-cpp/cusolver/README.ja.md) | [cusolver](nvidia/fortran/cusolver/README.ja.md) | [rocsolver](amd/c-cpp/rocsolver/README.ja.md) | [rocsolver](amd/fortran/rocsolver/examples) |
+| RAND | [curand](nvidia/c-cpp/curand/README.ja.md) | [curand](nvidia/fortran/curand/README.ja.md) | [rocrand](amd/c-cpp/rocrand/README.ja.md) | [rocrand](amd/fortran/rocrand/examples) |
+| Thrust | [thrust](nvidia/c-cpp/thrust/README.ja.md) | [thrust](nvidia/fortran/thrust/README.ja.md) | [rocthrust](amd/c-cpp/rocthrust/README.ja.md) | [rocthrust](amd/fortran/rocthrust/examples) |
 
-[共通のビルド・実行手順](docs/BUILDING.ja.md)では、選んだ教材だけを構築します。Fortran固有の条件は[Fortran案内](nvidia/fortran/README.ja.md)を参照してください。
+[共通のビルド・実行手順](docs/BUILDING.ja.md)では、選んだ教材だけを構築します。Fortran固有の条件は[NVIDIA版](nvidia/fortran/README.ja.md)と[AMD版](amd/fortran/README.ja.md)を参照してください。
 
 <a id="first-example"></a>
 
