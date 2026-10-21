@@ -176,7 +176,10 @@ foreach(_index RANGE 0 5)
       file(READ "${_wrapper}" _wrapper_source)
       string(APPEND _wrapper_source "\nint main() { return thrust_square_sum(nullptr,0)==0 ? 0 : 1; }\n")
       if(_impl EQUAL 2)
-        gpu_suite_check_cxx_link(_fortran_thrust_links SOURCE "${_wrapper_source}"
+        # CheckCXXSourceCompiles is a macro: preserve C++ backslash escapes
+        # through its additional argument expansion (including fprintf's \n).
+        string(REPLACE "\\" "\\\\" _wrapper_cxx_source "${_wrapper_source}")
+        gpu_suite_check_cxx_link(_fortran_thrust_links SOURCE "${_wrapper_cxx_source}"
           COMPILE_OPTIONS -cuda "-gpu=${GPU_SUITE_NVHPC_GPU_TARGET}" -acc
           LINK_OPTIONS -cuda "-gpu=${GPU_SUITE_NVHPC_GPU_TARGET}" -acc
           INCLUDES "${_fortran_thrust_include}" LIBRARIES CUDA::cudart)
