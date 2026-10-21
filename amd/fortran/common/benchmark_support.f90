@@ -4,6 +4,7 @@ module gpu_suite_fortran
     implicit none
     private
     public :: options, o, run_benchmark, require, check, checked_int, checked_product, nan_value
+    public :: start_timer, end_timer
     type :: options
         integer :: library, implementation, n, m, k, batch, nx, ny, nrhs
         integer :: warmup, repeat, trials, scope, device, threads
@@ -62,6 +63,10 @@ module gpu_suite_fortran
     abstract interface
         subroutine action()
         end subroutine
+        subroutine operation_action(repetitions, timed)
+            integer, intent(in) :: repetitions
+            logical, intent(in) :: timed
+        end subroutine
         subroutine download_action(end_to_end)
             logical, intent(in) :: end_to_end
         end subroutine
@@ -81,6 +86,7 @@ contains
         integer, intent(in) :: status
         character(*), intent(in) :: operation
         character(32) :: number
+        if (status == 0) return
         write(number,'(I0)') status
         call require(status == 0, operation//': status '//trim(number))
     end subroutine
@@ -136,7 +142,8 @@ contains
     subroutine run_benchmark(library, implementation, host_setup, reset, setup, restore, &
                              operation, synchronize, download, cleanup, verify, host_cleanup)
         integer, intent(in) :: library, implementation
-        procedure(action) :: host_setup, reset, setup, restore, operation, synchronize, cleanup, host_cleanup
+        procedure(action) :: host_setup, reset, setup, restore, synchronize, cleanup, host_cleanup
+        procedure(operation_action) :: operation
         procedure(download_action) :: download
         procedure(verification_action) :: verify
         integer :: warm, index, repetition, failures, info_getrf, info_getrs, status
@@ -144,24 +151,44 @@ contains
         call read_options(library,implementation)
         call host_setup()
         call reset()
-        if (o%scope == 0) call setup()
-        do warm = 1, o%warmup
-            call reset()
-            if (o%scope == 0) then
-                call restore()
-            else
+        if (o%scope == 0) then
+            call setup()
+            select case (library)
+            case (0,3) ! Destructive FFT/LU: restore before each warm-up operation.
+                do warm=1,o%warmup
+                    call reset()
+                    call restore()
+                    call operation(1,.false.)
+                    if (library == 3) call download(.false.)
+                end do
+            case (1,2) ! DGEMM/SpMV: complete the warm-up sequence once.
+                do warm=1,o%warmup
+                    ! The direct HIP DGEMM reference restores C on each warm-up.
+                    if (library == 1 .and. implementation == 1) call restore()
+                    call operation(1,.false.)
+                end do
+                call synchronize()
+            case (4,5) ! RNG advances its stream; reduction retains immutable input.
+                if (o%warmup > 0) call operation(o%warmup,.false.)
+                if (library == 4) call restore()
+            end select
+        else if (library == 1 .and. implementation == 0) then
+            ! C/C++ CPU DGEMM warms the same C repeatedly in both scopes;
+            ! canonical C is restored before each measured interval below.
+            if (o%warmup > 0) call operation(o%warmup,.false.)
+        else
+            do warm=1,o%warmup
+                call reset()
                 call setup()
-            end if
-            call operation()
-            call synchronize()
-            call download(o%scope /= 0)
-            if (o%scope /= 0) call cleanup()
-        end do
+                call operation(1,.false.)
+                call download(.true.)
+                call cleanup()
+            end do
+        end if
         failures=0
         do index = 0, o%trials-1
             call trial(index)
             if (o%scope == 0) then
-                call reset()
                 if (library == 0) then
                     ! rocFFT may overwrite out-of-place input. Restoration is
                     ! outside each timed transform, matching AMD C/C++ timing.
@@ -169,31 +196,24 @@ contains
                         call reset()
                         call restore()
                         call synchronize()
-                        call start_timer()
-                        call operation()
-                        call synchronize()
-                        call end_timer()
+                        call operation(1,.true.)
                     end do
                 else
+                    call reset()
                     call restore()
                     call synchronize()
-                    call start_timer()
-                    do repetition=1,o%repeat
-                        call operation()
-                    end do
-                    call synchronize()
-                    call end_timer()
+                    ! The workload owns the repeated sequence and its timer so
+                    ! device-address regions can match the C/C++ boundaries.
+                    call operation(o%repeat,.true.)
                 end if
                 call download(.false.)
             else
                 do repetition=1,o%repeat
                     ! Host allocation/input restoration are outside every one-shot interval.
                     call reset()
-                    call synchronize()
                     call start_timer()
                     call setup()
-                    call operation()
-                    call synchronize()
+                    call operation(1,.false.)
                     call download(.true.)
                     call end_timer()
                     call cleanup()

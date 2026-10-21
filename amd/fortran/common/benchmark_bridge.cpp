@@ -34,6 +34,7 @@ char library_version[256]{};
 timespec start_time{}, end_time{};
 double elapsed = 0;
 int current_trial = 0;
+int completed_segments = 0, expected_segments = 1;
 bool opened = false, row_live = false;
 void check(int status) {
   if (status != GPU_SUITE_OK) {
@@ -228,21 +229,31 @@ extern "C" double gpu_suite_f_real(int key) {
 }
 extern "C" void gpu_suite_f_trial(int trial) {
   current_trial = trial; elapsed = 0; start_stamp[0]=0; end_stamp[0]=0;
+  completed_segments = 0;
+  expected_segments = options.scope == GPU_SUITE_SCOPE_END_TO_END ||
+                      options.benchmark == GPU_SUITE_BENCHMARK_ROCFFT ? options.repeat : 1;
   initialize_row(trial);
 #ifdef GPU_SUITE_HAVE_HIP_RUNTIME_METADATA
   if (!gpu_suite::apply_hip_runtime_metadata(row, options.device)) gpu_suite_f_fail("HIP metadata probe failed");
 #endif
 }
 extern "C" void gpu_suite_f_start() {
-  char stamp[GPU_SUITE_TIMESTAMP_CAPACITY];
-  check(gpu_suite_measurement_start(stamp, &start_time, error, sizeof error));
-  if (!start_stamp[0]) std::strcpy(start_stamp, stamp);
+  // Like the C/C++ loops, collect UTC only at the first/last segment;
+  // intermediate FFT or end-to-end repeats use the monotonic clock alone.
+  check(completed_segments == 0
+        ? gpu_suite_measurement_start(start_stamp, &start_time, error, sizeof error)
+        : gpu_suite_clock_now(&start_time, error, sizeof error));
 }
 extern "C" void gpu_suite_f_end() {
-  check(gpu_suite_measurement_end(&end_time, end_stamp, error, sizeof error));
+  check(completed_segments + 1 == expected_segments
+        ? gpu_suite_measurement_end(&end_time, end_stamp, error, sizeof error)
+        : gpu_suite_clock_now(&end_time, error, sizeof error));
   elapsed += gpu_suite_clock_elapsed(&start_time, &end_time);
+  ++completed_segments;
 }
 extern "C" int gpu_suite_f_finish(const double *values, double scale, int getrf, int getrs) {
+  if (completed_segments != expected_segments)
+    gpu_suite_f_fail("incomplete timing segments");
   bool passed = true;
   bool finite = true;
   if (options.verify) {

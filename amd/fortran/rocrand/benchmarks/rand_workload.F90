@@ -69,6 +69,7 @@ contains
 #endif
         allocate(rand_out(count),stat=status)
         call check(status,'host allocation')
+        rand_out=0
 #if GPU_SUITE_IMPL == 0
         call require(o%seed <= int(huge(0),c_int64_t),'Fortran seed exceeds default integer')
         call random_seed(size=seed_size)
@@ -80,7 +81,7 @@ contains
 #endif
     end subroutine
     subroutine reset()
-        rand_out=0
+        ! Generation overwrites all output; only generator state is restored.
     end subroutine
     subroutine setup()
 #if GPU_SUITE_IMPL != 0
@@ -117,36 +118,42 @@ contains
         call check(hipDeviceSynchronize(),'synchronize initialized generator')
 #endif
     end subroutine
-    subroutine operation()
-#if GPU_SUITE_IMPL == 0
-        call random_number(rand_out)
-#elif GPU_SUITE_IMPL == 1
-        call check(rocrand_generate_uniform_double(gen,d_rand,int(o%n,c_size_t)), &
-                   'rocrand_generate_uniform_double')
-#else
+    subroutine operation(repetitions,timed)
+        integer, intent(in) :: repetitions
+        logical, intent(in) :: timed
+        integer :: repetition
+        if (timed) call start_timer()
+#if GPU_SUITE_IMPL == 2
+        ! C/C++ times one address region around the whole generation sequence.
         !$omp target data use_device_addr(rand_out)
         d_rand=c_loc(rand_out(1))
+#endif
+        do repetition=1,repetitions
+#if GPU_SUITE_IMPL == 0
+        call random_number(rand_out)
+#else
         call check(rocrand_generate_uniform_double(gen,d_rand,int(o%n,c_size_t)), &
                    'rocrand_generate_uniform_double')
+#endif
+        end do
+#if GPU_SUITE_IMPL == 2
         !$omp end target data
 #endif
+#if GPU_SUITE_IMPL != 0
+        call check(hipDeviceSynchronize(),'generation completion')
+#endif
+        if (timed) call end_timer()
     end subroutine
     subroutine synchronize()
-#if GPU_SUITE_IMPL != 0
-        call check(hipDeviceSynchronize(),'hipDeviceSynchronize')
-#endif
+        ! restore() already completes generator initialization before timing.
     end subroutine
     subroutine download(end_to_end)
         logical, intent(in) :: end_to_end
 #if GPU_SUITE_IMPL == 1
         call check(hipMemcpy(c_loc(rand_out(1)),d_rand,bytes,hipMemcpyDeviceToHost),'copy random output')
 #elif GPU_SUITE_IMPL == 2
-        if (end_to_end) then
-            !$omp target exit data map(from:rand_out)
-            data_present=.false.
-        else
-            !$omp target update from(rand_out)
-        end if
+        ! Like C/C++, retrieve inside E2E, release in untimed cleanup.
+        !$omp target update from(rand_out)
 #endif
     end subroutine
     subroutine cleanup()

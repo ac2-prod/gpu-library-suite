@@ -67,9 +67,10 @@ contains
         call make_poisson2d_csr(o%nx,o%ny,nrow,ncol,nnz,row_offsets,col_indices,values)
         allocate(vec_x(ncol),vec_y(nrow),stat=status)
         call check(status,'host allocation')
+        vec_x=1
     end subroutine
     subroutine reset()
-        vec_x=1; vec_y=1
+        vec_y=1
     end subroutine
     subroutine setup()
 #if GPU_SUITE_IMPL == 0
@@ -79,7 +80,7 @@ contains
         call check(aoclsparse_set_mat_diag_type(descr,aoclsparse_diag_type_non_unit),'AOCL diagonal type')
         call check(aoclsparse_create_dcsr(mat_A,aoclsparse_index_base_zero,nrow,ncol,nnz, &
                    row_offsets,col_indices,values),'aoclsparse_create_dcsr')
-        call check(aoclsparse_set_mv_hint(mat_A,aoclsparse_operation_none,descr,int(o%repeat,c_int)), &
+        call check(aoclsparse_set_mv_hint(mat_A,aoclsparse_operation_none,descr,1_c_int), &
                    'aoclsparse_set_mv_hint')
         call check(aoclsparse_optimize(mat_A),'aoclsparse_optimize')
 #else
@@ -95,8 +96,11 @@ contains
                    hipMemcpyHostToDevice),'copy CSR columns')
         call check(hipMemcpy(d_values,c_loc(values(1)),size(values,kind=c_size_t)*c_sizeof(values(1)), &
                    hipMemcpyHostToDevice),'copy CSR values')
+        call check(hipMemcpy(d_x,c_loc(vec_x(1)),size(vec_x,kind=c_size_t)*c_sizeof(vec_x(1)), &
+                   hipMemcpyHostToDevice),'copy x')
         call restore()
 #else
+        call check(rocsparse_create_handle(handle),'rocsparse_create_handle')
         !$omp target enter data map(to:row_offsets,col_indices,values,vec_x,vec_y)
         data_present=.true.
         !$omp target data use_device_addr(row_offsets,col_indices,values,vec_x,vec_y)
@@ -109,7 +113,9 @@ contains
         call check(gpu_suite_f_check_mapped_device(d_x,int(o%device,c_int)),'x device mapping')
         call check(gpu_suite_f_check_mapped_device(d_y,int(o%device,c_int)),'y device mapping')
 #endif
+#if GPU_SUITE_IMPL == 1
         call check(rocsparse_create_handle(handle),'rocsparse_create_handle')
+#endif
         call check(rocsparse_create_csr_descr(mat_A,int(nrow,c_int64_t),int(ncol,c_int64_t),int(nnz,c_int64_t), &
                    d_row,d_col,d_values,rocsparse_indextype_i32,rocsparse_indextype_i32, &
                    rocsparse_index_base_zero,rocsparse_datatype_f64_r),'rocsparse_create_csr_descr')
@@ -133,7 +139,6 @@ contains
         if (buffer_size>0) call check(hipMalloc(workspace,buffer_size),'allocate analysis workspace')
         call check(rocsparse_v2_spmv(handle,spmv,c_loc(alpha),mat_A,x_descr,c_loc(beta),y_descr, &
                    rocsparse_v2_spmv_stage_analysis,buffer_size,workspace,c_null_ptr),'SpMV analysis')
-        call check(hipDeviceSynchronize(),'synchronize SpMV analysis')
         if (c_associated(workspace)) call check(hipFree(workspace),'free analysis workspace')
         workspace=c_null_ptr
         call check(rocsparse_v2_spmv_buffer_size(handle,spmv,mat_A,x_descr,y_descr, &
@@ -144,15 +149,18 @@ contains
     end subroutine
     subroutine restore()
 #if GPU_SUITE_IMPL == 1
-        call check(hipMemcpy(d_x,c_loc(vec_x(1)),size(vec_x,kind=c_size_t)*c_sizeof(vec_x(1)), &
-                   hipMemcpyHostToDevice),'restore x')
         call check(hipMemcpy(d_y,c_loc(vec_y(1)),size(vec_y,kind=c_size_t)*c_sizeof(vec_y(1)), &
                    hipMemcpyHostToDevice),'restore initial y')
 #elif GPU_SUITE_IMPL == 2
-        !$omp target update to(vec_x,vec_y)
+        !$omp target update to(vec_y)
 #endif
     end subroutine
-    subroutine operation()
+    subroutine operation(repetitions,timed)
+        integer, intent(in) :: repetitions
+        logical, intent(in) :: timed
+        integer :: repetition
+        if (timed) call start_timer()
+        do repetition=1,repetitions
 #if GPU_SUITE_IMPL == 0
         call check(aoclsparse_dmv(aoclsparse_operation_none,alpha,mat_A,descr,vec_x,beta,vec_y),'aoclsparse_dmv')
 #else
@@ -160,6 +168,9 @@ contains
         call check(rocsparse_v2_spmv(handle,spmv,c_loc(alpha),mat_A,x_descr,c_loc(beta),y_descr, &
                    rocsparse_v2_spmv_stage_compute,buffer_size,workspace,c_null_ptr),'SpMV compute')
 #endif
+        end do
+        if (timed .or. o%scope /= 0) call synchronize()
+        if (timed) call end_timer()
     end subroutine
     subroutine synchronize()
 #if GPU_SUITE_IMPL != 0
@@ -172,9 +183,15 @@ contains
         call check(hipMemcpy(c_loc(vec_y(1)),d_y,size(vec_y,kind=c_size_t)*c_sizeof(vec_y(1)), &
                    hipMemcpyDeviceToHost),'copy y result')
 #elif GPU_SUITE_IMPL == 2
-        !$omp target update from(vec_y)
+        if (end_to_end) then
+            ! Match C/C++ structured target-data exit before the end timestamp.
+            !$omp target exit data map(from:vec_y) map(delete:row_offsets,col_indices,values,vec_x)
+            data_present=.false.
+        else
+            !$omp target update from(vec_y)
+            call check(hipDeviceSynchronize(),'OpenMP result completion')
+        end if
 #endif
-        ! Mapping release belongs to cleanup, after descriptor destruction.
     end subroutine
     subroutine cleanup()
 #if GPU_SUITE_IMPL == 0

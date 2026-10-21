@@ -3,7 +3,7 @@ module gpu_suite_workload
     use iso_c_binding
     use ieee_arithmetic
 #if GPU_SUITE_IMPL != 0
-    use hipfort, only: hipSetDevice,hipMalloc,hipFree,hipMemcpy,hipDeviceSynchronize, &
+    use hipfort, only: hipSetDevice,hipMalloc,hipFree,hipMemcpy,hipMemset,hipDeviceSynchronize, &
                        hipMemcpyHostToDevice,hipMemcpyDeviceToHost
     use hipfort_rocblas, only: rocblas_create_handle,rocblas_destroy_handle,rocblas_operation_none
     use hipfort_rocblas, only: rocblas_start_device_memory_size_query,rocblas_stop_device_memory_size_query, &
@@ -82,7 +82,7 @@ contains
     end subroutine
     subroutine reset()
         call make_dense_system(o%n,o%nrhs,mat_A,rhs_B)
-        ipiv=0; info_getrf=-1; info_getrs=-1
+        ipiv=0; info_getrf=0; info_getrs=-1
     end subroutine
     subroutine setup()
 #if GPU_SUITE_IMPL != 0
@@ -108,9 +108,8 @@ contains
         call check(hipMalloc(d_B,size(rhs_B,kind=c_size_t)*c_sizeof(0.0_c_double)),'allocate B')
         call check(hipMalloc(d_ipiv,int(o%n,c_size_t)*c_sizeof(info_getrf)),'allocate pivots')
         call check(hipMalloc(d_info,c_sizeof(info_getrf)),'allocate info')
-        call restore()
 #elif GPU_SUITE_IMPL == 2
-        !$omp target enter data map(to: mat_A,rhs_B,ipiv,info_getrf)
+        !$omp target enter data map(alloc: mat_A,rhs_B,ipiv,info_getrf)
         data_present=.true.
         !$omp target data use_device_addr(mat_A,rhs_B,ipiv,info_getrf)
         call check(check_mapped_device(c_loc(mat_A),int(o%device,c_int)),'mapped mat_A device')
@@ -119,6 +118,8 @@ contains
         call check(check_mapped_device(c_loc(info_getrf),int(o%device,c_int)),'mapped info_getrf device')
         !$omp end target data
 #endif
+        ! C/C++ allocates first, then transfers/restores within E2E only.
+        if (o%scope /= 0) call restore()
     end subroutine
 #if GPU_SUITE_IMPL != 0
     logical function query_ok(status)
@@ -133,46 +134,57 @@ contains
                              hipMemcpyHostToDevice),'restore A')
         call check(hipMemcpy(d_B,c_loc(rhs_B),size(rhs_B,kind=c_size_t)*c_sizeof(0.0_c_double), &
                              hipMemcpyHostToDevice),'restore B')
-        call check(hipMemcpy(d_ipiv,c_loc(ipiv),int(o%n,c_size_t)*c_sizeof(info_getrf), &
-                             hipMemcpyHostToDevice),'restore pivots')
-        call check(hipMemcpy(d_info,c_loc(info_getrf),c_sizeof(info_getrf),hipMemcpyHostToDevice),'restore info')
+        call check(hipMemset(d_ipiv,0_c_int,int(o%n,c_size_t)*c_sizeof(info_getrf)),'restore pivots')
+        call check(hipMemset(d_info,0_c_int,c_sizeof(info_getrf)),'restore info')
 #elif GPU_SUITE_IMPL == 2
         !$omp target update to(mat_A,rhs_B,ipiv,info_getrf)
 #endif
+#if GPU_SUITE_IMPL != 0
+        call check(hipDeviceSynchronize(),'restoration completion')
+#endif
     end subroutine
-    subroutine operation()
+    subroutine operation(repetitions,timed)
+        integer, intent(in) :: repetitions
+        logical, intent(in) :: timed
+#if GPU_SUITE_IMPL != 0
+        integer(c_int), target :: host_info
+#endif
+        call require(repetitions == 1,'solver benchmark requires repeat=1')
+        if (timed) call start_timer()
 #if GPU_SUITE_IMPL == 0
         ! The benchmark uses staged getrf/getrs; the teaching CPU example uses DGESV.
         call dgetrf(o%n,o%n,mat_A,o%n,ipiv,info_getrf)
         if (info_getrf == 0) call dgetrs('N',o%n,o%nrhs,mat_A,o%n,ipiv,rhs_B,o%n,info_getrs)
 #elif GPU_SUITE_IMPL == 1
-        call check(rocsolver_dgetrf(handle,o%n,o%n,d_A,o%n,d_ipiv,d_info),'rocsolver_dgetrf')
-        call check(hipDeviceSynchronize(),'getrf completion')
-        call check(hipMemcpy(c_loc(info_getrf),d_info,c_sizeof(info_getrf),hipMemcpyDeviceToHost),'getrf info')
-        if (info_getrf == 0) then
-            call check(rocsolver_dgetrs(handle,rocblas_operation_none,o%n,o%nrhs,d_A,o%n,d_ipiv,d_B,o%n), &
-                       'rocsolver_dgetrs')
-            call check(hipDeviceSynchronize(),'getrs completion')
-            info_getrs=0
-        end if
+        call solve_device(d_A,d_B,d_ipiv,d_info,host_info)
 #else
-        !$omp target data use_device_addr(mat_A,ipiv,info_getrf)
-        call check(rocsolver_dgetrf(handle,o%n,o%n,c_loc(mat_A),o%n,c_loc(ipiv),c_loc(info_getrf)),'rocsolver_dgetrf')
+        ! One address region spans getrf, HIP info copy, getrs and completion,
+        ! exactly as in the C/C++ Context::solve()/solve_device() sequence.
+        !$omp target data use_device_addr(mat_A,rhs_B,ipiv,info_getrf)
+        call solve_device(c_loc(mat_A),c_loc(rhs_B),c_loc(ipiv),c_loc(info_getrf),host_info)
         !$omp end target data
+#endif
+#if GPU_SUITE_IMPL != 0
+        info_getrf=host_info
+#endif
+        if (timed) call end_timer()
+    end subroutine
+#if GPU_SUITE_IMPL != 0
+    subroutine solve_device(a,b,p,info,host_info)
+        type(c_ptr), intent(in) :: a,b,p,info
+        integer(c_int), target, intent(out) :: host_info
+        call check(rocsolver_dgetrf(handle,o%n,o%n,a,o%n,p,info),'rocsolver_dgetrf')
         call check(hipDeviceSynchronize(),'getrf completion')
-        !$omp target update from(info_getrf)
-        if (info_getrf == 0) then
-            !$omp target data use_device_addr(mat_A,rhs_B,ipiv)
-            call check(rocsolver_dgetrs(handle,rocblas_operation_none,o%n,o%nrhs,c_loc(mat_A),o%n, &
-                                        c_loc(ipiv),c_loc(rhs_B),o%n),'rocsolver_dgetrs')
-            !$omp end target data
+        call check(hipMemcpy(c_loc(host_info),info,c_sizeof(host_info),hipMemcpyDeviceToHost),'getrf info')
+        if (host_info == 0) then
+            call check(rocsolver_dgetrs(handle,rocblas_operation_none,o%n,o%nrhs,a,o%n,p,b,o%n),'rocsolver_dgetrs')
             call check(hipDeviceSynchronize(),'getrs completion')
             info_getrs=0
         end if
-#endif
         ! getrs has no device info output. Synthetic zero requires API success AND
         ! completed work, never merely submitting the solve or skipping it.
     end subroutine
+#endif
     subroutine synchronize()
         ! Restores use blocking HIP copies / OpenMP updates. operation() already
         ! waits for getrf and getrs so info is valid; avoid a third timed barrier.

@@ -75,8 +75,14 @@ contains
         !$omp end target
         call require(.not. on_host,'OpenMP host fallback rejected')
 #endif
+        fft_in=cmplx(1,0,kind=c_float); fft_out=cmplx(0,0,kind=c_float)
     end subroutine
     subroutine reset()
+#if GPU_SUITE_IMPL == 1
+        ! The direct HIP reference retains its immutable host input; restore()
+        ! copies it and clears device output before each library segment.
+        if (o%scope == 0) return
+#endif
         fft_in=cmplx(1,0,kind=c_float); fft_out=cmplx(0,0,kind=c_float)
     end subroutine
     subroutine setup()
@@ -101,14 +107,10 @@ contains
 #if GPU_SUITE_IMPL == 1
         call check(hipMalloc(d_in,bytes),'hipMalloc input')
         call check(hipMalloc(d_out,bytes),'hipMalloc output')
-        call restore()
+        if (o%scope /= 0) call restore()
 #else
         !$omp target enter data map(to:fft_in) map(alloc:fft_out)
         data_present=.true.
-        !$omp target data use_device_addr(fft_in,fft_out)
-        call check(check_mapped_device(c_loc(fft_in(1)),int(o%device,c_int)),'mapped FFT input device')
-        call check(check_mapped_device(c_loc(fft_out(1)),int(o%device,c_int)),'mapped FFT output device')
-        !$omp end target data
 #endif
 #endif
     end subroutine
@@ -122,15 +124,28 @@ contains
         !$omp target update to(fft_in,fft_out)
 #endif
     end subroutine
-    subroutine operation()
-#if GPU_SUITE_IMPL == 0
-        call fftwf_execute_dft(plan,fft_in,fft_out)
-#elif GPU_SUITE_IMPL == 1
-        call check(rocfft_execute(plan,d_in,d_out,info),'rocfft_execute')
-#else
+    subroutine operation(repetitions,timed)
+        integer, intent(in) :: repetitions
+        logical, intent(in) :: timed
+        call require(repetitions == 1,'FFT requires separately restored/timed transforms')
+#if GPU_SUITE_IMPL == 2
+        ! C/C++ enters and validates use_device_ptr before each library timer,
+        ! and leaves it after the timer. E2E already has an outer timer.
         !$omp target data use_device_addr(fft_in,fft_out)
         d_in=c_loc(fft_in(1)); d_out=c_loc(fft_out(1))
+        call check(check_mapped_device(d_in,int(o%device,c_int)),'mapped FFT input device')
+        call check(check_mapped_device(d_out,int(o%device,c_int)),'mapped FFT output device')
+#endif
+        if (timed) call start_timer()
+#if GPU_SUITE_IMPL == 0
+        ! Retain the established array-explicit FFTW Fortran binding.
+        call fftwf_execute_dft(plan,fft_in,fft_out)
+#else
         call check(rocfft_execute(plan,d_in,d_out,info),'rocfft_execute')
+        call synchronize()
+#endif
+        if (timed) call end_timer()
+#if GPU_SUITE_IMPL == 2
         !$omp end target data
 #endif
     end subroutine

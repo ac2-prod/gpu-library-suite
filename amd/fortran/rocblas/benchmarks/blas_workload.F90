@@ -53,53 +53,67 @@ contains
 #endif
         allocate(mat_A(o%m,o%k),mat_B(o%k,o%n),mat_C(o%m,o%n),stat=status)
         call check(status,'host allocation')
+        mat_A=1; mat_B=1
     end subroutine
     subroutine reset()
-        mat_A=1; mat_B=1; mat_C=1
+        mat_C=1
     end subroutine
     subroutine setup()
 #if GPU_SUITE_IMPL == 1
         call check(hipMalloc(d_A,size(mat_A,kind=c_size_t)*c_sizeof(0.0_c_double)),'allocate A')
         call check(hipMalloc(d_B,size(mat_B,kind=c_size_t)*c_sizeof(0.0_c_double)),'allocate B')
         call check(hipMalloc(d_C,size(mat_C,kind=c_size_t)*c_sizeof(0.0_c_double)),'allocate C')
-        call restore()
+        call check(hipMemcpy(d_A,c_loc(mat_A),size(mat_A,kind=c_size_t)*c_sizeof(0.0_c_double), &
+                             hipMemcpyHostToDevice),'copy A')
+        call check(hipMemcpy(d_B,c_loc(mat_B),size(mat_B,kind=c_size_t)*c_sizeof(0.0_c_double), &
+                             hipMemcpyHostToDevice),'copy B')
+        if (o%scope /= 0) call restore()
 #elif GPU_SUITE_IMPL == 2
+        call check(rocblas_create_handle(handle),'rocblas_create_handle')
         !$omp target enter data map(to: mat_A,mat_B,mat_C)
         data_present=.true.
-        !$omp target data use_device_addr(mat_A,mat_B,mat_C)
-        call check(check_mapped_device(c_loc(mat_A),int(o%device,c_int)),'mapped mat_A device')
-        call check(check_mapped_device(c_loc(mat_B),int(o%device,c_int)),'mapped mat_B device')
-        call check(check_mapped_device(c_loc(mat_C),int(o%device,c_int)),'mapped mat_C device')
-        !$omp end target data
 #endif
-#if GPU_SUITE_IMPL != 0
+#if GPU_SUITE_IMPL == 1
         call check(rocblas_create_handle(handle),'rocblas_create_handle')
 #endif
     end subroutine
     subroutine restore()
 #if GPU_SUITE_IMPL == 1
-        call check(hipMemcpy(d_A,c_loc(mat_A),size(mat_A,kind=c_size_t)*c_sizeof(0.0_c_double), &
-                             hipMemcpyHostToDevice),'restore A')
-        call check(hipMemcpy(d_B,c_loc(mat_B),size(mat_B,kind=c_size_t)*c_sizeof(0.0_c_double), &
-                             hipMemcpyHostToDevice),'restore B')
         call check(hipMemcpy(d_C,c_loc(mat_C),size(mat_C,kind=c_size_t)*c_sizeof(0.0_c_double), &
                              hipMemcpyHostToDevice),'restore C')
 #elif GPU_SUITE_IMPL == 2
-        !$omp target update to(mat_A,mat_B,mat_C)
+        !$omp target update to(mat_C)
 #endif
     end subroutine
-    subroutine operation()
+    subroutine operation(repetitions,timed)
+        integer, intent(in) :: repetitions
+        logical, intent(in) :: timed
+        integer :: repetition
+#if GPU_SUITE_IMPL == 2
+        ! One address region for the complete sequence, matching C/C++.
+        !$omp target data use_device_addr(mat_A,mat_B,mat_C)
+        call check(check_mapped_device(c_loc(mat_A),int(o%device,c_int)),'mapped mat_A device')
+        call check(check_mapped_device(c_loc(mat_B),int(o%device,c_int)),'mapped mat_B device')
+        call check(check_mapped_device(c_loc(mat_C),int(o%device,c_int)),'mapped mat_C device')
+#endif
+        if (timed) call start_timer()
+        do repetition=1,repetitions
 #if GPU_SUITE_IMPL == 0
         call dgemm('N','N',o%m,o%n,o%k,o%alpha,mat_A,o%m,mat_B,o%k,o%beta,mat_C,o%m)
 #elif GPU_SUITE_IMPL == 1
         call check(rocblas_dgemm(handle,rocblas_operation_none,rocblas_operation_none,o%m,o%n,o%k, &
                                 o%alpha,d_A,o%m,d_B,o%k,o%beta,d_C,o%m),'rocblas_dgemm')
 #else
-        !$omp target data use_device_addr(mat_A,mat_B,mat_C)
         call check(rocblas_dgemm(handle,rocblas_operation_none,rocblas_operation_none,o%m,o%n,o%k, &
                                 o%alpha,c_loc(mat_A),o%m,c_loc(mat_B),o%k,o%beta,c_loc(mat_C),o%m),'rocblas_dgemm')
+#endif
+        end do
+#if GPU_SUITE_IMPL == 2
         !$omp end target data
 #endif
+        ! Library warm-up submissions are completed once by the driver.
+        if (timed .or. o%scope /= 0) call synchronize()
+        if (timed) call end_timer()
     end subroutine
     subroutine synchronize()
 #if GPU_SUITE_IMPL != 0
@@ -118,6 +132,7 @@ contains
             data_present=.false.
         else
             !$omp target update from(mat_C)
+            call check(hipDeviceSynchronize(),'OpenMP result completion')
         end if
 #endif
     end subroutine

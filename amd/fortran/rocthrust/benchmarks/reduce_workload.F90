@@ -3,7 +3,7 @@ module gpu_suite_workload
     use iso_c_binding
     use ieee_arithmetic
 #if GPU_SUITE_IMPL != 0
-    use hipfort, only: hipMalloc,hipFree,hipMemcpy,hipSetDevice,hipDeviceSynchronize,hipMemcpyHostToDevice
+    use hipfort, only: hipMalloc,hipFree,hipMemcpy,hipSetDevice,hipMemcpyHostToDevice
 #endif
 #if GPU_SUITE_IMPL == 2
     use omp_lib
@@ -54,14 +54,16 @@ contains
 #endif
         allocate(values(o%n),stat=status)
         call check(status,'host allocation')
+        values=1
     end subroutine
     subroutine reset()
-        values=1; result=0
+        result=0
     end subroutine
     subroutine setup()
 #if GPU_SUITE_IMPL == 1
         call check(hipMalloc(d_values,size(values,kind=c_size_t)*c_sizeof(values(1))),'allocate values')
-        call restore()
+        call check(hipMemcpy(d_values,c_loc(values(1)),size(values,kind=c_size_t)*c_sizeof(values(1)), &
+                   hipMemcpyHostToDevice),'copy values')
 #elif GPU_SUITE_IMPL == 2
         !$omp target enter data map(to:values)
         data_present=.true.
@@ -71,14 +73,14 @@ contains
 #endif
     end subroutine
     subroutine restore()
-#if GPU_SUITE_IMPL == 1
-        call check(hipMemcpy(d_values,c_loc(values(1)),size(values,kind=c_size_t)*c_sizeof(values(1)), &
-                   hipMemcpyHostToDevice),'copy values')
-#elif GPU_SUITE_IMPL == 2
-        !$omp target update to(values)
-#endif
+        ! Immutable input survives warm-up and trials, as in C/C++.
     end subroutine
-    subroutine operation()
+    subroutine operation(repetitions,timed)
+        integer, intent(in) :: repetitions
+        logical, intent(in) :: timed
+        integer :: repetition
+        if (timed) call start_timer()
+        do repetition=1,repetitions
 #if GPU_SUITE_IMPL == 0
         result=sum(values*values)
 #elif GPU_SUITE_IMPL == 1
@@ -88,12 +90,13 @@ contains
         call check(rocthrust_square_sum(c_loc(values(1)),int(o%n,c_size_t),result),'rocThrust transform_reduce')
         !$omp end target data
 #endif
-        ! transform_reduce synchronously returns a host scalar; no extra per-repeat sync.
+        end do
+        ! The synchronous host scalar is the completion boundary, including
+        ! the last repeat. AMD C/C++ adds no hipDeviceSynchronize here.
+        if (timed) call end_timer()
     end subroutine
     subroutine synchronize()
-#if GPU_SUITE_IMPL != 0
-        call check(hipDeviceSynchronize(),'hipDeviceSynchronize')
-#endif
+        ! transform_reduce already completed and returned the host scalar.
     end subroutine
     subroutine download(end_to_end)
         logical, intent(in) :: end_to_end

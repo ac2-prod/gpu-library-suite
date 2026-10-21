@@ -1225,11 +1225,39 @@ as required by the AMD rocFFT contract above. rocFFT may overwrite out-of-place
 input; warm-up and trial restoration obey the same rule. Plan/workspace and
 array lifetimes follow the existing selected scope. End-to-end restores host
 input outside each one-shot interval, times setup/copy/library/completion/result
-retrieval, and performs explicit cleanup afterward. OpenMP mapping entry and
-result-copyback/release remain inside that scope. rocRAND resets seed/offset/
+retrieval, and performs explicit cleanup afterward. Each AMD Fortran workload
+matches its C/C++ counterpart's timer placement, completion barriers and repeat
+sequence; OpenMP data release follows the per-library boundary below rather
+than a blanket rule for all six libraries. rocRAND resets seed/offset/
 ordering after warm-up and before each trial, explicitly initializes its GPU
 generator before library timing, and advances the stream within a repeated
 library interval. Solver repeat remains one.
+
+| Workload | Library interval and completion | OpenMP end-to-end result retrieval / mapping release |
+| --- | --- | --- |
+| rocFFT | Restore before every separately timed FFT; enter and validate the device-address region before the timer, then time FFT and completion and end the timer before leaving that region. | Copy output and release array mappings before the end timestamp. Plan/info/workspace destruction is afterward. |
+| rocBLAS | One device-address region encloses the complete DGEMM repeat sequence. Address lookup/validation precedes the timer; region exit and one completion barrier precede the end timestamp. | Copy C and release array mappings before the end timestamp; destroy the handle afterward. |
+| rocSPARSE | Reuse CSR/vector/SpMV descriptors and analysis/workspace; time successive updates and one final completion barrier. No extra analysis barrier beyond the C/C++ setup sequence. AOCL's optimization hint is fixed at one, as in C/C++. | Copy y and release array mappings before the end timestamp; destroy descriptors/handle/workspace afterward. |
+| rocSOLVER | Time getrf, completion, the HIP copy of factorization info, getrs and completion inside one device-address region. Both scopes keep `repeat=1`. Restoration completes before library timing and inside end-to-end setup. | Copy the solution before the end timestamp; release mappings and workspace/handle afterward. |
+| rocRAND | Time one device-address region around all generations, then one completion barrier. Seed/offset/ordering reset and generator initialization precede library timing. | Copy output before the end timestamp; release mapping and generator afterward. |
+| rocThrust | Time successive synchronous scalar-returning reductions, with no additional HIP device synchronization. Retain immutable input across warm-up and trials. | Scalar retrieval is part of the reduction; release input mapping afterward. |
+
+The address-region clauses apply to OpenMP, not CPU or direct HIP. HIP uses the
+same operation/completion boundaries and explicit-copy directions as C/C++.
+Warm-up follows the corresponding C/C++ scope: destructive FFT/LU inputs are
+restored for each operation; DGEMM/SpMV complete their warm-up sequence once;
+RAND advances and then resets its stream. Host allocation/input generation and
+verification remain untimed. Intermediate FFT/end-to-end segments read only
+the monotonic clock; UTC timestamps bracket the first/last segment. Sum the
+segments and divide once by `repeat`.
+
+The earlier AMD Fortran results predate this alignment and remain historical,
+provisional measurements; their source/binary identities must not be relabelled
+or mixed with rebuilt, aligned measurements. Real build/smoke and remeasurement
+of the changed benchmark binaries are required before replacing those results.
+This timing alignment does not equate CPU RNG algorithms or remove native
+BLAS/LAPACK binding and compiler differences. It does not change NVIDIA sources
+or the retained rocFFT-versus-cuFFT timing exception.
 
 CPU FFTW thread modes and explicit LP64 BLAS/LAPACK provider selection remain
 separate backend identities; the native Fortran API does not establish an

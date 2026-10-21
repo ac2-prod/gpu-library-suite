@@ -39,6 +39,7 @@ AUDITED_MODULE_IDS = {'test_sirius_amd_prepare': 'ac683d636a4ed5c4cc2869c2405869
  'test_amd_families': 'be15924f6659400e561fc874b5322f00555c3cad62a32cc6766bca11b154d7cb',
  'test_amd_gpu_build_probes': '21ccc628c5e90eb5850d38a96b9100529f7bb9aa662c250c540310c4535a6f05',
  'test_amd_fortran_build_fixes': '621a281879f742b8ba74ca68dd095389763eaaadd32119a29c613a3762ef098e',
+ 'test_amd_fortran_timing': 'd634ce1190a46bdcf51a9f54ef67ff1b2185bf05bcdb27fc6833a221d50bfe2d',
  'test_amd_metadata': '810bf7f1d10c16289a78cdd7fb818127e1f0a180bd8d624acacebc9a1b018c26',
  'test_amd_rand_thrust': '263cdd7b39648d622294b8c1296c6cc6a7273684e5473feeaa7e5ddc56290de7',
  'test_aocl_sparse': '6fbf14b3eeb3fadfba9926cc5bd5366f6d04c5e3ce3b528f5be4fab37f1d7390',
