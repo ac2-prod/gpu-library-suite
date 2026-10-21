@@ -55,6 +55,7 @@ AUDITED_MODULE_IDS = {'test_sirius_amd_prepare': 'ac683d636a4ed5c4cc2869c2405869
  'test_cufft_source_policy': 'e12813c47057b52e6444c2f678caebb4108fb31cf2d90ae79530a18264216e25',
  'test_documentation': '6c00a881f2a2ac72bc130ad31fb973278a85191e661b28e76dce79693166ffbd',
  'test_fortran': 'fefa72185a86327ce4dee38ef49852c59f7d42f35c9d77f98755655b954233c8',
+ 'test_nvidia_fortran_timing': '90c7d693d7ebf7ad36196cc141e04239dad6c0f967decb87becc27384c9481c0',
  'test_generic_cpu_providers': 'c143707bb5c72190deea60dbc2338c7a5e7f272ae444502286715af2de8107c3',
  'test_hashing': 'c4ad0e6d084ef6490ed564e9723c8fd71fa9e8efedd8d458d2fe077d61095cd1',
  'test_hip_metadata': 'f5f350cdc2bf034a5d7f5d74df659818d79c4250e54bc886603f3e8ba3ab9488',

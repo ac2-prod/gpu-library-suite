@@ -390,9 +390,28 @@ CPU performance. Exact displayed labels are listed under
 `nvidia/fortran` applies the same CLI, mathematics, FP32/FP64 precision,
 verification thresholds, trial restoration, compute and one-shot E2E contracts.
 Its Fortran workload callbacks use the existing C timer/CLI/result writer through
-`ISO_C_BINDING`; the computational library calls remain Fortran. Array indexing
-is one-based CSR where required, not a different Poisson problem. CPU solver
+`ISO_C_BINDING`; the computational library calls remain Fortran. Benchmark CSR
+indices are zero-based, matching C/C++; the Fortran teaching helper and examples
+retain one-based indexing for the same Poisson problem. CPU solver
 benchmarks use `dgetrf` plus `dgetrs`; teaching `dgesv` remains separate.
+
+The NVIDIA Fortran measurement path follows the corresponding NVIDIA C/C++
+benchmark, rather than the AMD implementation's vendor-specific timing:
+
+| Area | NVIDIA Fortran timing contract |
+| --- | --- |
+| Clock and repetition | Shared monotonic wall clock; one interval around all library-scope repeats. E2E sums separately timed one-shot repeats; UTC stamps bracket only the first and last intervals. |
+| Warm-up and restoration | Use each C/C++ family's warm-up sequence. Restore mutable input before each raw trial, and before each E2E repeat outside timing. Warm-up in library scope does not download results. |
+| FFT / BLAS | One OpenACC `host_data` region surrounds the library-scope repeat loop. FFT uses the same cuFFT `PlanMany` layout and restores both input and output; BLAS restores only C after initial A/B upload. |
+| Sparse / Solver | Sparse descriptors retain device addresses; only y is restored after initial CSR/x upload. Solver remains `repeat=1`, with getrf/getrs in one timed operation and no intermediate result download. Zero-sized GPU workspace uses a null pointer, without a dummy allocation. |
+| RAND / Thrust | RAND advances through warm-up, then resets seed/offset before each trial. RAND/Thrust translate OpenACC addresses per call. Immutable Thrust input remains resident in library scope; the CUDA benchmark uses a benchmark-only `device_vector` lifetime adapter. |
+| E2E boundary | Include context setup, device allocation/data entry, required copies, library call, synchronization and result retrieval. OpenACC data exit is included; CUDA deallocation and plan/handle/descriptor destruction remain outside, as in C/C++. Host allocation and canonical input restoration are outside. |
+
+The teaching Thrust wrapper's interface is unchanged. The benchmark-only adapter
+does not replace the Fortran CPU intrinsic or the OpenACC teaching wrapper.
+FFTW uses its typed Fortran execute interface; CPU RNG and reduction retain the
+language-native implementations described below. Matching timing boundaries
+does not make different CPU algorithms or compiler implementations identical.
 
 Fortran CPU production backends are `cpu-fftw-serial`/`cpu-fftw-threaded`,
 `cpu-onemkl`, `cpu-fortran-random-serial`, and `cpu-fortran-sum-serial`.
@@ -405,14 +424,31 @@ are filled with the configured seed (LP64 signed range), and offset consumes
 that stream. CUDA uses the same cuRAND generator contract as the C/C++ path;
 CPU/GPU stream identity is not required.
 
-Fortran Release defaults to `-O3`. GNU target options are
-`-fno-fast-math -ffp-contract=off`; NVHPC target options are
-`-Kieee -Mnoflushz -Mnodaz`, with explicit separate GPU memory and OpenACC only
-on GPU targets. The Fortran profile rejects unapproved global numerical,
-default-kind-changing, automatic parallel/offload flags and unsafe bridge flags.
-Unset `NVCOMPILER_FPU_STATE`; NVHPC benchmarks reject a nonempty override.
-This does not change or retroactively approve the historical C/C++ `-fast`
-condition. Verification is explicit and remains enabled when requested in Release.
+NVIDIA Fortran follows the corresponding published NVIDIA C/C++ build profile.
+CPU/CUDA Release uses `-O3`, with GCC/G++ host support and NVCC for CUDA
+Thrust. NVHPC CPU/CUDA target options remain `-Kieee -Mnoflushz -Mnodaz`
+to preserve ordinary IEEE/subnormal behavior; GNU CPU uses `-fno-fast-math`
+without the former Fortran-only `-ffp-contract=off` restriction.
+NVIDIA OpenACC Release explicitly uses nvfortran `-fast -O3` and nvc/nvc++
+`-fast -O3 -DNDEBUG` for common host code. Its Thrust wrapper uses nvc++
+`-cuda`, matching C/C++ OpenACC, instead of NVCC. No strict target options
+cancel this approved OpenACC profile. Both compile and link flags must agree.
+The exception is confined to that build profile: unrelated numerical,
+default-kind-changing and automatic parallel/offload overrides are rejected.
+AMD Fortran retains its existing `-O3` and
+`-fno-fast-math -ffp-contract=off` policy.
+
+Separate GPU memory and existing GPU numerical modes are unchanged; `-fast`
+does not authorize adding `-gpu=fastmath`, TF32 or Tensor Core modes.
+Unset `NVCOMPILER_FPU_STATE`; NVHPC benchmarks reject any present override,
+including an empty value. Verification remains explicit in Release.
+These settings align the controllable build policy; they do not reconstruct
+unrecorded historical FPU state or imply identical compiler-generated code.
+Rebuild and smoke all 18 revised NVIDIA Fortran benchmarks, then measure both
+scopes with the published C/C++ sizes, repeat counts, trials, CPU providers and
+node/wave protocol. Keep this new Fortran campaign separate from historical
+results. The published C/C++ binaries and measurements remain unchanged and
+do not require remeasurement for this Fortran alignment.
 
 The Fortran diagnostic configuration is `configs/fortran/pilot.json`; it is not
 an approved production profile or the C/C++ publication workload. Language

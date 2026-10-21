@@ -20,7 +20,7 @@
 | Fortran CPU | 上記＋GNU FortranまたはNVHPC。`F90_COMPILER=gfortran`または`nvfortran` |
 | NVIDIA C/C++ CUDA | NVIDIA GPU／ドライバ、CUDA Toolkit／nvcc、対応するhost compiler |
 | NVIDIA C/C++ OpenACC | 同じCUDA Toolkit＋NVHPC nvc／nvc++ |
-| NVIDIA Fortran GPU | NVHPC nvfortran、CUDA Toolkit。ThrustにはNVCC／CCCLも必要 |
+| NVIDIA Fortran GPU | NVHPC nvfortran、CUDA Toolkit／CCCL。ThrustはCUDAでNVCC、OpenACCでnvc++を使用 |
 | AMD C/C++ HIP | AMD GPU／ドライバ、ROCm、HIP対応Clang、CMake 3.21+ |
 | AMD C/C++ OpenMP target | ROCmと対応するAMD Clang。rocThrustにはHIP ClangとCMake 3.21+も必要 |
 | AMD Fortran GPU | 互換のFortranコンパイラとhipFORT。OpenMP targetはAMD LLVM Flang、rocThrustはnative HIP ClangとCMake 3.29+も必要 |
@@ -98,12 +98,10 @@ test "$VENDOR" = nvidia || exit 1
 export NVHPC_CUDA_HOME="$CUDA_TOOLKIT_ROOT"
 ACC_COMPILERS=(-DCMAKE_C_COMPILER=nvc -DCMAKE_CXX_COMPILER=nvc++)
 if [ "$SOURCE_LANGUAGE" = fortran ]; then
-  : "${CUDA_ARCHITECTURES:?Set the CMake CUDA architecture for the Thrust wrapper}"
   unset NVCOMPILER_FPU_STATE
-  ACC_COMPILERS=(-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
-    -DCMAKE_Fortran_COMPILER=nvfortran
-    "-DCMAKE_CUDA_COMPILER=$CUDA_TOOLKIT_ROOT/bin/nvcc"
-    "-DCMAKE_CUDA_ARCHITECTURES=$CUDA_ARCHITECTURES")
+  ACC_COMPILERS+=(-DCMAKE_Fortran_COMPILER=nvfortran
+    "-DCMAKE_C_FLAGS_RELEASE=-fast -O3 -DNDEBUG"
+    "-DCMAKE_CXX_FLAGS_RELEASE=-fast -O3 -DNDEBUG")
 fi
 cmake -S . -B "$BUILD_ROOT/openacc" "${COMMON[@]}" "${ACC_COMPILERS[@]}" \
   -DCUDAToolkit_ROOT="$CUDA_TOOLKIT_ROOT" \

@@ -12,9 +12,26 @@ module gpu_suite_workload
     real(c_double), allocatable :: values(:)
     real(c_double) :: result
 #if GPU_SUITE_IMPL == 1
-    real(c_double), device, allocatable :: d_values(:)
+    type(c_ptr) :: context=c_null_ptr
+    interface
+        function create_context(values,n) bind(C,name='gpu_suite_thrust_create') result(handle)
+            import c_ptr,c_int,c_double
+            real(c_double), intent(in) :: values(*)
+            integer(c_int), value :: n
+            type(c_ptr) :: handle
+        end function
+        function reduce_context(handle) bind(C,name='gpu_suite_thrust_reduce') result(value)
+            import c_ptr,c_double
+            type(c_ptr), value :: handle
+            real(c_double) :: value
+        end function
+        subroutine destroy_context(handle) bind(C,name='gpu_suite_thrust_destroy')
+            import c_ptr
+            type(c_ptr), value :: handle
+        end subroutine
+    end interface
 #endif
-#if GPU_SUITE_IMPL != 0
+#if GPU_SUITE_IMPL == 2
     interface
         function thrust_square_sum(d_values,num_elem) bind(C,name='thrust_square_sum') result(res)
             import c_int,c_double
@@ -38,38 +55,37 @@ contains
 #endif
         allocate(values(o%n),stat=status)
         call check(status,'host allocation')
+        values=1
     end subroutine
     subroutine reset()
-        values=1; result=0
+        result=0
     end subroutine
     subroutine setup()
 #if GPU_SUITE_IMPL == 1
-        integer :: status
-        allocate(d_values(o%n),stat=status)
-        call check(status,'device allocation')
-        call restore()
+        context=create_context(values,o%n)
+        call require(c_associated(context),'Thrust device_vector allocation/copy failed')
 #elif GPU_SUITE_IMPL == 2
         !$acc enter data copyin(values)
         data_present=.true.
 #endif
     end subroutine
     subroutine restore()
-#if GPU_SUITE_IMPL == 1
-        call check(cudaMemcpy(d_values,values,o%n,cudaMemcpyHostToDevice),'copy values')
-#elif GPU_SUITE_IMPL == 2
-        !$acc update device(values)
-#endif
+        ! Input is immutable and remains resident across warm-up and trials.
     end subroutine
-    subroutine operation()
+    subroutine operation(repetitions)
+        integer, intent(in) :: repetitions
+        integer :: repetition
+        do repetition=1,repetitions
 #if GPU_SUITE_IMPL == 0
         result=sum(values*values)
 #elif GPU_SUITE_IMPL == 1
-        result=thrust_square_sum(d_values,o%n)
+        result=reduce_context(context)
 #else
         !$acc host_data use_device(values)
         result=thrust_square_sum(values,o%n)
         !$acc end host_data
 #endif
+        end do
         ! Synchronous transform_reduce returns a host scalar. No per-repeat sync.
     end subroutine
     subroutine synchronize()
@@ -88,7 +104,8 @@ contains
     end subroutine
     subroutine cleanup()
 #if GPU_SUITE_IMPL == 1
-        deallocate(d_values)
+        call destroy_context(context)
+        context=c_null_ptr
 #elif GPU_SUITE_IMPL == 2
         if (data_present) then
             !$acc exit data delete(values)

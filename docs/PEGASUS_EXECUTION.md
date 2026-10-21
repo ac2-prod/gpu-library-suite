@@ -532,7 +532,7 @@ CUDA_TOOLKIT_ROOT="$("${helper[@]}" get cuda_toolkit_root)"
 CUDA_ARCHITECTURES="$("${helper[@]}" get cuda_architectures)"
 NVHPC_GPU_TARGET="$("${helper[@]}" get nvhpc_gpu_target)"
 test "$CUDA_TOOLKIT_ROOT" = "$("${helper[@]}" get nvhpc_cuda_home)"
-command -v nvfortran nvcc gcc g++
+command -v nvfortran nvcc gcc g++ nvc nvc++
 nvfortran --version
 nvcc --version
 ```
@@ -546,7 +546,8 @@ module名だけでFortran対応を確認済みとしない。
 
 [Fortran共通案内の完全なCMakeコマンド](../nvidia/fortran/README.ja.md#separate-gpu-build-trees)
 を同じshellで実行する。CPU/CUDA・OpenACCとも`CMAKE_Fortran_COMPILER=nvfortran`、
-補助C/C++はGCC/G++、言語familyは`fortran`、build treeは新規にする。
+補助C/C++はCPU/CUDAがGCC/G++、OpenACCがnvc/nvc++を使う。
+言語familyは`fortran`、build treeは新規にする。
 この案内で定義される`CPU_CUDA_BUILD`、`OPENACC_BUILD`、
 `RUN_DIR`、`SOURCE_HASH`を以降も使用する。
 
@@ -554,7 +555,8 @@ configure/build stdout・stderr、`fortran-probes/`、
 `compile_commands.json`、両`build-metadata.json`、
 両`partial-manifest.json`、merge後の`executables.json`を保存する。
 期待はCPU/CUDA側24、OpenACC側12、merge後36 artifact。
-全targetがenabledか、Fortran flagsに暗黙の-fastが無いか、
+全targetがenabledか、Release flagsが[Fortranの数値条件](BENCHMARK_PROTOCOL.md#fortran-binding-of-this-protocol)
+と一致するか（OpenACCだけ`-fast -O3`）、
 CMakeとNVHPCのexternal Toolkit rootが一致するかを確認する。
 source snapshotの前後一致と、manifestに記録されたbinary/metadata hashを保持する。
 

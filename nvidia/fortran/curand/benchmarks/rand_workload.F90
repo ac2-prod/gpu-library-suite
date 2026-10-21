@@ -34,6 +34,7 @@ contains
 #endif
         allocate(rand_out(o%n),stat=status)
         call check(status,'host allocation')
+        rand_out=0
 #if GPU_SUITE_IMPL == 0
         call require(o%seed <= int(huge(0),c_int64_t),'Fortran seed exceeds default integer')
         call random_seed(size=seed_size)
@@ -43,7 +44,7 @@ contains
 #endif
     end subroutine
     subroutine reset()
-        rand_out=0
+        ! Output is overwritten. The reference does not refill it per trial.
     end subroutine
     subroutine setup()
 #if GPU_SUITE_IMPL == 1
@@ -51,13 +52,17 @@ contains
         allocate(d_rand(o%n),stat=status)
         call check(status,'device allocation')
 #elif GPU_SUITE_IMPL == 2
+        call check(curandCreateGenerator(gen,CURAND_RNG_PSEUDO_DEFAULT),'curandCreateGenerator')
+        call restore()
         !$acc enter data create(rand_out)
         data_present=.true.
 #endif
-#if GPU_SUITE_IMPL != 0
+#if GPU_SUITE_IMPL == 1
         call check(curandCreateGenerator(gen,CURAND_RNG_PSEUDO_DEFAULT),'curandCreateGenerator')
 #endif
+#if GPU_SUITE_IMPL != 2
         call restore()
+#endif
     end subroutine
     subroutine restore()
 #if GPU_SUITE_IMPL == 0
@@ -73,21 +78,23 @@ contains
 #else
         call check(curandSetPseudoRandomGeneratorSeed(gen,o%seed),'curandSetPseudoRandomGeneratorSeed')
         call check(curandSetGeneratorOffset(gen,o%offset),'curandSetGeneratorOffset')
-        call check(curandSetGeneratorOrdering(gen,CURAND_ORDERING_PSEUDO_DEFAULT),'curandSetGeneratorOrdering')
 #endif
     end subroutine
-    subroutine operation()
+    subroutine operation(repetitions)
+        integer, intent(in) :: repetitions
+        integer :: repetition, status
+        do repetition=1,repetitions
 #if GPU_SUITE_IMPL == 0
         call random_number(rand_out)
 #elif GPU_SUITE_IMPL == 1
         call check(curandGenerateUniformDouble(gen,d_rand,int(o%n,c_intptr_t)),'curandGenerateUniformDouble')
 #else
-        integer :: status
         !$acc host_data use_device(rand_out)
         status=curandGenerateUniformDouble(gen,rand_out,int(o%n,c_intptr_t))
         !$acc end host_data
         call check(status,'curandGenerateUniformDouble')
 #endif
+        end do
     end subroutine
     subroutine synchronize()
 #if GPU_SUITE_IMPL != 0
@@ -104,6 +111,7 @@ contains
             data_present=.false.
         else
             !$acc update self(rand_out)
+            call synchronize()
         end if
 #endif
     end subroutine

@@ -54,43 +54,59 @@ contains
         fft_in=cmplx(1,0,kind=c_float); fft_out=cmplx(0,0,kind=c_float)
     end subroutine
     subroutine setup()
-#if GPU_SUITE_IMPL == 0
+        integer :: status
         integer(c_int) :: dims(1)
+#if GPU_SUITE_IMPL != 0
+        integer(c_int), pointer :: embed(:)
+#endif
         dims=[o%n]
+#if GPU_SUITE_IMPL == 0
         plan=fftwf_plan_many_dft(1,dims,o%batch,fft_in,dims,1,o%n,fft_out,dims,1,o%n, &
                                 FFTW_FORWARD,FFTW_ESTIMATE)
         call require(c_associated(plan),'FFTW plan failed')
 #elif GPU_SUITE_IMPL == 1
-        integer :: status
         allocate(d_in(count),d_out(count),stat=status)
         call check(status,'device allocation')
+#endif
+#if GPU_SUITE_IMPL != 0
+        ! NVHPC documents a nullified pointer for NULL inembed/onembed.
+        nullify(embed)
+        call check(cufftPlanMany(plan,1,dims,embed,1,o%n,embed,1,o%n,CUFFT_C2C,o%batch),'cufftPlanMany')
+#if GPU_SUITE_IMPL == 1
         call restore()
 #else
         !$acc enter data copyin(fft_in) create(fft_out)
         data_present=.true.
 #endif
-#if GPU_SUITE_IMPL != 0
-        call check(cufftPlan1d(plan,o%n,CUFFT_C2C,o%batch),'cufftPlan1d')
 #endif
     end subroutine
     subroutine restore()
 #if GPU_SUITE_IMPL == 1
         call check(cudaMemcpy(d_in,fft_in,count,cudaMemcpyHostToDevice),'copy FFT input')
+        ! The C_DEVPTR overload counts bytes, exactly like the C/C++ reference.
+        call check(cudaMemset(c_devloc(d_out),0,count*c_sizeof(fft_out(1))),'clear FFT output')
 #elif GPU_SUITE_IMPL == 2
-        !$acc update device(fft_in)
+        !$acc update device(fft_in,fft_out)
 #endif
     end subroutine
-    subroutine operation()
+    subroutine operation(repetitions)
+        integer, intent(in) :: repetitions
+        integer :: repetition, status
 #if GPU_SUITE_IMPL == 0
-        call fftwf_execute_dft(plan,fft_in,fft_out)
+        do repetition=1,repetitions
+            call fftwf_execute_dft(plan,fft_in,fft_out)
+        end do
 #elif GPU_SUITE_IMPL == 1
-        call check(cufftExecC2C(plan,d_in,d_out,CUFFT_FORWARD),'cufftExecC2C')
+        do repetition=1,repetitions
+            call check(cufftExecC2C(plan,d_in,d_out,CUFFT_FORWARD),'cufftExecC2C')
+        end do
 #else
-        integer :: status
         !$acc host_data use_device(fft_in,fft_out)
-        status=cufftExecC2C(plan,fft_in,fft_out,CUFFT_FORWARD)
+        do repetition=1,repetitions
+            status=cufftExecC2C(plan,fft_in,fft_out,CUFFT_FORWARD)
+            call check(status,'cufftExecC2C')
+        end do
         !$acc end host_data
-        call check(status,'cufftExecC2C')
 #endif
     end subroutine
     subroutine synchronize()

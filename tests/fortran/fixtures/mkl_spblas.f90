@@ -2,7 +2,7 @@
 module mkl_spblas
     use iso_c_binding
     implicit none
-    integer, parameter :: SPARSE_INDEX_BASE_ONE=1,SPARSE_OPERATION_NON_TRANSPOSE=10
+    integer, parameter :: SPARSE_INDEX_BASE_ZERO=0,SPARSE_INDEX_BASE_ONE=1,SPARSE_OPERATION_NON_TRANSPOSE=10
     integer, parameter :: SPARSE_MATRIX_TYPE_GENERAL=20,SPARSE_FILL_MODE_FULL=30,SPARSE_DIAG_NON_UNIT=40
     type, bind(C) :: sparse_matrix_t
         type(c_ptr) :: handle

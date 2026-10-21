@@ -164,7 +164,10 @@ class FortranRuntimeTests(unittest.TestCase):
             self.assertEqual(entry["compiler_language"], "fortran")
             self.assertEqual(entry["build_metadata_sha256"], digest)
             self.assertIn("-O3", entry["global_configure_flags"])
-            self.assertNotIn("-fast ", entry["global_configure_flags"])
+            if entry["build_profile"] == "openacc":
+                self.assertEqual(entry["global_configure_flags"], "-fast -O3")
+            else:
+                self.assertNotIn("-fast ", entry["global_configure_flags"])
         validate_manifest_artifacts(self.manifest, self.metadata, "pilot", True)
         with self.assertRaises(RunnerError):
             build_schedule(pilot_config(), self.manifest, {})

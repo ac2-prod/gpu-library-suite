@@ -33,8 +33,8 @@ Use CMake 3.20+, C17/C++17 and Fortran 2008 features. CPU-only builds support
 GNU Fortran or NVHPC. CUDA Fortran/OpenACC requires NVHPC `nvfortran`.
 Pegasus builds and execution were validated with NVHPC 25.11. This does not
 certify other compiler versions or GPU environments.
-Use the same external Toolkit with CMake, NVHPC and NVCC. Thrust needs NVCC and
-the Toolkit's Thrust/CCCL headers. GNU Fortran cannot compile the device
+Use the same external Toolkit with CMake, NVHPC and NVCC. Thrust uses NVCC
+for CUDA-direct and nvc++ for OpenACC, with that Toolkit's Thrust/CCCL headers. GNU Fortran cannot compile the device
 extensions. Do not share compiler-generated `.mod` files or build trees across
 compilers, profiles or source languages.
 
@@ -110,12 +110,12 @@ cmake --build "$CPU_CUDA_BUILD" --target gpu_suite_partial_manifest --parallel 2
 
 cmake -S . -B "$OPENACC_BUILD" -G "Unix Makefiles" \
   -DGPU_SUITE_SOURCE_LANGUAGE=fortran -DCMAKE_Fortran_COMPILER=nvfortran \
-  -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
+  -DCMAKE_C_COMPILER=nvc -DCMAKE_CXX_COMPILER=nvc++ \
+  "-DCMAKE_C_FLAGS_RELEASE=-fast -O3 -DNDEBUG" \
+  "-DCMAKE_CXX_FLAGS_RELEASE=-fast -O3 -DNDEBUG" \
   -DCMAKE_BUILD_TYPE=Release -DGPU_SUITE_BUILD_TESTS=OFF \
   -DGPU_SUITE_BUILD_CPU=OFF -DGPU_SUITE_BUILD_CUDA=OFF -DGPU_SUITE_BUILD_OPENACC=ON \
   -DCUDAToolkit_ROOT="$CUDA_TOOLKIT_ROOT" \
-  -DCMAKE_CUDA_COMPILER="$CUDA_TOOLKIT_ROOT/bin/nvcc" \
-  -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCHITECTURES" \
   -DGPU_SUITE_NVHPC_GPU_TARGET="$NVHPC_GPU_TARGET"
 cmake --build "$OPENACC_BUILD" --target gpu_suite_partial_manifest --parallel 2 --verbose
 test "$SOURCE_HASH" = "$(python3 tools/hash_source_snapshot.py "$PWD")"
@@ -137,19 +137,23 @@ six-library check.
 
 ### Numerical and CPU runtime conditions
 
-The Fortran Release default is `-O3`, not NVHPC's implicit `-fast`.
-Fortran target options are GNU `-fno-fast-math -ffp-contract=off` or NVHPC
-`-Kieee -Mnoflushz -Mnodaz`. GPU targets add explicit separate-memory options;
-OpenACC adds `-acc=gpu`. Unsafe global fast-math/automatic offload/parallel
-options are rejected for this profile. The bridge's C/C++ global flags must
-also be ordinary flags; the recipe uses GCC/G++. Numerical target options are
-recorded separately from `global_configure_flags` in build metadata.
-Explicit verification remains in Release; it does not depend on assertions.
+The NVIDIA Fortran build follows the corresponding published C/C++ profile.
+CPU/CUDA uses `-O3`, GCC/G++ host support, and NVCC for CUDA Thrust.
+NVHPC CPU/CUDA preserves subnormals with `-Kieee -Mnoflushz -Mnodaz`;
+GNU CPU uses `-fno-fast-math` with its ordinary contraction default.
+OpenACC uses nvfortran `-fast -O3`, nvc/nvc++ host support with
+`-fast -O3 -DNDEBUG`, and nvc++ `-cuda` for its Thrust wrapper. It does not
+add the CPU/CUDA strict options. Use a new build tree for each profile.
+Separate GPU memory, explicit verification and the existing CUDA numerical
+modes are retained. Build metadata records global and target flags separately.
+Unrelated fast-math and automatic parallel/offload overrides remain rejected.
+See the [numerical contract](../../docs/BENCHMARK_PROTOCOL.md#fortran-binding-of-this-protocol).
 
-Unset `NVCOMPILER_FPU_STATE` before examples and benchmarks: it can override
-NVHPC floating-point defaults. The NVHPC benchmark bridge rejects a nonempty
-override. These new flags do not establish the FPU state of historical C/C++
-measurements or repair their [documented limitation](../../docs/PORTABILITY.md#numerical-portability).
+Unset `NVCOMPILER_FPU_STATE` before examples and benchmarks. NVHPC benchmarks
+reject the variable even when empty, because either form overrides compile-time
+FPU settings. This does not reconstruct unrecorded historical FPU state.
+The revised Fortran binaries need a new build, smoke and measurement;
+the published C/C++ binaries and measurements remain the reference.
 
 FFTW teaching examples are serial. Benchmarks initialize the threaded API
 before plans when `cpu-fftw-threaded` is selected. oneMKL internally controls

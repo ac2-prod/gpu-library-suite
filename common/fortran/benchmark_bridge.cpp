@@ -31,6 +31,7 @@ char library_version[256]{};
 timespec start_time{}, end_time{};
 double elapsed = 0;
 int current_trial = 0;
+int completed_segments = 0;
 bool opened = false, row_live = false;
 void check(int status) {
   if (status != GPU_SUITE_OK) {
@@ -95,7 +96,7 @@ extern "C" int gpu_suite_f_parse() {
   if (result != GPU_SUITE_PARSE_OK) { std::fprintf(stderr, "%s\n", error); return -1; }
   if (std::strcmp(GPU_SUITE_FORTRAN_COMPILER, "NVHPC") == 0) {
     const char *fpu_override = std::getenv("NVCOMPILER_FPU_STATE");
-    if (fpu_override && fpu_override[0]) {
+    if (fpu_override) {
       std::fprintf(stderr, "unset NVCOMPILER_FPU_STATE: runtime overrides are not part of the Fortran numerical profile\n");
       return -1;
     }
@@ -194,20 +195,25 @@ extern "C" double gpu_suite_f_real(int key) {
   }
 }
 extern "C" void gpu_suite_f_trial(int trial) {
-  current_trial = trial; elapsed = 0; start_stamp[0]=0; end_stamp[0]=0;
+  current_trial = trial; elapsed = 0; completed_segments = 0;
+  start_stamp[0]=0; end_stamp[0]=0;
   initialize_row(trial);
 #ifdef GPU_SUITE_HAVE_CUDA_RUNTIME_METADATA
   if (!gpu_suite::apply_cuda_runtime_metadata(row, options.device)) gpu_suite_f_fail("CUDA metadata probe failed");
 #endif
 }
 extern "C" void gpu_suite_f_start() {
-  char stamp[GPU_SUITE_TIMESTAMP_CAPACITY];
-  check(gpu_suite_measurement_start(stamp, &start_time, error, sizeof error));
-  if (!start_stamp[0]) std::strcpy(start_stamp, stamp);
+  check(completed_segments == 0
+            ? gpu_suite_measurement_start(start_stamp, &start_time, error, sizeof error)
+            : gpu_suite_clock_now(&start_time, error, sizeof error));
 }
 extern "C" void gpu_suite_f_end() {
-  check(gpu_suite_measurement_end(&end_time, end_stamp, error, sizeof error));
+  const bool last = options.scope == GPU_SUITE_SCOPE_COMPUTE ||
+                    completed_segments + 1 == options.repeat;
+  check(last ? gpu_suite_measurement_end(&end_time, end_stamp, error, sizeof error)
+             : gpu_suite_clock_now(&end_time, error, sizeof error));
   elapsed += gpu_suite_clock_elapsed(&start_time, &end_time);
+  ++completed_segments;
 }
 extern "C" int gpu_suite_f_finish(const double *values, double scale, int getrf, int getrs) {
   bool passed = true;

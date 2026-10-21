@@ -1085,6 +1085,23 @@ from production data; five-trial, six-node, two-wave production has not run.
 
 ### Fortran production validation and figures
 
+The historical campaign below predates the current NVIDIA Fortran timing
+alignment. Its numerical passes remain valid for its recorded binaries; its
+timings do not validate the revised measurement path. The revised source requires
+a new Pegasus build of all 18 benchmarks, numerical smoke and performance
+measurement before replacement figures can be published. No historical raw
+record or figure is rewritten by this source change.
+
+Local checks cover the shared driver's callback/timer sequence, GPU-branch
+preprocessing and CPU calls against controlled FFTW/oneMKL fixtures, plus the
+intrinsic RNG/reduction paths. These checks do not establish NVHPC compilation,
+CUDA/OpenACC execution or GPU performance. The revised Fortran build settings
+now follow the published C/C++ profiles, including the explicit NVIDIA OpenACC
+`-fast -O3` exception and nvc++ Thrust wrapper. They still require Pegasus
+build/smoke and new Fortran measurements; see
+[the Fortran timing contract](BENCHMARK_PROTOCOL.md#fortran-binding-of-this-protocol).
+The C/C++ and AMD sources, build policies and saved results are unchanged.
+
 The completed Pegasus production campaign measured commit
 `9567d6e9fdd5e2bb9190fb523ca073ca2a68ee1c`. Its retained, non-distributed
 `postprocessing-summary.json` records processing status `pass`, unchanged

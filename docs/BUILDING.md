@@ -20,7 +20,7 @@ rocThrust helper. The AMD GPU commands in sections 5–6 below are for C/C++.
 | Fortran CPU | Above plus GNU Fortran or NVHPC; set `F90_COMPILER=gfortran` or `nvfortran` |
 | NVIDIA C/C++ CUDA | NVIDIA GPU/driver, CUDA Toolkit / nvcc, compatible host compiler |
 | NVIDIA C/C++ OpenACC | Same CUDA Toolkit plus NVHPC nvc / nvc++ |
-| NVIDIA Fortran GPU | NVHPC nvfortran and CUDA Toolkit; Thrust also needs NVCC / CCCL |
+| NVIDIA Fortran GPU | NVHPC nvfortran and CUDA Toolkit/CCCL; Thrust uses NVCC (CUDA) or nvc++ (OpenACC) |
 | AMD C/C++ HIP | AMD GPU/driver, ROCm, HIP-capable Clang, CMake 3.21+ |
 | AMD C/C++ OpenMP target | ROCm and compatible AMD Clang; rocThrust also needs HIP Clang and CMake 3.21+ |
 | AMD Fortran GPU | Compatible Fortran compiler and hipFORT; OpenMP target needs AMD LLVM Flang; rocThrust also needs native HIP Clang and CMake 3.29+ |
@@ -98,12 +98,10 @@ test "$VENDOR" = nvidia || exit 1
 export NVHPC_CUDA_HOME="$CUDA_TOOLKIT_ROOT"
 ACC_COMPILERS=(-DCMAKE_C_COMPILER=nvc -DCMAKE_CXX_COMPILER=nvc++)
 if [ "$SOURCE_LANGUAGE" = fortran ]; then
-  : "${CUDA_ARCHITECTURES:?Set the CMake CUDA architecture for the Thrust wrapper}"
   unset NVCOMPILER_FPU_STATE
-  ACC_COMPILERS=(-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
-    -DCMAKE_Fortran_COMPILER=nvfortran
-    "-DCMAKE_CUDA_COMPILER=$CUDA_TOOLKIT_ROOT/bin/nvcc"
-    "-DCMAKE_CUDA_ARCHITECTURES=$CUDA_ARCHITECTURES")
+  ACC_COMPILERS+=(-DCMAKE_Fortran_COMPILER=nvfortran
+    "-DCMAKE_C_FLAGS_RELEASE=-fast -O3 -DNDEBUG"
+    "-DCMAKE_CXX_FLAGS_RELEASE=-fast -O3 -DNDEBUG")
 fi
 cmake -S . -B "$BUILD_ROOT/openacc" "${COMMON[@]}" "${ACC_COMPILERS[@]}" \
   -DCUDAToolkit_ROOT="$CUDA_TOOLKIT_ROOT" \

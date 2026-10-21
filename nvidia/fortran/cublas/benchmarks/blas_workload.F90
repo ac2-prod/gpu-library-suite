@@ -31,47 +31,55 @@ contains
 #endif
         allocate(mat_A(o%m,o%k),mat_B(o%k,o%n),mat_C(o%m,o%n),stat=status)
         call check(status,'host allocation')
+        mat_A=1; mat_B=1
     end subroutine
     subroutine reset()
-        mat_A=1; mat_B=1; mat_C=1
+        mat_C=1
     end subroutine
     subroutine setup()
 #if GPU_SUITE_IMPL == 1
         integer :: status
         allocate(d_A(o%m,o%k),d_B(o%k,o%n),d_C(o%m,o%n),stat=status)
         call check(status,'device allocation')
+        call check(cudaMemcpy(d_A,mat_A,size(mat_A,kind=c_int64_t),cudaMemcpyHostToDevice),'copy A')
+        call check(cudaMemcpy(d_B,mat_B,size(mat_B,kind=c_int64_t),cudaMemcpyHostToDevice),'copy B')
         call restore()
 #elif GPU_SUITE_IMPL == 2
+        call check(cublasCreate(handle),'cublasCreate')
         !$acc enter data copyin(mat_A,mat_B,mat_C)
         data_present=.true.
 #endif
-#if GPU_SUITE_IMPL != 0
+#if GPU_SUITE_IMPL == 1
         call check(cublasCreate(handle),'cublasCreate')
-        call check(cublasSetMathMode(handle,CUBLAS_DEFAULT_MATH),'cublasSetMathMode')
 #endif
     end subroutine
     subroutine restore()
 #if GPU_SUITE_IMPL == 1
-        call check(cudaMemcpy(d_A,mat_A,size(mat_A,kind=c_int64_t),cudaMemcpyHostToDevice),'copy A')
-        call check(cudaMemcpy(d_B,mat_B,size(mat_B,kind=c_int64_t),cudaMemcpyHostToDevice),'copy B')
         call check(cudaMemcpy(d_C,mat_C,size(mat_C,kind=c_int64_t),cudaMemcpyHostToDevice),'copy initial C')
 #elif GPU_SUITE_IMPL == 2
-        !$acc update device(mat_A,mat_B,mat_C)
+        !$acc update device(mat_C)
 #endif
     end subroutine
-    subroutine operation()
+    subroutine operation(repetitions)
+        integer, intent(in) :: repetitions
+        integer :: repetition, status
+#if GPU_SUITE_IMPL == 2
+        !$acc host_data use_device(mat_A,mat_B,mat_C)
+#endif
+        do repetition=1,repetitions
 #if GPU_SUITE_IMPL == 0
         call dgemm('N','N',o%m,o%n,o%k,o%alpha,mat_A,o%m,mat_B,o%k,o%beta,mat_C,o%m)
 #elif GPU_SUITE_IMPL == 1
         call check(cublasDgemm(handle,CUBLAS_OP_N,CUBLAS_OP_N,o%m,o%n,o%k, &
                    o%alpha,d_A,o%m,d_B,o%k,o%beta,d_C,o%m),'cublasDgemm')
 #else
-        integer :: status
-        !$acc host_data use_device(mat_A,mat_B,mat_C)
         status=cublasDgemm(handle,CUBLAS_OP_N,CUBLAS_OP_N,o%m,o%n,o%k, &
                           o%alpha,mat_A,o%m,mat_B,o%k,o%beta,mat_C,o%m)
-        !$acc end host_data
         call check(status,'cublasDgemm')
+#endif
+        end do
+#if GPU_SUITE_IMPL == 2
+        !$acc end host_data
 #endif
     end subroutine
     subroutine synchronize()
@@ -89,6 +97,7 @@ contains
             data_present=.false.
         else
             !$acc update self(mat_C)
+            call synchronize()
         end if
 #endif
     end subroutine

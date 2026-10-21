@@ -23,6 +23,19 @@ module gpu_suite_workload
             real(8), allocatable, intent(out) :: values(:)
         end subroutine
     end interface
+#if GPU_SUITE_IMPL != 0
+    interface
+        ! C binding keeps a zero-byte workspace NULL rather than allocating
+        ! a dummy device element. Other setup uses the native Fortran module.
+        integer(c_int) function spmv(handle,op,alpha,matrix,x,beta,y,datatype,algorithm,buffer) &
+                bind(C,name='cusparseSpMV')
+            import c_int,c_double,c_ptr
+            type(c_ptr), value :: handle,matrix,x,y,buffer
+            integer(c_int), value :: op,datatype,algorithm
+            real(c_double), intent(in) :: alpha,beta
+        end function
+    end interface
+#endif
     integer, allocatable :: row_offsets(:),col_indices(:)
     real(c_double), allocatable :: values(:),vec_x(:),vec_y(:)
     integer :: nrow,ncol,nnz
@@ -33,7 +46,7 @@ module gpu_suite_workload
     type(cusparseHandle) :: handle
     type(cusparseSpMatDescr) :: mat_A
     type(cusparseDnVecDescr) :: x_descr,y_descr
-    integer(c_int8_t), device, allocatable :: workspace(:)
+    type(c_ptr) :: workspace=c_null_ptr
     integer(c_int64_t) :: buffer_size
 #endif
 #if GPU_SUITE_IMPL == 1
@@ -56,11 +69,14 @@ contains
         call acc_set_device_num(o%device,acc_device_nvidia)
 #endif
         call make_poisson2d_csr(o%nx,o%ny,nrow,ncol,nnz,row_offsets,col_indices,values)
+        ! The teaching helper stays one-based; benchmark CSR values match C/C++.
+        row_offsets=row_offsets-1; col_indices=col_indices-1
         allocate(vec_x(ncol),vec_y(nrow),stat=status)
         call check(status,'host allocation')
+        vec_x=1
     end subroutine
     subroutine reset()
-        vec_x=1; vec_y=1
+        vec_y=1
     end subroutine
     subroutine setup()
         integer :: status
@@ -68,30 +84,35 @@ contains
         descr%type=SPARSE_MATRIX_TYPE_GENERAL
         descr%mode=SPARSE_FILL_MODE_FULL
         descr%diag=SPARSE_DIAG_NON_UNIT
-        call check(mkl_sparse_d_create_csr(mat_A,SPARSE_INDEX_BASE_ONE,nrow,ncol, &
+        call check(mkl_sparse_d_create_csr(mat_A,SPARSE_INDEX_BASE_ZERO,nrow,ncol, &
                    row_offsets(1:nrow),row_offsets(2:nrow+1),col_indices,values),'mkl_sparse_d_create_csr')
-        call check(mkl_sparse_set_mv_hint(mat_A,SPARSE_OPERATION_NON_TRANSPOSE,descr,o%repeat),'mkl_sparse_set_mv_hint')
+        call check(mkl_sparse_set_mv_hint(mat_A,SPARSE_OPERATION_NON_TRANSPOSE,descr,1),'mkl_sparse_set_mv_hint')
         call check(mkl_sparse_optimize(mat_A),'mkl_sparse_optimize')
 #else
 #if GPU_SUITE_IMPL == 1
         allocate(d_row(nrow+1),d_col(nnz),d_values(nnz),d_x(ncol),d_y(nrow),stat=status)
         call check(status,'device allocation')
+        call check(cudaMemcpy(d_row,row_offsets,nrow+1,cudaMemcpyHostToDevice),'copy CSR offsets')
+        call check(cudaMemcpy(d_col,col_indices,nnz,cudaMemcpyHostToDevice),'copy CSR columns')
+        call check(cudaMemcpy(d_values,values,nnz,cudaMemcpyHostToDevice),'copy CSR values')
+        call check(cudaMemcpy(d_x,vec_x,ncol,cudaMemcpyHostToDevice),'copy x')
         call restore()
+        call check(cusparseCreate(handle),'cusparseCreate')
 #else
+        call check(cusparseCreate(handle),'cusparseCreate')
         !$acc enter data copyin(row_offsets,col_indices,values,vec_x,vec_y)
         data_present=.true.
 #endif
-        call check(cusparseCreate(handle),'cusparseCreate')
 #if GPU_SUITE_IMPL == 1
         call check(cusparseCreateCsr(mat_A,int(nrow,c_int64_t),int(ncol,c_int64_t),int(nnz,c_int64_t), &
-                   d_row,d_col,d_values,CUSPARSE_INDEX_32I,CUSPARSE_INDEX_32I,CUSPARSE_INDEX_BASE_ONE,CUDA_R_64F), &
+                   d_row,d_col,d_values,CUSPARSE_INDEX_32I,CUSPARSE_INDEX_32I,CUSPARSE_INDEX_BASE_ZERO,CUDA_R_64F), &
                    'cusparseCreateCsr')
         call check(cusparseCreateDnVec(x_descr,int(ncol,c_int64_t),d_x,CUDA_R_64F),'cusparseCreateDnVec x')
         call check(cusparseCreateDnVec(y_descr,int(nrow,c_int64_t),d_y,CUDA_R_64F),'cusparseCreateDnVec y')
 #else
         !$acc host_data use_device(row_offsets,col_indices,values,vec_x,vec_y)
         status=cusparseCreateCsr(mat_A,int(nrow,c_int64_t),int(ncol,c_int64_t),int(nnz,c_int64_t), &
-                   row_offsets,col_indices,values,CUSPARSE_INDEX_32I,CUSPARSE_INDEX_32I,CUSPARSE_INDEX_BASE_ONE,CUDA_R_64F)
+                   row_offsets,col_indices,values,CUSPARSE_INDEX_32I,CUSPARSE_INDEX_32I,CUSPARSE_INDEX_BASE_ZERO,CUDA_R_64F)
         call check(status,'cusparseCreateCsr')
         status=cusparseCreateDnVec(x_descr,int(ncol,c_int64_t),vec_x,CUDA_R_64F)
         call check(status,'cusparseCreateDnVec x')
@@ -104,30 +125,31 @@ contains
                    o%alpha,mat_A,x_descr,o%beta,y_descr,CUDA_R_64F,CUSPARSE_SPMV_ALG_DEFAULT,buffer_size), &
                    'cusparseSpMV_bufferSize')
         call require(buffer_size>=0,'negative cuSPARSE workspace size')
-        allocate(workspace(max(1_c_int64_t,buffer_size)),stat=status)
-        call check(status,'cuSPARSE workspace allocation')
+        workspace=c_null_ptr
+        if (buffer_size > 0) call check(cuda_malloc_bytes(workspace,int(buffer_size,c_size_t)), &
+                                       'cuSPARSE workspace allocation')
 #endif
     end subroutine
     subroutine restore()
 #if GPU_SUITE_IMPL == 1
-        call check(cudaMemcpy(d_row,row_offsets,nrow+1,cudaMemcpyHostToDevice),'copy CSR offsets')
-        call check(cudaMemcpy(d_col,col_indices,nnz,cudaMemcpyHostToDevice),'copy CSR columns')
-        call check(cudaMemcpy(d_values,values,nnz,cudaMemcpyHostToDevice),'copy CSR values')
-        call check(cudaMemcpy(d_x,vec_x,ncol,cudaMemcpyHostToDevice),'copy x')
         call check(cudaMemcpy(d_y,vec_y,nrow,cudaMemcpyHostToDevice),'copy initial y')
 #elif GPU_SUITE_IMPL == 2
-        !$acc update device(vec_x,vec_y)
+        !$acc update device(vec_y)
 #endif
     end subroutine
-    subroutine operation()
+    subroutine operation(repetitions)
+        integer, intent(in) :: repetitions
+        integer :: repetition
+        do repetition=1,repetitions
 #if GPU_SUITE_IMPL == 0
         call check(mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE,o%alpha,mat_A,descr,vec_x,o%beta,vec_y), &
                    'mkl_sparse_d_mv')
 #else
         ! Descriptors retain translated addresses; do not wrap SpMV in host_data.
-        call check(cusparseSpMV(handle,CUSPARSE_OPERATION_NON_TRANSPOSE,o%alpha,mat_A,x_descr, &
-                   o%beta,y_descr,CUDA_R_64F,CUSPARSE_SPMV_ALG_DEFAULT,workspace),'cusparseSpMV')
+        call check(spmv(handle%handle,CUSPARSE_OPERATION_NON_TRANSPOSE,o%alpha,mat_A%descr,x_descr%descr, &
+                   o%beta,y_descr%descr,CUDA_R_64F,CUSPARSE_SPMV_ALG_DEFAULT,workspace),'cusparseSpMV')
 #endif
+        end do
     end subroutine
     subroutine synchronize()
 #if GPU_SUITE_IMPL != 0
@@ -144,6 +166,7 @@ contains
             data_present=.false.
         else
             !$acc update self(vec_y)
+            call synchronize()
         end if
 #endif
     end subroutine
@@ -154,7 +177,8 @@ contains
         call check(cusparseDestroyDnVec(y_descr),'cusparseDestroyDnVec y')
         call check(cusparseDestroyDnVec(x_descr),'cusparseDestroyDnVec x')
         call check(cusparseDestroySpMat(mat_A),'cusparseDestroySpMat')
-        deallocate(workspace)
+        if (c_associated(workspace)) call check(cuda_free_bytes(workspace),'free cuSPARSE workspace')
+        workspace=c_null_ptr
         call check(cusparseDestroy(handle),'cusparseDestroy')
 #if GPU_SUITE_IMPL == 1
         deallocate(d_row,d_col,d_values,d_x,d_y)

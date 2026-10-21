@@ -1,9 +1,80 @@
 include(CheckLanguage)
 
+# Validate the actual cached flags, including on reconfigure. Only the exact
+# published OpenACC Release profile gets an exception to the fast-math guard.
+# Kept separate from compiler discovery so its profile boundaries can be checked
+# locally without pretending to compile NVHPC/CUDA code.
+function(gpu_suite_fortran_numerical_options output)
+  set(_cpp_openacc OFF)
+  if(GPU_SUITE_VENDOR STREQUAL "nvidia" AND GPU_SUITE_BUILD_OPENACC)
+    set(_cpp_openacc ON)
+    if(NOT CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC" OR
+       NOT CMAKE_C_COMPILER_ID STREQUAL "NVHPC" OR
+       NOT CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
+      message(FATAL_ERROR "NVIDIA Fortran OpenACC requires nvfortran/nvc/nvc++ to match the published C/C++ profile; use a new build tree")
+    endif()
+    if(NOT CMAKE_Fortran_FLAGS_RELEASE STREQUAL "-fast -O3")
+      message(FATAL_ERROR "NVIDIA Fortran OpenACC Release requires -fast -O3; use a new build tree")
+    endif()
+    foreach(_language C CXX)
+      if(NOT CMAKE_${_language}_FLAGS_RELEASE STREQUAL "-fast -O3 -DNDEBUG")
+        message(FATAL_ERROR "NVIDIA Fortran OpenACC requires CMAKE_${_language}_FLAGS_RELEASE=-fast -O3 -DNDEBUG for its common host code")
+      endif()
+    endforeach()
+  endif()
+
+  set(_fortran_release_check "${CMAKE_Fortran_FLAGS_RELEASE}")
+  if(_cpp_openacc)
+    set(_fortran_release_check "")
+  endif()
+  set(_all_fortran_flags "${CMAKE_Fortran_FLAGS} ${_fortran_release_check} ${CMAKE_Fortran_FLAGS_RELWITHDEBINFO} ${CMAKE_Fortran_FLAGS_MINSIZEREL} ${CMAKE_Fortran_FLAGS_DEBUG}")
+  if(_all_fortran_flags MATCHES "(^| )(-fast|-Ofast|-ffast-math|-fassociative-math|-ffinite-math-only|-Mflushz|-Mdaz|-Knoieee|-Mconcur|-stdpar|-acc|-mp|-gpu=|-fopenmp|-ftree-parallelize-loops|-floop-parallelize-all|-i8|-r8|-fdefault-integer-8|-fdefault-real-8)( |$|=|[^ ]+)")
+    message(FATAL_ERROR "Unapproved numerical/parallel/offload option in Fortran flags: ${_all_fortran_flags}")
+  endif()
+  foreach(_language C CXX)
+    set(_release_check "${CMAKE_${_language}_FLAGS_RELEASE}")
+    if(_cpp_openacc)
+      set(_release_check "")
+    endif()
+    set(_bridge_flags "${CMAKE_${_language}_FLAGS} ${_release_check} ${CMAKE_${_language}_FLAGS_RELWITHDEBINFO} ${CMAKE_${_language}_FLAGS_MINSIZEREL} ${CMAKE_${_language}_FLAGS_DEBUG}")
+    if(_bridge_flags MATCHES "(^| )(-fast|-Ofast|-ffast-math|-fassociative-math|-ffinite-math-only|-Mflushz|-Mdaz|-Knoieee)( |$)")
+      message(FATAL_ERROR "Unsafe ${_language} flags in Fortran support: ${_bridge_flags}")
+    endif()
+    string(APPEND _all_fortran_flags " ${_bridge_flags}")
+  endforeach()
+  if(_cpp_openacc AND _all_fortran_flags MATCHES "(^| )(-Kieee|-Mnoflushz|-Mnodaz|-Mnofma|-ffp-contract=off|-fno-fast-math)( |$)")
+    message(FATAL_ERROR "Conflicting strict override in the published NVIDIA OpenACC profile")
+  endif()
+
+  if(_cpp_openacc)
+    # -fast -O3 is on both compile and link commands via the Release flags.
+    # Do not cancel its FP behavior with the previous strict target options.
+    set(_options "")
+  elseif(CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
+    # Ordinary CPU/CUDA C++ uses no fast aggregate and preserves subnormals.
+    set(_options -Kieee -Mnoflushz -Mnodaz)
+  elseif(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
+    set(_options -fno-fast-math)
+    if(NOT GPU_SUITE_VENDOR STREQUAL "nvidia")
+      list(APPEND _options -ffp-contract=off)
+    endif()
+  elseif(GPU_SUITE_VENDOR STREQUAL "amd" AND
+         CMAKE_Fortran_COMPILER_ID MATCHES "^(LLVMFlang|Flang)$")
+    set(_options -fno-fast-math -ffp-contract=off)
+  else()
+    message(FATAL_ERROR "Use GNU/NVHPC, or AMD LLVM Flang for the AMD family")
+  endif()
+  set(${output} "${_options}" PARENT_SCOPE)
+endfunction()
+
 macro(gpu_suite_enable_fortran)
-  # CMake's NVHPC Release default contains -fast. Do not adopt that implicit
-  # numerical profile for the new language, or change any C/C++ flags.
-  set(CMAKE_Fortran_FLAGS_RELEASE "-O3" CACHE STRING "Fortran Release flags")
+  # Match the published NVIDIA C/C++ build profiles without changing them.
+  # The approved -fast aggregate is confined to the NVIDIA OpenACC tree.
+  set(_fortran_release "-O3")
+  if(GPU_SUITE_VENDOR STREQUAL "nvidia" AND GPU_SUITE_BUILD_OPENACC)
+    set(_fortran_release "-fast -O3")
+  endif()
+  set(CMAKE_Fortran_FLAGS_RELEASE "${_fortran_release}" CACHE STRING "Fortran Release flags")
   set(CMAKE_Fortran_FLAGS_RELWITHDEBINFO "-O2 -g" CACHE STRING "Fortran RelWithDebInfo flags")
   set(CMAKE_Fortran_FLAGS_MINSIZEREL "-O2" CACHE STRING "Fortran MinSizeRel flags")
   check_language(Fortran)
@@ -12,33 +83,12 @@ macro(gpu_suite_enable_fortran)
   endif()
   enable_language(Fortran)
   set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-  set(_all_fortran_flags "${CMAKE_Fortran_FLAGS} ${CMAKE_Fortran_FLAGS_RELEASE} ${CMAKE_Fortran_FLAGS_RELWITHDEBINFO} ${CMAKE_Fortran_FLAGS_MINSIZEREL} ${CMAKE_Fortran_FLAGS_DEBUG}")
-  if(_all_fortran_flags MATCHES "(^| )(-fast|-Ofast|-ffast-math|-fassociative-math|-ffinite-math-only|-Mflushz|-Mdaz|-Knoieee|-Mconcur|-stdpar|-acc|-mp|-gpu=|-fopenmp|-ftree-parallelize-loops|-floop-parallelize-all|-i8|-r8|-fdefault-integer-8|-fdefault-real-8)( |$|=|[^ ]+)")
-    message(FATAL_ERROR "Unapproved numerical/parallel/offload option in Fortran flags: ${_all_fortran_flags}")
-  endif()
+  gpu_suite_fortran_numerical_options(GPU_SUITE_FORTRAN_SAFE_OPTIONS)
   if(GPU_SUITE_VENDOR STREQUAL "nvidia" AND GPU_SUITE_BUILD_CPU AND (NOT GPU_SUITE_CPU_BLAS_BACKEND STREQUAL "ONEMKL" OR
      NOT GPU_SUITE_CPU_LAPACK_BACKEND STREQUAL "ONEMKL" OR
      NOT GPU_SUITE_CPU_SPARSE_BACKEND STREQUAL "ONEMKL" OR
      NOT GPU_SUITE_CPU_THRUST_BACKEND STREQUAL "STL"))
     message(FATAL_ERROR "Fortran CPU supports FFTW/oneMKL and intrinsic RNG/sum only; C/C++ alternative backend options do not select Fortran providers")
-  endif()
-  # The small C/C++ serialization bridge also performs finite-value checks.
-  # Reject unsafe flags in this profile without modifying the C/C++ profile.
-  foreach(_language C CXX)
-    set(_bridge_flags "${CMAKE_${_language}_FLAGS} ${CMAKE_${_language}_FLAGS_RELEASE} ${CMAKE_${_language}_FLAGS_RELWITHDEBINFO} ${CMAKE_${_language}_FLAGS_MINSIZEREL} ${CMAKE_${_language}_FLAGS_DEBUG}")
-    if(_bridge_flags MATCHES "(^| )(-fast|-Ofast|-ffast-math|-fassociative-math|-ffinite-math-only|-Mflushz|-Mdaz|-Knoieee)( |$)")
-      message(FATAL_ERROR "Unsafe ${_language} flags in Fortran support: ${_bridge_flags}; explicitly select ordinary -O3/-O2 flags")
-    endif()
-  endforeach()
-  if(CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
-    set(GPU_SUITE_FORTRAN_SAFE_OPTIONS -Kieee -Mnoflushz -Mnodaz)
-  elseif(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
-    set(GPU_SUITE_FORTRAN_SAFE_OPTIONS -fno-fast-math -ffp-contract=off)
-  elseif(GPU_SUITE_VENDOR STREQUAL "amd" AND
-         CMAKE_Fortran_COMPILER_ID MATCHES "^(LLVMFlang|Flang)$")
-    set(GPU_SUITE_FORTRAN_SAFE_OPTIONS -fno-fast-math -ffp-contract=off)
-  else()
-    message(FATAL_ERROR "Use GNU/NVHPC, or AMD LLVM Flang for the AMD family")
   endif()
   set(GPU_SUITE_FORTRAN_GPU_OPTIONS "")
   if(GPU_SUITE_BUILD_CUDA OR GPU_SUITE_BUILD_OPENACC)
@@ -64,8 +114,9 @@ macro(gpu_suite_enable_fortran)
           set(GPU_SUITE_OPENACC_TARGETS_ENABLED ON)
           set(GPU_SUITE_OPENACC_DISABLE_REASON "")
         endif()
-        # NVCC is needed only for the shared Thrust C++ object.
-        if(DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "")
+        # CUDA-direct Thrust uses NVCC; OpenACC Thrust uses nvc++ -cuda.
+        if(GPU_SUITE_BUILD_CUDA AND DEFINED CMAKE_CUDA_ARCHITECTURES AND
+           NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "")
           check_language(CUDA)
           if(CMAKE_CUDA_COMPILER)
             enable_language(CUDA)

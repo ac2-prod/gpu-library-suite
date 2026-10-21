@@ -37,8 +37,8 @@ GPU Thrustだけは提供された[CUDA C++関数](thrust/examples/thrust_wrappe
 CMake 3.20以降、C17/C++17、Fortran 2008の機能を使用します。
 CPU-onlyはGNU FortranまたはNVHPC、CUDA Fortran/OpenACCは
 `nvfortran`が必要です。PegasusではNVHPC 25.11でビルド・実行を確認しました。
-他のコンパイラ版やGPU環境の動作保証ではありません。ThrustにはNVCCと
-同じToolkitのThrust/CCCLも必要です。GNU Fortranはdevice拡張を扱えません。
+他のコンパイラ版やGPU環境の動作保証ではありません。ThrustはCUDA直接版でNVCC、
+OpenACC版でnvc++を使い、同じToolkitのThrust/CCCLも必要です。GNU Fortranはdevice拡張を扱えません。
 コンパイラ・profile・言語が異なるbuild treeや`.mod`を流用しないでください。
 
 FFTWはFP32の`fftw3f`と`fftw3.f03`が必要です。スレッド版benchmarkには
@@ -113,12 +113,12 @@ cmake --build "$CPU_CUDA_BUILD" --target gpu_suite_partial_manifest --parallel 2
 
 cmake -S . -B "$OPENACC_BUILD" -G "Unix Makefiles" \
   -DGPU_SUITE_SOURCE_LANGUAGE=fortran -DCMAKE_Fortran_COMPILER=nvfortran \
-  -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
+  -DCMAKE_C_COMPILER=nvc -DCMAKE_CXX_COMPILER=nvc++ \
+  "-DCMAKE_C_FLAGS_RELEASE=-fast -O3 -DNDEBUG" \
+  "-DCMAKE_CXX_FLAGS_RELEASE=-fast -O3 -DNDEBUG" \
   -DCMAKE_BUILD_TYPE=Release -DGPU_SUITE_BUILD_TESTS=OFF \
   -DGPU_SUITE_BUILD_CPU=OFF -DGPU_SUITE_BUILD_CUDA=OFF -DGPU_SUITE_BUILD_OPENACC=ON \
   -DCUDAToolkit_ROOT="$CUDA_TOOLKIT_ROOT" \
-  -DCMAKE_CUDA_COMPILER="$CUDA_TOOLKIT_ROOT/bin/nvcc" \
-  -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCHITECTURES" \
   -DGPU_SUITE_NVHPC_GPU_TARGET="$NVHPC_GPU_TARGET"
 cmake --build "$OPENACC_BUILD" --target gpu_suite_partial_manifest --parallel 2 --verbose
 test "$SOURCE_HASH" = "$(python3 tools/hash_source_snapshot.py "$PWD")"
@@ -141,19 +141,23 @@ cleanなcommitからのbuildなら空配列にもできます。productionはcle
 
 ## 数値・CPU並列化の条件
 
-新規FortranのRelease既定値は`-O3`です。NVHPC既定の`-fast`を採用しません。
-targetにはGNUの`-fno-fast-math -ffp-contract=off`、またはNVHPCの
-`-Kieee -Mnoflushz -Mnodaz`を適用します。GPUにはSeparate Memory Modeを明示し、
-OpenACCには`-acc=gpu`を追加します。未承認のglobal fast-math、
-自動並列化・自動GPU offloadをこのprofileで拒否します。
-C/C++ bridgeにもunsafeなglobal flagsを許可しないため、手順はGCC/G++を使用します。
-数値target optionsはglobal configure flagsとは別にbuild metadataへ記録します。
-Releaseでも明示的verificationは残り、assertの有効無効には依存しません。
+NVIDIA Fortranは、対応する公開済みC/C++版のビルド条件を基準にします。
+CPU/CUDAは`-O3`、補助C/C++はGCC/G++、CUDA ThrustはNVCCを使います。
+NVHPC CPU/CUDAは`-Kieee -Mnoflushz -Mnodaz`で非正規化数を保持し、
+GNU CPUは`-fno-fast-math`と通常の積和演算の既定設定を使います。
+OpenACCはnvfortranの`-fast -O3`、補助C/C++はnvc/nvc++の
+`-fast -O3 -DNDEBUG`を使い、Thrust wrapperもnvc++の`-cuda`で構築します。
+ここへCPU/CUDA用の厳密設定は追加しません。系列ごとに新しいbuild treeを使ってください。
+Separate Memory Mode、明示的verification、既存のCUDA数値モードは維持します。
+global flagsとtarget optionsはbuild metadataへ分けて記録します。
+無関係なfast-mathや自動並列化/offloadの上書きは引き続き拒否します。
+詳細は[数値条件の正本](../../docs/BENCHMARK_PROTOCOL.md#fortran-binding-of-this-protocol)を参照してください。
 
-NVHPCのFPU設定を上書きできる`NVCOMPILER_FPU_STATE`は実行前にunsetします。
-NVHPC benchmarkは非空の設定を拒否します。この条件から過去のC/C++測定時の
-FPU状態を確定したり、[既存の数値条件の未確認事項](../../docs/PORTABILITY.ja.md#numerical-portability)
-が解消したと説明したりしません。
+`NVCOMPILER_FPU_STATE`は実行前にunsetします。空文字でもコンパイル時の
+FPU設定を上書きするため、NVHPC benchmarkは空文字を含む設定を拒否します。
+過去の未記録のFPU状態まで復元したという意味ではありません。
+修正後のFortran成果物には新たなbuild・smoke・測定が必要です。
+公開済みC/C++版の成果物・測定結果は比較の基準として保持します。
 
 FFTWの教材は逐次です。threaded benchmarkはplan作成前にthreads APIを設定します。
 oneMKLは内部並列化し、要求数と観測された実効数を区別します。

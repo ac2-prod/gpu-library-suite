@@ -134,12 +134,19 @@ foreach(_index RANGE 0 5)
         list(APPEND _options -acc=gpu)
       endif()
       if(_index EQUAL 5 AND _enabled)
-        if(GPU_SUITE_CUDA_LANGUAGE_ENABLED AND _fortran_thrust_include)
+        if(_fortran_thrust_include AND
+           ((_impl EQUAL 1 AND GPU_SUITE_CUDA_LANGUAGE_ENABLED) OR
+            (_impl EQUAL 2 AND CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")))
           set(_wrapper "${CMAKE_CURRENT_SOURCE_DIR}/thrust/examples/thrust_wrapper.cu")
+          if(_impl EQUAL 2)
+            # Match the C/C++ OpenACC Thrust compiler, including Release flags.
+            set_source_files_properties("${_wrapper}" PROPERTIES LANGUAGE CXX
+              COMPILE_OPTIONS "-cuda;-gpu=${GPU_SUITE_NVHPC_GPU_TARGET};-acc")
+          endif()
           list(APPEND _includes "${_fortran_thrust_include}")
         else()
           set(_enabled FALSE)
-          set(_reason "Thrust interop requires NVCC, explicit CMAKE_CUDA_ARCHITECTURES and external Toolkit Thrust/CCCL headers")
+          set(_reason "Thrust interop requires external Toolkit Thrust/CCCL headers and NVCC/explicit CUDA architecture (CUDA) or nvc++ (OpenACC)")
         endif()
       endif()
     endif()
@@ -162,14 +169,21 @@ foreach(_index RANGE 0 5)
         set(_reason "oneMKL Fortran dgetrf/dgetrs compile-and-link probe failed")
       endif()
     endif()
-    # Thrust has a separate CUDA C++ compile/link probe; the complete mixed
-    # language link is also exercised by the ordinary target build.
+    # Probe the same C++ compiler used by each Thrust profile. The ordinary
+    # target build also exercises the complete mixed-language link.
     if(_enabled AND _wrapper)
       include(GpuSuiteProbe)
       file(READ "${_wrapper}" _wrapper_source)
       string(APPEND _wrapper_source "\nint main() { return thrust_square_sum(nullptr,0)==0 ? 0 : 1; }\n")
-      gpu_suite_check_cuda_link(_fortran_thrust_links SOURCE "${_wrapper_source}"
-        INCLUDES "${_fortran_thrust_include}" LIBRARIES CUDA::cudart)
+      if(_impl EQUAL 2)
+        gpu_suite_check_cxx_link(_fortran_thrust_links SOURCE "${_wrapper_source}"
+          COMPILE_OPTIONS -cuda "-gpu=${GPU_SUITE_NVHPC_GPU_TARGET}" -acc
+          LINK_OPTIONS -cuda "-gpu=${GPU_SUITE_NVHPC_GPU_TARGET}" -acc
+          INCLUDES "${_fortran_thrust_include}" LIBRARIES CUDA::cudart)
+      else()
+        gpu_suite_check_cuda_link(_fortran_thrust_links SOURCE "${_wrapper_source}"
+          INCLUDES "${_fortran_thrust_include}" LIBRARIES CUDA::cudart)
+      endif()
       if(NOT _fortran_thrust_links)
         set(_enabled FALSE)
         set(_reason "Thrust CUDA C++ wrapper did not compile/link")
@@ -194,8 +208,12 @@ foreach(_index RANGE 0 5)
           endif()
           set(_target "${_name}_bench")
           set(_target_source "${CMAKE_CURRENT_SOURCE_DIR}/${_library}/benchmarks/${_target}.f90")
+          set(_benchmark_wrapper "${_wrapper}")
+          if(_index EQUAL 5 AND _impl EQUAL 1)
+            set(_benchmark_wrapper "${CMAKE_CURRENT_SOURCE_DIR}/thrust/benchmarks/reduce_context.cu")
+          endif()
           set(_sources "${_target_source}" "${CMAKE_CURRENT_SOURCE_DIR}/${_library}/benchmarks/${_stem}_workload.F90"
-            "${_common}/benchmark_bridge.cpp" ${_wrapper})
+            "${_common}/benchmark_bridge.cpp" ${_benchmark_wrapper})
         endif()
         add_executable(${_target} ${_sources})
         set(_modules "${CMAKE_CURRENT_BINARY_DIR}/modules/${_target}")

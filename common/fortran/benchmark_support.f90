@@ -4,6 +4,7 @@ module gpu_suite_fortran
     implicit none
     private
     public :: options, o, run_benchmark, require, check, checked_int, checked_product, nan_value
+    public :: cuda_malloc_bytes, cuda_free_bytes
     type :: options
         integer :: library, implementation, n, m, k, batch, nx, ny, nrhs
         integer :: warmup, repeat, trials, scope, device, threads
@@ -13,6 +14,18 @@ module gpu_suite_fortran
     end type
     type(options), save :: o
     interface
+        ! Explicit byte-sized workspace allocation, including a genuine NULL
+        ! workspace when the CUDA library requests zero bytes. Interfaces alone
+        ! do not introduce a CUDA link dependency into CPU benchmarks.
+        integer(c_int) function cuda_malloc_bytes(pointer, bytes) bind(C,name='cudaMalloc')
+            import c_int, c_ptr, c_size_t
+            type(c_ptr), intent(out) :: pointer
+            integer(c_size_t), value :: bytes
+        end function
+        integer(c_int) function cuda_free_bytes(pointer) bind(C,name='cudaFree')
+            import c_int, c_ptr
+            type(c_ptr), value :: pointer
+        end function
         subroutine initialize(library, implementation) bind(C,name='gpu_suite_f_initialize')
             import c_int
             integer(c_int), value :: library, implementation
@@ -62,6 +75,9 @@ module gpu_suite_fortran
     abstract interface
         subroutine action()
         end subroutine
+        subroutine repeated_action(repetitions)
+            integer, intent(in) :: repetitions
+        end subroutine
         subroutine download_action(end_to_end)
             logical, intent(in) :: end_to_end
         end subroutine
@@ -81,6 +97,7 @@ contains
         integer, intent(in) :: status
         character(*), intent(in) :: operation
         character(32) :: number
+        if (status == 0) return
         write(number,'(I0)') status
         call require(status == 0, operation//': status '//trim(number))
     end subroutine
@@ -136,7 +153,8 @@ contains
     subroutine run_benchmark(library, implementation, host_setup, reset, setup, restore, &
                              operation, synchronize, download, cleanup, verify, host_cleanup)
         integer, intent(in) :: library, implementation
-        procedure(action) :: host_setup, reset, setup, restore, operation, synchronize, cleanup, host_cleanup
+        procedure(action) :: host_setup, reset, setup, restore, synchronize, cleanup, host_cleanup
+        procedure(repeated_action) :: operation
         procedure(download_action) :: download
         procedure(verification_action) :: verify
         integer :: warm, index, repetition, failures, info_getrf, info_getrs, status
@@ -144,19 +162,44 @@ contains
         call read_options(library,implementation)
         call host_setup()
         call reset()
-        if (o%scope == 0) call setup()
-        do warm = 1, o%warmup
-            call reset()
-            if (o%scope == 0) then
-                call restore()
-            else
+        if (o%scope == 0) then
+            call setup()
+            select case (library)
+            case (0,2,5) ! FFT/SpMV/reduction: retain the context and complete once.
+                if (o%warmup > 0) call operation(o%warmup)
+                if (.not. (library == 0 .and. implementation == 2 .and. o%warmup == 0)) call synchronize()
+            case (1) ! Direct CUDA DGEMM restores C on each warm-up; CPU/ACC do not.
+                do warm=1,o%warmup
+                    if (implementation == 1) call restore()
+                    call operation(1)
+                end do
+                call synchronize()
+            case (3) ! LU destroys A/B. No warm-up result download in C/C++.
+                do warm=1,o%warmup
+                    call reset()
+                    call restore()
+                    call operation(1)
+                    call synchronize()
+                end do
+            case (4) ! Advance the generator across warm-up calls.
+                do warm=1,o%warmup
+                    call operation(1)
+                    call synchronize()
+                end do
+            end select
+        else if (library == 1 .and. implementation == 0) then
+            ! CPU DGEMM warms the same C repeatedly in both reference scopes.
+            if (o%warmup > 0) call operation(o%warmup)
+        else
+            do warm=1,o%warmup
+                call reset()
                 call setup()
-            end if
-            call operation()
-            call synchronize()
-            call download(o%scope /= 0)
-            if (o%scope /= 0) call cleanup()
-        end do
+                call operation(1)
+                call synchronize()
+                call download(.true.)
+                call cleanup()
+            end do
+        end if
         failures=0
         do index = 0, o%trials-1
             call trial(index)
@@ -165,9 +208,9 @@ contains
                 call restore()
                 call synchronize()
                 call start_timer()
-                do repetition=1,o%repeat
-                    call operation()
-                end do
+                ! The workload encloses its entire loop in the corresponding
+                ! C/C++ device-address region; synchronization stays outside it.
+                call operation(o%repeat)
                 call synchronize()
                 call end_timer()
                 call download(.false.)
@@ -175,10 +218,9 @@ contains
                 do repetition=1,o%repeat
                     ! Host allocation/input restoration are outside every one-shot interval.
                     call reset()
-                    call synchronize()
                     call start_timer()
                     call setup()
-                    call operation()
+                    call operation(1)
                     call synchronize()
                     call download(.true.)
                     call end_timer()
