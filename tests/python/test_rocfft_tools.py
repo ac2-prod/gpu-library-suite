@@ -76,10 +76,13 @@ class RocfftToolsTests(unittest.TestCase):
     def test_vendor_config_and_family_rejections(self):
         config = amd_config()
         self.assertEqual(set(config['benchmarks']), {'rocfft'})
+        fortran_config = copy.deepcopy(config)
+        fortran_config['source_language'] = 'fortran'
+        self.assertEqual(validate_config(fortran_config)['source_language'], 'fortran')
         for mutation in ('vendor', 'source_language', 'implementation', 'transform', 'precision'):
             changed = copy.deepcopy(config)
             if mutation == 'vendor': changed['vendor'] = 'nvidia'
-            elif mutation == 'source_language': changed['source_language'] = 'fortran'
+            elif mutation == 'source_language': changed['source_language'] = 'unsupported'
             elif mutation == 'implementation': changed['benchmarks']['rocfft']['series'][1]['implementation'] = 'cuda'
             elif mutation == 'transform': changed['benchmarks']['rocfft']['cases'][0]['parameters']['transform'] = 'inverse'
             else: changed['benchmarks']['rocfft']['precision'] = 'fp64'
