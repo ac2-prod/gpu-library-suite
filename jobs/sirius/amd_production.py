@@ -570,9 +570,13 @@ def check_prior_wave(run_root, plan, identity):
         require(all(transition[k]["source_revision"]["artifact_commit"] == existing["git_commit"]
                     for k in ("from", "to")), "Continuation artifact source changed")
         paths = transition["changed_paths"]
-        require(isinstance(paths, list) and paths and paths == sorted(set(paths))
+        require(isinstance(paths, list) and paths == sorted(set(paths))
                 and set(paths) <= CONTINUATION_REVISION_PATHS, "Unapproved continuation paths")
         runner.validate_sha256(transition["patch_sha256"], "continuation patch SHA-256")
+        if not paths:
+            require(transition["from"] == transition["to"]
+                    and transition["patch_sha256"] == hashlib.sha256(b"").hexdigest(),
+                    "Empty continuation requires identical launchers and an empty diff")
     for name, field in (("effective-config.json", "config"), ("executables-manifest.json", "manifest"),
                         ("runtime-environment.json", "runtime")):
         require(sha256_file(run_root / name) == plan[field]["sha256"], "Frozen campaign input changed")

@@ -690,6 +690,9 @@ that adoption file's identity and a `launcher_transition`: exact `from` and `to`
 launcher identities, sorted `changed_paths`, and the SHA-256 of the Git binary
 diff between their clean launcher commits. The launcher revalidates the adopted
 evidence and the exact transition, without rewriting immutable run metadata.
+When the launcher is unchanged, `from` and `to` must be identical,
+`changed_paths` must be empty, and `patch_sha256` must identify the empty Git
+diff. The explicit adoption and new-wave execution approval are still required.
 
 This transition is limited to the adoption/continuation site code, its related
 test and owned documentation (`CONTINUATION_REVISION_PATHS`). Build source commit,

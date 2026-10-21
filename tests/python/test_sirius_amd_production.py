@@ -567,6 +567,28 @@ class SiriusProductionTests(unittest.TestCase):
             production.review_wave0_adoption(self.run_root)
         raw.write_bytes(original)
         self.plan["wave0_adoption"] = self.identity(path)
+        # A new owner-approved wave needs no artificial launcher revision.
+        same = copy.deepcopy(self.plan)
+        same["launcher_transition"] = dict(
+            **{"from": adoption["original_launcher"],
+               "to": production.campaign_identity(same, self.manifest)["launcher"]},
+            changed_paths=[], patch_sha256=production.hashlib.sha256(b"").hexdigest())
+        production.check_prior_wave(self.run_root, same, production.campaign_identity(same, self.manifest))
+        empty_diff = mock.Mock()
+        empty_diff.run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+        production.check_tool_transition(empty_diff, same)
+        self.assertEqual(empty_diff.run.call_count, 2)
+        for call in empty_diff.run.call_args_list:
+            self.assertEqual(call.args[0][-3:-1], ["a" * 40, "a" * 40])
+        for altered in ("hash", "identity"):
+            changed = copy.deepcopy(same)
+            if altered == "hash":
+                changed["launcher_transition"]["patch_sha256"] = "f" * 64
+            else:
+                changed["source_revision"]["launcher_commit"] = "b" * 40
+                changed["launcher_transition"]["to"] = production.campaign_identity(changed, self.manifest)["launcher"]
+            with self.subTest(altered=altered), self.assertRaisesRegex(ValueError, "Empty continuation"):
+                production.check_prior_wave(self.run_root, changed, production.campaign_identity(changed, self.manifest))
         self.plan["source_revision"] = dict(self.plan["source_revision"], launcher_commit="b" * 40)
         self.plan["launcher_transition"] = dict(
             **{"from": adoption["original_launcher"], "to": production.campaign_identity(self.plan, self.manifest)["launcher"]},
