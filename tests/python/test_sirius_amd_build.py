@@ -369,6 +369,7 @@ class SiriusAmdBuildTests(unittest.TestCase):
         self.assertEqual(len(configures), 3)
         for argv in configures:
             self.assertIn("-DGPU_SUITE_SOURCE_LANGUAGE=fortran", argv)
+            self.assertFalse(any(a.startswith("-DCMAKE_Fortran_FLAGS=") for a in argv))
             gpu = not argv[argv.index("-B") + 1].endswith("build-cpu")
             self.assertIn("-DCMAKE_Fortran_COMPILER=" + str(self.tools["amdflang" if gpu else "gfortran"]), argv)
         self.assertTrue(all(not os.access(item["identity"]["path"], os.X_OK) for p in job.profiles.values() for item in p["artifacts"].values()))
@@ -379,6 +380,7 @@ class SiriusAmdBuildTests(unittest.TestCase):
 
     def test_fortran_external_hipfort_is_explicit_and_recorded_without_bundled_fallback(self):
         self.fortran_fixture()
+        self.env["SIRIUS_COMPUTE_ROCM_VERSION"] = "10.1.0"
         prefix = self.root / "separate-hipfort"
         modules = prefix / "include/fortran/amdflang/hipfort/amdgcn"
         modules.mkdir(parents=True)
@@ -399,9 +401,15 @@ class SiriusAmdBuildTests(unittest.TestCase):
         for argv in (a for a in fake.calls if "-S" in a):
             if argv[argv.index("-B") + 1].endswith("build-cpu"):
                 self.assertFalse(any("HIPFORT" in arg for arg in argv))
+                self.assertFalse(any(a.startswith("-DCMAKE_Fortran_FLAGS=") for a in argv))
             else:
                 self.assertIn("-DGPU_SUITE_HIPFORT_MODULE_DIR=" + str(modules), argv)
                 self.assertIn("-DGPU_SUITE_HIPFORT_LIBRARY=" + str(library), argv)
+                self.assertIn("-DCMAKE_Fortran_FLAGS=--gcc-toolchain=" + str(self.args.cpu_c_compiler.parent.parent), argv)
+        self.args.source_language = "c-cpp"
+        for profile in build.PROFILES:
+            argv = build.configure_argv(self.args, self.tools["cmake"], self.root / profile, profile, self.env)
+            self.assertFalse(any(a.startswith("-DCMAKE_Fortran_FLAGS=") for a in argv))
 
     def test_fortran_invalid_explicit_hipfort_never_uses_bundled_inputs(self):
         self.fortran_fixture()

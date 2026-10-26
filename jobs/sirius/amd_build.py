@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -386,6 +387,13 @@ def cpu_hints(env):
     return result
 
 
+def gcc_toolchain_flag(compiler):
+    """Use the loaded GCC prefix, not Flang's newest system GCC candidate."""
+    if not compiler.is_absolute() or not compiler.is_file() or not os.access(compiler, os.X_OK):
+        raise ValueError("Loaded GCC must be an absolute executable")
+    return "--gcc-toolchain=" + shlex.quote(str(compiler.parent.parent))
+
+
 def configure_argv(args, cmake, build, profile, env, selected_cpu_options=None):
     flags = {"CMAKE_BUILD_TYPE": "Release", "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
              "GPU_SUITE_VENDOR": "amd", "GPU_SUITE_AMD_LIBRARIES": ";".join(FAMILIES),
@@ -411,6 +419,9 @@ def configure_argv(args, cmake, build, profile, env, selected_cpu_options=None):
         if profile != "cpu":
             flags["GPU_SUITE_HIPFORT_MODULE_DIR"] = str(args.hipfort_module_dir)
             flags["GPU_SUITE_HIPFORT_LIBRARY"] = str(args.hipfort_library)
+            if env.get("SIRIUS_COMPUTE_ROCM_VERSION") == "10.1.0":
+                # Apply before CMake's initial Fortran compiler link check.
+                flags["CMAKE_Fortran_FLAGS"] = gcc_toolchain_flag(args.cpu_c_compiler)
     return [str(cmake), "-S", str(args.source_root), "-B", str(build)] + ["-D" + k + "=" + v for k, v in flags.items()]
 
 

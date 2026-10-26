@@ -47,7 +47,8 @@ def extract_source(archive, destination, name, record):
                 path.chmod(0o700 if member.mode & 0o111 else 0o600)
 
 
-def configure_argv(cmake, root, rocm):
+def configure_argv(cmake, root, rocm, gcc):
+    gcc_flag = amd_build.gcc_toolchain_flag(gcc)
     flags = {
         "CMAKE_BUILD_TYPE": "Release", "CMAKE_Fortran_COMPILER": rocm / "bin/amdflang",
         "CMAKE_C_COMPILER": rocm / "bin/amdclang", "ROCM_PATH": rocm,
@@ -63,7 +64,8 @@ def configure_argv(cmake, root, rocm):
         "BUILD_NATIVE": "OFF", "HIPFORT_CODE_COVERAGE": "OFF",
         # Avoid hipFORT's compiler-dependent Release/LTO flag probing. These
         # bindings do not introduce a different numerical mode for Fortran.
-        "CMAKE_Fortran_FLAGS": "-fno-fast-math -ffp-contract=off",
+        "CMAKE_C_FLAGS": gcc_flag,
+        "CMAKE_Fortran_FLAGS": gcc_flag + " -fno-fast-math -ffp-contract=off",
         "CMAKE_Fortran_FLAGS_RELEASE": "-O3", "CMAKE_Fortran_FLAGS_TESTING": "-O0",
         "CMAKE_Fortran_FLAGS_DEBUG": "-O0 -g",
     }
@@ -86,6 +88,8 @@ def build(args, *, environment=None, run=subprocess.run):
     if (args.rocm_root / ".info/version").read_text().strip() != lock["rocm_version"]:
         raise ValueError("Selected ROCm version differs from source lock")
     compilers = [args.rocm_root / "bin" / name for name in ("amdclang", "amdflang")]
+    gcc = Path(env.get("CPU_CC", ""))
+    amd_build.gcc_toolchain_flag(gcc)  # Module helper supplies the validated GCC driver.
     if not all(p.is_file() and os.access(p, os.X_OK) for p in [args.cmake] + compilers):
         raise ValueError("Selected compiler or CMake is unavailable")
     if args.output.is_symlink():
@@ -94,8 +98,8 @@ def build(args, *, environment=None, run=subprocess.run):
     (args.output / "logs").mkdir()
     record = dict(status="FAILED", started=amd_build.utc(), sources=lock,
                   lock=amd_build.file_identity(args.lock), job_id=env["PBS_JOBID"], commands=[],
-                  tools={p.name: amd_build.file_identity(p) for p in [args.cmake] + compilers},
-                  environment={k: env.get(k) for k in ("PATH", "LD_LIBRARY_PATH", "LOADEDMODULES", "ROCM_PATH", "HIP_PATH")})
+                  tools={p.name: amd_build.file_identity(p) for p in [args.cmake] + compilers + [gcc]},
+                  environment={k: env.get(k) for k in ("PATH", "LD_LIBRARY_PATH", "LOADEDMODULES", "ROCM_PATH", "HIP_PATH", "CPU_CC")})
     deadline = time.monotonic() + args.timeout_seconds
     try:
         for name, item in lock["sources"].items():
@@ -105,8 +109,8 @@ def build(args, *, environment=None, run=subprocess.run):
         config = args.output / "rocm-cmake/share/rocmcmakebuildtools/cmake/ROCmCMakeBuildToolsConfig.cmake"
         if not config.is_file():
             raise ValueError("Pinned offline ROCmCMakeBuildTools config missing")
-        commands = [[str(p), "--version"] for p in [args.cmake] + compilers] + [
-            configure_argv(args.cmake, args.output, args.rocm_root),
+        commands = [[str(p), "--version"] for p in [args.cmake] + compilers + [gcc]] + [
+            configure_argv(args.cmake, args.output, args.rocm_root, gcc),
             [str(args.cmake), "--build", str(args.output / "build"), "--parallel", "4"],
             [str(args.cmake), "--install", str(args.output / "build")]]
         for index, argv in enumerate(commands):

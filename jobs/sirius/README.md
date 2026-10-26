@@ -165,6 +165,15 @@ its CMake modules directly, so no separate rocm-cmake build/install is needed.
 The helper records dependency source/tool/output hashes and separate command
 stdout/stderr. Failure retains the partial directory and prohibits reuse.
 
+ROCm 10.1 Flang may select a newer system GCC independently of the loaded
+module. The dependency helper pins `--gcc-toolchain` to the prefix of the
+module-selected `CPU_CC` (the parent of its `bin` directory), records that
+driver's identity/version, and applies the option before CMake's compiler
+link checks. The suite uses the same selection for its ROCm 10.1 Fortran
+HIP/OpenMP trees. This supplies the intended GCC runtime search paths,
+including `libquadmath`, without changing numerical options or the C/C++
+build profiles. A missing selected driver is an error, not a fallback.
+
 Build the dependency inside an approved PBS allocation with the selected 10.1
 module environment. The following recipe assumes `RUN_ROOT` is a new approved
 run directory and the verified source is already staged. Source, build and
@@ -175,6 +184,7 @@ downloading `master` when this prerequisite is missing.
 Do not run this recipe on the login node or during local preparation.
 
 ```bash
+GCC_TOOLCHAIN_PREFIX="$(dirname "$(dirname "$CPU_CC")")"
 cmake -S "$RUN_ROOT/dependencies/hipfort-source" \
   -B "$RUN_ROOT/dependencies/hipfort-build" \
   -DCMAKE_BUILD_TYPE=Release \
@@ -189,7 +199,8 @@ cmake -S "$RUN_ROOT/dependencies/hipfort-source" \
   -DHIPFORT_BUILD_AMDGCN=ON -DHIPFORT_BUILD_NVPTX=OFF \
   -DHIPFORT_USE_FPOINTER_INTERFACES=ON -DHIPFORT_ASSUMED_RANK=OFF \
   -DBUILD_NATIVE=OFF -DHIPFORT_CODE_COVERAGE=OFF \
-  -DCMAKE_Fortran_FLAGS="-fno-fast-math -ffp-contract=off" \
+  -DCMAKE_C_FLAGS="--gcc-toolchain=$GCC_TOOLCHAIN_PREFIX" \
+  -DCMAKE_Fortran_FLAGS="--gcc-toolchain=$GCC_TOOLCHAIN_PREFIX -fno-fast-math -ffp-contract=off" \
   -DCMAKE_Fortran_FLAGS_RELEASE=-O3 -DCMAKE_Fortran_FLAGS_TESTING=-O0 \
   -DCMAKE_Fortran_FLAGS_DEBUG="-O0 -g" \
   -DBUILD_TESTING=OFF -DHIPFORT_EXTENDED_TESTS=OFF
