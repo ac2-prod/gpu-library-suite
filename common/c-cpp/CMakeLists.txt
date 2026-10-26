@@ -26,6 +26,7 @@ target_compile_definitions(gpu_suite_common
   PRIVATE _POSIX_C_SOURCE=200809L)
 
 set_target_properties(gpu_suite_common PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
   C_STANDARD 17
   C_STANDARD_REQUIRED YES
   C_EXTENSIONS NO)
