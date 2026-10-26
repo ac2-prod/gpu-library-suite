@@ -47,6 +47,29 @@ class SiriusPreparationTests(unittest.TestCase):
                           side_effect=lambda _, cpus: setattr(self, "affinity", set(cpus))).start()
         self.calls = []
 
+    def test_preflight_requires_selected_rocm_version_and_matching_mpi(self):
+        version = self.root / "rocm-version"
+        env = dict(PBS_ENVIRONMENT="PBS_BATCH", PBS_JOBID="42.fixture", PBS_NODEFILE=str(self.nodefile), PATH="/fixture")
+        job = SimpleNamespace(env=env, root=self.root / "preflight", args=SimpleNamespace(rocm_version_file=version))
+        with mock.patch.object(prepare.sys, "platform", "linux"), \
+             mock.patch.object(prepare.shutil, "which", return_value=str(self.probe)), \
+             mock.patch.object(production, "worker_environment"), \
+             mock.patch.object(prepare.amd_build, "write_json"):
+            for selected in ("7.2.0", "10.1.0"):
+                with self.subTest(selected=selected):
+                    env.update(SIRIUS_COMPUTE_ROCM_VERSION=selected,
+                               LOADEDMODULES="openmpi/5.0.10/rocm" + selected)
+                    version.write_text(selected + "\n")
+                    record = prepare.preflight(job)
+                    self.assertEqual(record["mpi_module"], env["LOADEDMODULES"])
+                    version.write_text("7.14.1\n")
+                    with self.assertRaisesRegex(ValueError, "version evidence"):
+                        prepare.preflight(job)
+                    version.write_text(selected + "\n")
+                    env["LOADEDMODULES"] = "openmpi/5.0.10/rocm7.14.1"
+                    with self.assertRaisesRegex(ValueError, "MPI module"):
+                        prepare.preflight(job)
+
     def fake_probe(self, argv, **kwargs):
         self.calls.append(argv)
         observation = dict(self.observation)

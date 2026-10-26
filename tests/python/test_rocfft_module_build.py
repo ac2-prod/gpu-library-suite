@@ -216,13 +216,14 @@ class RocfftComputeModuleTests(unittest.TestCase):
         self.system_libraries = [self.base / "system/lib64", self.base / "system/lib"]
         for path in self.system_libraries:
             path.mkdir(parents=True)
-        # Only the two deployment constants change in this local fixture.
+        # Only the deployment constants change in this local fixture.
         # There is no production environment/CLI override for provider roots.
         self.script = self.base / "compute_modules.sh"
         canonical = (ROOT / "jobs/sirius/rocfft_compute_modules.sh").read_text()
         self.script.write_text(canonical.replace(
             "/system/apps/rhel/9.6-202602/aocl/5.1.0/gcc", str(self.aocl)).replace(
-            "/opt/rocm-7.2.0", str(self.rocm)))
+            "/opt/rocm-7.2.0", str(self.rocm)).replace(
+            "/opt/rocm-10.1.0-runfile/rocm/core-10.1", str(self.base / "rocm10")))
         self.capture = self.base / "environment.json"
         capture = self.base / "capture.py"
         capture.write_text('import json,os\nwith open(os.environ["CAPTURE"],"x") as f:\n json.dump(dict(os.environ),f)\n')
@@ -296,6 +297,63 @@ class RocfftComputeModuleTests(unittest.TestCase):
         self.assertEqual(environment["LD_LIBRARY_PATH"], ":".join(map(str, expected)))
         self.assertEqual([line for line in self.modules.read_text().splitlines() if line.startswith("load ")],
                          ["load gcc/14.2.1", "load aocl/5.1.0/gcc14.2.1", "load rocm/7.2.0", "load openmpi/5.0.10/rocm7.2.0"])
+
+    def rocm10_fixture(self):
+        root = self.base / "rocm10"
+        for relative in ("lib/llvm/lib", "bin", "include/hip", "include/rocfft", ".info"):
+            (root / relative).mkdir(parents=True, exist_ok=True)
+        for relative in ("include/hip/hip_runtime_api.h", "include/rocfft/rocfft.h",
+                         "lib/llvm/lib/libomp.so", "lib/llvm/lib/libomptarget.so"):
+            (root / relative).write_text("fixture only")
+        (root / ".info/version").write_text("10.1.0\n")
+        self.executable(root / "bin/amdclang++", '#!/bin/sh\necho "AMD clang version 24.0.0git"\n')
+        self.executable(self.base / "base-bin/mpirun", "#!/bin/sh\nexit 97\n")
+        driver = self.driver.read_text().replace("rocm/7.2.0)", "rocm/7.2.0|rocm/10.1.0)")
+        self.driver.write_text(driver.replace('                *) return 8 ;;',
+            '                openmpi/5.0.10/rocm10.1.0) : ;;\n                *) return 8 ;;'))
+        return dict(SIRIUS_COMPUTE_ROCM_VERSION="10.1.0",
+                    SIRIUS_COMPUTE_MPI_MODULE="openmpi/5.0.10/rocm10.1.0",
+                    AMD_BIN=str(root / "bin"), ROCM_PREFIX=str(root))
+
+    def test_compute_rocm10_selects_matching_modules_and_openmp_runtime(self):
+        values = self.rocm10_fixture()
+        result = self.run_fake(**values)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        environment = json.loads(self.capture.read_text())
+        root = self.base / "rocm10"
+        self.assertEqual(environment["HIP_CLANG"], str(root / "bin/amdclang++"))
+        self.assertEqual(environment["ROCM_PATH"], str(root))
+        expected = self.gcc_libraries + [root / "lib/llvm/lib", root / "lib", self.aocl / "lib"] + self.system_libraries + [self.unrelated]
+        self.assertEqual(environment["LD_LIBRARY_PATH"], ":".join(map(str, expected)))
+        self.assertEqual([line for line in self.modules.read_text().splitlines() if line.startswith("load ")],
+                         ["load gcc/14.2.1", "load aocl/5.1.0/gcc14.2.1", "load rocm/10.1.0", "load openmpi/5.0.10/rocm10.1.0"])
+        self.assertNotIn("HSA_XNACK", environment)
+        self.assertNotIn("OMPX_DGPU_MAPS", environment)
+
+    def test_compute_rocm10_rejects_version_and_runtime_mismatch(self):
+        values = self.rocm10_fixture()
+        version = self.base / "rocm10/.info/version"
+        version.write_text("7.2.0\n")
+        result = self.run_fake(**values)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("version file differs", result.stderr)
+        self.assertFalse(self.capture.exists())
+        version.write_text("10.1.0\n")
+        runtime = self.base / "rocm10/lib/llvm/lib/libomptarget.so"
+        runtime.rename(runtime.with_suffix(".absent"))
+        result = self.run_fake(**values)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("runtime libraries are missing", result.stderr)
+        self.assertFalse(self.capture.exists())
+
+    def test_compute_rejects_unapproved_or_mixed_stack_before_modules(self):
+        for values in ({"SIRIUS_COMPUTE_ROCM_VERSION": "7.14.1"},
+                       {"SIRIUS_COMPUTE_ROCM_VERSION": "10.1.0", "SIRIUS_COMPUTE_MPI_MODULE": "openmpi/5.0.10/rocm7.2.0"}):
+            with self.subTest(values=values):
+                result = self.run_fake(**values)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.modules.exists())
+                self.assertFalse(self.capture.exists())
 
     def test_compute_requires_approval_allocation_and_run_gates_before_modules(self):
         for values in ({"GPU_SUITE_SIRIUS_COMPUTE_APPROVED": "no"}, {"PBS_JOBID": ""},

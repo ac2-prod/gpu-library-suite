@@ -47,8 +47,14 @@ def preflight(job):
         path = shutil.which(name, path=env.get("PATH"))
         production.require(path is not None, "Preparation tool unavailable: " + name)
         record[name] = identity(path)
-    production.require("openmpi/5.0.10/rocm7.2.0" in env.get("LOADEDMODULES", "").split(":"),
-                       "The approved pilot MPI module must be loaded before building")
+    version = env.get("SIRIUS_COMPUTE_ROCM_VERSION", "7.2.0")
+    production.require(version in ("7.2.0", "10.1.0"), "Unsupported explicit ROCm version")
+    mpi_module = "openmpi/5.0.10/rocm" + version
+    production.require(mpi_module in env.get("LOADEDMODULES", "").split(":"),
+                       "The MPI module matching the selected ROCm must be loaded before building")
+    production.require(job.args.rocm_version_file.read_text(encoding="utf-8").strip() == version,
+                       "ROCm version evidence differs from the selected module stack")
+    record["mpi_module"] = mpi_module
     record["rocm_version_file"] = identity(job.args.rocm_version_file)
     record["scheduler_job_id"] = env["PBS_JOBID"]
     # Validate thread/loader controls before spending the build budget.

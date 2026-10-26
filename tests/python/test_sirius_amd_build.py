@@ -377,6 +377,51 @@ class SiriusAmdBuildTests(unittest.TestCase):
         self.args.rocm_version_file = self.rocm / "version"
         build.validate(self.args, self.env)
 
+    def test_fortran_external_hipfort_is_explicit_and_recorded_without_bundled_fallback(self):
+        self.fortran_fixture()
+        prefix = self.root / "separate-hipfort"
+        modules = prefix / "include/fortran/amdflang/hipfort/amdgcn"
+        modules.mkdir(parents=True)
+        for old in (self.rocm / "include/hipfort/amdgcn").glob("*.mod"):
+            (modules / old.name).write_text("new compiler module " + old.name)
+        library = prefix / "lib64/fortran/amdflang/libhipfort-amdgcn.a"
+        library.parent.mkdir(parents=True)
+        library.write_text("new compiler archive")
+        self.args.hipfort_module_dir, self.args.hipfort_library = modules, library
+        build.validate(self.args, self.env)
+        job, fake = self.execute()
+        self.assertEqual([row["status"] for row in job.slots], ["BUILT"] * 36)
+        evidence = build.load_json(job.root / "fortran-preflight.json")
+        self.assertEqual(evidence["selection"], "explicit")
+        self.assertEqual(evidence["hipfort"]["library"], build.file_identity(library))
+        self.assertEqual(len(evidence["module_candidates"]), 1)
+        self.assertEqual(len(evidence["library_candidates"]), 1)
+        for argv in (a for a in fake.calls if "-S" in a):
+            if argv[argv.index("-B") + 1].endswith("build-cpu"):
+                self.assertFalse(any("HIPFORT" in arg for arg in argv))
+            else:
+                self.assertIn("-DGPU_SUITE_HIPFORT_MODULE_DIR=" + str(modules), argv)
+                self.assertIn("-DGPU_SUITE_HIPFORT_LIBRARY=" + str(library), argv)
+
+    def test_fortran_invalid_explicit_hipfort_never_uses_bundled_inputs(self):
+        self.fortran_fixture()
+        modules = self.rocm / "include/hipfort/amdgcn"
+        library = self.rocm / "lib/libhipfort-amdgcn.a"
+        for directory, archive in ((modules, None), (None, library),
+                                   (Path("relative"), library), (modules, self.root / "missing.a")):
+            with self.subTest(directory=directory, archive=archive):
+                self.args.hipfort_module_dir, self.args.hipfort_library = directory, archive
+                with self.assertRaisesRegex(ValueError, "hipFORT"):
+                    build.validate(self.args, self.env)
+        incomplete = self.root / "incomplete-hipfort"
+        incomplete.mkdir()
+        self.args.hipfort_module_dir, self.args.hipfort_library = incomplete, library
+        build.validate(self.args, self.env)
+        job, fake = self.execute()
+        self.assertEqual(set(job.fortran_inputs["profile_errors"]), {"hip", "openmp"})
+        self.assertFalse(any("-S" in a and not a[a.index("-B") + 1].endswith("build-cpu") for a in fake.calls))
+        self.assertEqual(job.fortran_inputs["module_candidates"][0]["path"], str(incomplete))
+
     def test_fortran_clean_18_manifest_retains_language_and_depfile_directories(self):
         prepare = self.clean_mode()
         self.fortran_fixture()
@@ -1212,6 +1257,10 @@ message(STATUS "REJECTED: ${GPU_SUITE_CBLAS_REASON}; ${GPU_SUITE_LAPACKE_REASON}
         self.assertIn("set -C", text)
         self.assertIn('AMD_BUILD_MODE=${AMD_BUILD_MODE:-all}', text)
         self.assertIn('--clean-benchmarks --expected-git-commit', text)
+        self.assertIn('SIRIUS_COMPUTE_ROCM_VERSION=${SIRIUS_COMPUTE_ROCM_VERSION:-7.2.0}', text)
+        self.assertIn('SIRIUS_COMPUTE_MPI_MODULE="openmpi/5.0.10/rocm$SIRIUS_COMPUTE_ROCM_VERSION"', text)
+        self.assertIn('--hipfort-module-dir "$AMD_BUILD_HIPFORT_MODULE_DIR" --hipfort-library "$AMD_BUILD_HIPFORT_LIBRARY"', text)
+        self.assertLess(text.index('ROCm 10.1 Fortran requires explicit matching hipFORT inputs'), text.index('date -u'))
         for forbidden in ("compute_smoke.py", "run_suite.py", "rocminfo", "rocm-smi", "ldd ", "qsub", "qstat", "ssh ", "ctest", "hipcc"):
             self.assertNotIn(forbidden, text)
 

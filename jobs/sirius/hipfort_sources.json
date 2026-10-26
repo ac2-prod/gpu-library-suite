@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "rocm_version": "10.1.0",
+  "sources": {
+    "hipfort": {
+      "version": "0.10.0",
+      "tag": "rocm-10.1.0",
+      "commit": "29dbef942849b1043903ba927bfdeb9783c6a7e6",
+      "archive": "hipfort.tar.gz",
+      "archive_url": "https://codeload.github.com/ROCm/hipfort/tar.gz/29dbef942849b1043903ba927bfdeb9783c6a7e6",
+      "sha256": "24538ccd0aacb89672540d247629cdc3d14785b9f6f26ef6b829f5911aae130f"
+    },
+    "rocm-cmake": {
+      "version": "0.14.0",
+      "tag": "therock-10.1",
+      "commit": "10155d7272ea1bf79f6b5a9dbc339657af1aa372",
+      "archive": "rocm-cmake.tar.gz",
+      "archive_url": "https://codeload.github.com/ROCm/rocm-cmake/tar.gz/10155d7272ea1bf79f6b5a9dbc339657af1aa372",
+      "sha256": "fb7cb95f0f29f0aba4ac242855013b1eec32f13a13de31ebfa6a4864bfa33d7c"
+    }
+  }
+}

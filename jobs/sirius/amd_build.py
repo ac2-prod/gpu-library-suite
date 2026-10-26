@@ -351,6 +351,12 @@ def validate(args, env):
         raise ValueError("Native HIP must use the Clang driver, not hipcc")
     if not args.rocm_root.is_absolute() or not args.rocm_root.is_dir():
         raise ValueError("An observed absolute ROCm root is required")
+    if args.hipfort_module_dir is not None or args.hipfort_library is not None:
+        if args.source_language != "fortran" or args.hipfort_module_dir is None or args.hipfort_library is None:
+            raise ValueError("Explicit hipFORT inputs require Fortran and both module directory and library")
+        if (not args.hipfort_module_dir.is_absolute() or not args.hipfort_module_dir.is_dir()
+                or not args.hipfort_library.is_absolute() or not args.hipfort_library.is_file()):
+            raise ValueError("Explicit hipFORT inputs must be existing absolute paths; no fallback")
     if not (30 <= args.timeout_seconds <= 86400 and 1 <= args.configure_timeout <= args.timeout_seconds
             and 1 <= args.build_timeout <= args.timeout_seconds):
         raise ValueError("Invalid job-local command/time budget")
@@ -430,25 +436,34 @@ def fortran_preflight(job):
                 result["profile_errors"][profile] = name + " is not an executable in the selected compiler prefix"
     modules = ("hipfort", "hipfort_types", "hipfort_rocfft", "hipfort_rocblas", "hipfort_rocsolver", "hipfort_rocrand")
     complete, libraries = {}, {}
-    for root in (args.rocm_root, args.rocm_root / "hipfort"):
-        for suffix in ("include/hipfort/amdgcn", "include/hipfort", "include"):
-            path = root / suffix
-            missing = [name for name in modules if not (path / (name + ".mod")).is_file()]
-            result["module_candidates"].append({"path": str(path), "missing_modules": missing})
-            if not missing:
-                complete[str(path.resolve())] = path
-        for suffix in ("lib", "lib64"):
-            for name in ("libhipfort-amdgcn.so", "libhipfort-amdgcn.a"):
-                path = root / suffix / name
-                if path.is_file():
-                    identity = file_identity(path)
-                    result["library_candidates"].append(identity)
-                    libraries[identity["resolved_path"]] = path
+    explicit = args.hipfort_module_dir is not None or args.hipfort_library is not None
+    result["selection"] = "explicit" if explicit else "selected-rocm-prefix"
+    if explicit:
+        # A separately built hipFORT must match the selected Fortran compiler.
+        # Never replace a missing explicit input with an older bundled module.
+        module_paths = [args.hipfort_module_dir] if args.hipfort_module_dir else []
+        library_paths = [args.hipfort_library] if args.hipfort_library else []
+    else:
+        roots = (args.rocm_root, args.rocm_root / "hipfort")
+        module_paths = [root / suffix for root in roots
+                        for suffix in ("include/hipfort/amdgcn", "include/hipfort", "include")]
+        library_paths = [root / suffix / name for root in roots for suffix in ("lib", "lib64")
+                         for name in ("libhipfort-amdgcn.so", "libhipfort-amdgcn.a")]
+    for path in module_paths:
+        missing = [name for name in modules if not (path / (name + ".mod")).is_file()]
+        result["module_candidates"].append({"path": str(path), "missing_modules": missing})
+        if not missing:
+            complete[str(path.resolve())] = path
+    for path in library_paths:
+        if path.is_file():
+            identity = file_identity(path)
+            result["library_candidates"].append(identity)
+            libraries[identity["resolved_path"]] = path
     # Match CMake's shared-library preference; aliases of the same file count once.
     shared = {key: path for key, path in libraries.items() if path.name.endswith(".so")}
     libraries = shared or libraries
     if len(complete) != 1 or len(libraries) != 1:
-        reason = "hipFORT needs one complete module directory and one library in the selected ROCm prefix; inspect fortran-preflight.json"
+        reason = "hipFORT needs one complete module directory and one library from the selected inputs; inspect fortran-preflight.json"
         for profile in ("hip", "openmp"):
             result["profile_errors"][profile] = result["profile_errors"].get(profile, "") + ("; " if profile in result["profile_errors"] else "") + reason
     else:
@@ -1007,6 +1022,10 @@ def parser():
         result.add_argument("--" + name, required=True)
     result.add_argument("--timeout-seconds", type=int, default=1500)
     result.add_argument("--source-language", choices=("c-cpp", "fortran"), default="c-cpp")
+    result.add_argument("--hipfort-module-dir", type=Path,
+                        help="Explicit compiler-matched hipFORT module directory; requires --hipfort-library")
+    result.add_argument("--hipfort-library", type=Path,
+                        help="Explicit hipFORT AMD library; no fallback to a bundled version")
     result.add_argument("--configure-timeout", type=int, default=180)
     result.add_argument("--build-timeout", type=int, default=600)
     result.add_argument("--clean-benchmarks", action="store_true",

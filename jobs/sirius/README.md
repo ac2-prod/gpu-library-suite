@@ -101,6 +101,158 @@ not distributed with the repository. Earlier failed waves and provisional
 results remain historical evidence; do not reuse their outputs or claim that
 later success establishes the cause of an earlier failure.
 
+### Preparing a ROCm 10.1 migration
+
+ROCm 10.1 is an explicit alternative to the validated 7.2 environment above.
+The saved post-maintenance inventory confirms the following installation;
+it does **not** establish a successful 10.1 suite build or numerical run.
+Existing examples, measurement inputs, results and failure records remain the
+7.2 baseline until new build/smoke and measurement records are available.
+
+| Input | ROCm 10.1 selection |
+| --- | --- |
+| CPU modules and backends | `gcc/14.2.1`, `aocl/5.1.0/gcc14.2.1`; retain AOCL FFTW OpenMP, multithreaded BLIS/LAPACKE and AOCL Sparse selections |
+| GPU module | `rocm/10.1.0` |
+| `ROCM_PATH` / `HIP_PATH` | `/opt/rocm-10.1.0-runfile/rocm/core-10.1` |
+| C/C++ GPU compiler | That prefix's `bin/amdclang++`; native CMake HIP must not use `hipcc` as its compiler |
+| Fortran GPU compiler | That prefix's `bin/amdflang`; hipFORT must be compiled with this compiler, not GNU Fortran or the old Flang |
+| Observed compiler identity | Clang/Flang `24.0.0git`, LLVM commit `d6f6cb691863e9258034ab48c1dfce21689d5606` |
+| CMake / Python | Observed CMake 3.31.8 / Python 3.9.25; retain the existing tools |
+| GPU target | Retain `gfx942:sramecc+:xnack-` for HIP and OpenMP; do not substitute `native` |
+| MPI for clean-build preparation | `openmpi/5.0.10/rocm10.1.0`; used only as the launcher, with no MPI link in benchmark binaries |
+| Version evidence | The selected prefix's `.info/version` must contain `10.1.0` |
+
+The new `rocm` module adds `core-10.1/lib` to `LD_LIBRARY_PATH`, but not
+`core-10.1/lib/llvm/lib`. The module helper adds the latter for 10.1 so its
+`libomp.so` and `libomptarget.so` precede system copies, while keeping the
+existing GCC runtime priority. It checks both files before continuing.
+The subsequent build/runtime record must still confirm compiler and resolved
+library identities; this path selection alone is not evidence of GPU execution
+or a complete actual-loaded-library trace.
+
+#### Obtain matching hipFORT before the Fortran build
+
+The 2026-10-27 installation check searched the complete
+`/opt/rocm-10.1.0-runfile` tree, including compiler-specific subdirectories and
+components outside `core-10.1`, without search errors or truncation. No hipFORT
+files were present there. The module definitions did not identify another
+hipFORT prefix; registered hipFORT RPMs were for older ROCm releases, including
+hipFORT 0.7.1 for ROCm 7.2.0. This does not rule out an unadvertised installation
+elsewhere on Sirius.
+
+The workflow below therefore builds compiler-matched hipFORT in a new,
+user-owned run directory. It retains the system installations and uses the official
+[hipFORT 0.10.0 release (`rocm-10.1.0`)](https://github.com/ROCm/hipfort/releases/tag/rocm-10.1.0)
+and its [source-build instructions](https://rocm.docs.amd.com/projects/hipfort/en/docs-10.1.0/install/install.html).
+
+Use a site-provided 0.10.0 installation only if its compiler and source identity
+are known to match. Otherwise, obtain the official source archives pinned in
+[hipfort_sources.json](hipfort_sources.json) and stage them in a new
+`runs/<RUN_ID>/dependencies/`. The lock contains full upstream commits, archive
+URLs and SHA-256 values. The pinned inputs are hipFORT `rocm-10.1.0` (0.10.0,
+commit `29dbef942849b1043903ba927bfdeb9783c6a7e6`) and rocm-cmake
+[`therock-10.1`](https://github.com/ROCm/rocm-cmake/releases/tag/therock-10.1)
+(component version 0.14.0, commit `10155d7272ea1bf79f6b5a9dbc339657af1aa372`).
+Their release-tag names differ; do not assume a `rocm-10.1.0` rocm-cmake tag.
+Do not use a moving branch, copy 7.2 `.mod` files, or install into the system
+ROCm prefix. The suite never downloads dependencies during a build.
+
+[hipfort_build.py](hipfort_build.py) checks the archive hashes, extracts regular
+files into new directories, and builds/installs the AMD archive with the selected
+compiler inside PBS. It requires explicit build approval and a batch allocation;
+it cannot be used to build on the login node. The rocm-cmake source supplies
+its CMake modules directly, so no separate rocm-cmake build/install is needed.
+The helper records dependency source/tool/output hashes and separate command
+stdout/stderr. Failure retains the partial directory and prohibits reuse.
+
+Build the dependency inside an approved PBS allocation with the selected 10.1
+module environment. The following recipe assumes `RUN_ROOT` is a new approved
+run directory and the verified source is already staged. Source, build and
+install directories must all be new. The source's `rocm-cmake` prerequisite is
+also staged as `dependencies/rocm-cmake-source`. The explicit package directory
+and required first lookup below prevent hipFORT's upstream fallback from
+downloading `master` when this prerequisite is missing.
+Do not run this recipe on the login node or during local preparation.
+
+```bash
+cmake -S "$RUN_ROOT/dependencies/hipfort-source" \
+  -B "$RUN_ROOT/dependencies/hipfort-build" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_Fortran_COMPILER="$ROCM_PATH/bin/amdflang" \
+  -DCMAKE_C_COMPILER="$ROCM_PATH/bin/amdclang" \
+  -DROCM_PATH="$ROCM_PATH" -DCMAKE_PREFIX_PATH="$ROCM_PATH" \
+  -DCMAKE_INSTALL_PREFIX="$RUN_ROOT/dependencies/hipfort-install" \
+  -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_INCLUDEDIR=include \
+  -DROCmCMakeBuildTools_DIR="$RUN_ROOT/dependencies/rocm-cmake-source/share/rocmcmakebuildtools/cmake" \
+  -DCMAKE_REQUIRE_FIND_PACKAGE_ROCmCMakeBuildTools=ON \
+  -DHIPFORT_MULTITOOLCHAIN_LAYOUT=ON \
+  -DHIPFORT_BUILD_AMDGCN=ON -DHIPFORT_BUILD_NVPTX=OFF \
+  -DHIPFORT_USE_FPOINTER_INTERFACES=ON -DHIPFORT_ASSUMED_RANK=OFF \
+  -DBUILD_NATIVE=OFF -DHIPFORT_CODE_COVERAGE=OFF \
+  -DCMAKE_Fortran_FLAGS="-fno-fast-math -ffp-contract=off" \
+  -DCMAKE_Fortran_FLAGS_RELEASE=-O3 -DCMAKE_Fortran_FLAGS_TESTING=-O0 \
+  -DCMAKE_Fortran_FLAGS_DEBUG="-O0 -g" \
+  -DBUILD_TESTING=OFF -DHIPFORT_EXTENDED_TESTS=OFF
+cmake --build "$RUN_ROOT/dependencies/hipfort-build" --parallel 4
+cmake --install "$RUN_ROOT/dependencies/hipfort-build"
+```
+
+The explicit install directories give these expected inputs under
+`$RUN_ROOT/dependencies/hipfort-install`:
+
+- `include/fortran/amdflang/hipfort/amdgcn` (module directory);
+- `lib/fortran/amdflang/libhipfort-amdgcn.a` (AMD archive).
+
+Verify these against `install_manifest.txt`; do not guess a path for a
+site-provided build, which may use `lib64`. Retain the dependency's source hash,
+CMake cache, compiler version, build/install logs and install manifest alongside
+the run. The suite's `fortran-preflight.json` records the selected archive and
+module hashes. Compatibility remains unverified until compile/link of the
+actual examples and the subsequent numerical smoke. Installing hipFORT alone
+does not pass those checks.
+
+#### Select the new stack for suite builds
+
+Set `SIRIUS_COMPUTE_ROCM_VERSION=10.1.0` explicitly in the reviewed build packet.
+The default remains `7.2.0`; `7.14.1` is not an automatic intermediate step.
+For Fortran, also supply both absolute paths as
+`AMD_BUILD_HIPFORT_MODULE_DIR` and `AMD_BUILD_HIPFORT_LIBRARY`. The job forwards
+them to `amd_build.py --hipfort-module-dir ... --hipfort-library ...`, and then
+to the existing `GPU_SUITE_HIPFORT_MODULE_DIR` / `GPU_SUITE_HIPFORT_LIBRARY`
+CMake inputs. Incomplete explicit inputs never fall back to bundled hipFORT.
+C/C++ builds do not require hipFORT.
+
+Use separate, new build/run directories for each language and CPU/HIP/OpenMP
+profile. `AMD_BUILD_MODE=all` builds 36 example/benchmark artifacts per language;
+`clean-benchmarks` retains the existing 18-artifact mode and adds CPU/APU checks
+and runtime collection using the matching MPI module. Set
+`AMD_BUILD_SOURCE_LANGUAGE=c-cpp` or `fortran` and
+`AMD_BUILD_CPU_SPARSE_BACKEND=AOCLSPARSE`. The build conditions remain Release,
+the existing strict numerical options, the same target and CPU providers.
+rocThrust's `.hip` object remains an explicit Clang compile/link input, with
+the selected Fortran driver performing the Fortran final link.
+
+No forced USM, `HSA_XNACK=1`, or `OMPX_DGPU_MAPS=1` is introduced. Preserve the
+existing input-copy, OpenMP mapping, synchronization and timing code; record
+the effective runtime controls in the new packet. Never relabel old binaries
+or combine 7.2 and 10.1 results under one campaign.
+
+Before execution, stage and verify the locked archives, fix the source version,
+and review a fresh packet with the
+selected module/helper hashes and the exact noninteractive submission command.
+Use the established `mcrp`, one exclusive physical node (`select=4`,
+`place=exclhost`), one-hour build allocation per language. The Fortran job first
+allows 15 minutes for hipFORT, then 40 minutes for the 36 suite artifacts,
+leaving five minutes for startup and records; these are bounds, not measured
+10.1 build durations. The C/C++ job allows 55 minutes for its 36 artifacts.
+These initial build-only jobs perform no GPU execution; smoke, CPU/APU checks
+and runtime collection precede subsequent performance approval. No new SSH, build,
+smoke or measurement is authorized by this preparation. GPU-library API and
+new compiler compatibility are real-build/smoke acceptance items, not reasons
+to change the six operations speculatively. Preserve the 2026-10-20 teaching
+decks; the migrated editions will use their actual completion date after
+validation and remeasurement.
+
 <a id="amd-fortran-first-36-artifact-build-preparation"></a>
 
 ### Historical AMD Fortran build preparation

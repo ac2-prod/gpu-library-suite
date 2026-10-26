@@ -26,7 +26,7 @@ CPU_FIXTURE_TEST_IDS = frozenset({
 
 # Audited IDs, not counts. Update a digest only after reviewing every new/removed
 # case. Checked before unittest discovery imports any test modules.
-AUDITED_MODULE_IDS = {'test_sirius_amd_prepare': 'ac683d636a4ed5c4cc2869c2405869c35dbc32c35d76ac3a807d0562c808dea5',
+AUDITED_MODULE_IDS = {'test_sirius_amd_prepare': '0953a020cfb19f1851e7da3c44235632f834dfe57d7eae878faf6e5d48e8c1ac',
  'test_sirius_amd_production': '25f385db672ea9029bbab606a59157d99da8870bc9fe96222ba04746a384507b',
  'test_sirius_amd_smoke': '13f91475ce925b866ddf4739eb4b2610d04629fd20e6f00ab849fae4aa9c23e5',
  'test_sirius_amd_smoke_campaign': '760c2e71e6fa834acda03826cc9c0a23bff15d0ea7dbbd908e63415e82ef4c8b',
@@ -45,7 +45,7 @@ AUDITED_MODULE_IDS = {'test_sirius_amd_prepare': 'ac683d636a4ed5c4cc2869c2405869
  'test_aocl_sparse': '6fbf14b3eeb3fadfba9926cc5bd5366f6d04c5e3ce3b528f5be4fab37f1d7390',
  'test_aocl_sparse_tools': 'fa122dd3d6c523d2fca8333000ddcb1a36fff49c7c987cb9f053ebeacb68b988',
  'test_amd_solver': 'c9b50d4b8d6ec12d6452b1fda4017e2b5da4e73e44c6f99671c51f6aa17fa8dc',
- 'test_rocfft_module_build': '218fe1fe4d5b6bea3269fc8284d3e094c91bd1078f59eec240a54258b60ac547',
+ 'test_rocfft_module_build': '2ff358699f97bc04e79c02505ecc5f6009e1e1db9941d880910fdc130fe5c111',
  'test_rocfft_build_only': 'a26cf1f6d508e98c709d2f2bd5ae98a179e56975a84ec76141ce4d2a372b113e',
  'test_fftw_metadata': '58e19ef4359bf9f8314aea82b3c0e98361e4476e129224cc86e1cd41c724e6cd',
  'test_aggregation': 'ae78f974d5804b334f74e0da2aabfef4ec2bd203911791cf94dea4914c34d9c2',
@@ -86,7 +86,8 @@ AUDITED_MODULE_IDS = {'test_sirius_amd_prepare': 'ac683d636a4ed5c4cc2869c2405869
  'test_scheduler_identity': '11d27f0f535e34c0e72ae9533cce26d77ae0ee8f076c9d4e22fef0d14b03370f',
  'test_schema': '712a1e552fb3055780061f8588a6d1009df5fa577ac4efcb087bfa2403f3d2f6',
  'test_sirius_remote': 'a7aab7a08b9ba4f532cc6d10645db6b3add700b6e6c1993aef3caa800f5e09bf',
- 'test_sirius_amd_build': 'b7c0f56ddfff8dc10a75d2d1557d62dfdf8c0b7e879e5b7cef126b2b658eca9b',
+ 'test_sirius_hipfort_build': '8b42a4eadb03f7449093305a1d10d54ccbde01aba0fcd9090075d62b8af9cb98',
+ 'test_sirius_amd_build': 'c4f45d9074f92d13f07c0939150680da96d45d8a79d7170998061bbff8e13ce4',
  'test_sirius_fftw_probe': '2ebe5e9c722e9a175fde27a26ba8c468eb8e82eb68532fce6606b4951dcab51d',
  'test_sirius_fftw_modules': 'a472cfc8ccf0fcdb34e094c62c399abf478b6c998d7036688c15af3229e022d7',
  'test_sirius_fftw_threads': 'cd0154146969d641603abf14eda75f32d8cb33bd7290807f8dc6263c89cab3d7',

@@ -24,13 +24,24 @@ export AMD_BUILD_CPU_SPARSE_BACKEND=${AMD_BUILD_CPU_SPARSE_BACKEND:-ONEMKL}
 export AMD_BUILD_MODE=${AMD_BUILD_MODE:-all}
 export AMD_BUILD_SOURCE_LANGUAGE=${AMD_BUILD_SOURCE_LANGUAGE:-c-cpp}
 [[ $AMD_BUILD_SOURCE_LANGUAGE == c-cpp || $AMD_BUILD_SOURCE_LANGUAGE == fortran ]] || fail 'invalid source language'
+export SIRIUS_COMPUTE_ROCM_VERSION=${SIRIUS_COMPUTE_ROCM_VERSION:-7.2.0}
+[[ $SIRIUS_COMPUTE_ROCM_VERSION == 7.2.0 || $SIRIUS_COMPUTE_ROCM_VERSION == 10.1.0 ]] || fail 'unsupported explicit ROCm version'
+if [[ -n ${AMD_BUILD_HIPFORT_MODULE_DIR:-} || -n ${AMD_BUILD_HIPFORT_LIBRARY:-} ]]; then
+    [[ $AMD_BUILD_SOURCE_LANGUAGE == fortran && ${AMD_BUILD_HIPFORT_MODULE_DIR:-} == /* &&
+       -d $AMD_BUILD_HIPFORT_MODULE_DIR && ${AMD_BUILD_HIPFORT_LIBRARY:-} == /* &&
+       -f $AMD_BUILD_HIPFORT_LIBRARY ]] || fail 'explicit hipFORT needs Fortran and both existing absolute inputs'
+    export AMD_BUILD_HIPFORT_MODULE_DIR AMD_BUILD_HIPFORT_LIBRARY
+fi
+if [[ $SIRIUS_COMPUTE_ROCM_VERSION == 10.1.0 && $AMD_BUILD_SOURCE_LANGUAGE == fortran ]]; then
+    [[ -n ${AMD_BUILD_HIPFORT_MODULE_DIR:-} && -n ${AMD_BUILD_HIPFORT_LIBRARY:-} ]] || fail 'ROCm 10.1 Fortran requires explicit matching hipFORT inputs'
+fi
 case $AMD_BUILD_MODE in
     all) export SIRIUS_COMPUTE_MPI_MODULE='' ;;
     clean-benchmarks)
         [[ ${AMD_BUILD_EXPECTED_COMMIT:-} =~ ^[0-9a-f]{40}$ ]] || fail 'approved clean commit required'
         [[ ${AMD_BUILD_ROCM_VERSION_FILE:-} == /* && -f $AMD_BUILD_ROCM_VERSION_FILE ]] || fail 'explicit ROCm version file required'
         export AMD_BUILD_EXPECTED_COMMIT AMD_BUILD_ROCM_VERSION_FILE
-        export SIRIUS_COMPUTE_MPI_MODULE=openmpi/5.0.10/rocm7.2.0
+        export SIRIUS_COMPUTE_MPI_MODULE="openmpi/5.0.10/rocm$SIRIUS_COMPUTE_ROCM_VERSION"
         ;;
     *) fail 'unknown AMD_BUILD_MODE' ;;
 esac
@@ -60,6 +71,9 @@ shift
 extra=()
 if [[ $AMD_BUILD_SOURCE_LANGUAGE == fortran ]]; then
     extra+=(--source-language fortran --configure-timeout 300 --build-timeout 900)
+    if [[ -n ${AMD_BUILD_HIPFORT_MODULE_DIR:-} ]]; then
+        extra+=(--hipfort-module-dir "$AMD_BUILD_HIPFORT_MODULE_DIR" --hipfort-library "$AMD_BUILD_HIPFORT_LIBRARY")
+    fi
 fi
 if [[ $AMD_BUILD_MODE == clean-benchmarks ]]; then
     extra+=(--clean-benchmarks --expected-git-commit "$AMD_BUILD_EXPECTED_COMMIT" --rocm-version-file "$AMD_BUILD_ROCM_VERSION_FILE")

@@ -26,13 +26,19 @@ _sirius_compute_validate_libraries() {
 _sirius_compute_prepare_modules() {
     local source_root=${STAGE31_SOURCE_ROOT:-} run_root=${STAGE31_RUN_ROOT:-} run_id=${STAGE31_RUN_ID:-}
     local source_real run_real before_gcc after_gcc after_aocl after_rocm after_mpi='' gcc_paths='' effective=''
-    local remaining entry cpu_cc cpu_cxx amd_cxx version
+    local remaining entry cpu_cc cpu_cxx amd_cxx version llvm_libraries=''
     local aocl_root=/system/apps/rhel/9.6-202602/aocl/5.1.0/gcc
     local rocm_root=/opt/rocm-7.2.0
+    local rocm_version=${SIRIUS_COMPUTE_ROCM_VERSION:-7.2.0}
     [[ ${GPU_SUITE_SIRIUS_COMPUTE_APPROVED:-} == yes && -n ${PBS_JOBID:-} ]] || {
         _sirius_compute_module_error 'explicit compute approval and PBS_JOBID are required'; return 2;
     }
-    [[ -z ${SIRIUS_COMPUTE_MPI_MODULE:-} || $SIRIUS_COMPUTE_MPI_MODULE == openmpi/5.0.10/rocm7.2.0 ]] || {
+    case $rocm_version in
+        7.2.0) : ;;
+        10.1.0) rocm_root=/opt/rocm-10.1.0-runfile/rocm/core-10.1 ;;
+        *) _sirius_compute_module_error 'unsupported explicit ROCm version'; return 2 ;;
+    esac
+    [[ -z ${SIRIUS_COMPUTE_MPI_MODULE:-} || $SIRIUS_COMPUTE_MPI_MODULE == "openmpi/5.0.10/rocm$rocm_version" ]] || {
         _sirius_compute_module_error 'unsupported explicit MPI module'; return 2;
     }
     [[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$ && $run_id != *..* ]] || {
@@ -57,7 +63,7 @@ _sirius_compute_prepare_modules() {
     module purge || return 2
     module show gcc/14.2.1 || return 2
     module show aocl/5.1.0/gcc14.2.1 || return 2
-    module show rocm/7.2.0 || return 2
+    module show "rocm/$rocm_version" || return 2
     before_gcc=${LD_LIBRARY_PATH:-}
     printf 'COMPUTE_LD_LIBRARY_PATH_BEFORE_GCC=%s\n' "$before_gcc"
     _sirius_compute_validate_libraries before-GCC "$before_gcc" || return 2
@@ -89,7 +95,7 @@ _sirius_compute_prepare_modules() {
     [[ ${AOCL_ROOT:-} == "$aocl_root" && -f $aocl_root/include/fftw3.h ]] || {
         _sirius_compute_module_error 'AOCL prefix/header differs from the observed provider'; return 2;
     }
-    module load rocm/7.2.0 || return 2
+    module load "rocm/$rocm_version" || return 2
     after_rocm=${LD_LIBRARY_PATH:-}
     printf 'COMPUTE_LD_LIBRARY_PATH_AFTER_ROCM=%s\n' "$after_rocm"
     _sirius_compute_validate_libraries after-ROCm "$after_rocm" || return 2
@@ -105,10 +111,21 @@ _sirius_compute_prepare_modules() {
        -f $rocm_root/include/hip/hip_runtime_api.h && -f $rocm_root/include/rocfft/rocfft.h ]] || {
         _sirius_compute_module_error 'ROCm/AOCL prefixes or headers differ from observed providers'; return 2;
     }
+    if [[ $rocm_version == 10.1.0 ]]; then
+        [[ -f $rocm_root/.info/version && $(< "$rocm_root/.info/version") == "$rocm_version" ]] || {
+            _sirius_compute_module_error 'ROCm version file differs from the selected version'; return 2;
+        }
+        # The new module adds core/lib, but not its compiler runtime directory.
+        # Prefer the matching OpenMP runtime to system copies; keep GCC first.
+        llvm_libraries=$rocm_root/lib/llvm/lib
+        [[ -f $llvm_libraries/libomp.so && -f $llvm_libraries/libomptarget.so ]] || {
+            _sirius_compute_module_error 'selected ROCm OpenMP runtime libraries are missing'; return 2;
+        }
+    fi
     # Reapply GCC precedence only after ALL module loads. Retain every observed
     # AOCL/ROCm/initial entry even if a later module replaced the whole variable.
     effective=$gcc_paths
-    for remaining in "$after_mpi" "$after_rocm" "$after_aocl" "$after_gcc" "$before_gcc"; do
+    for remaining in "$llvm_libraries" "$after_mpi" "$after_rocm" "$after_aocl" "$after_gcc" "$before_gcc"; do
         while [[ -n $remaining ]]; do
             entry=${remaining%%:*}
             if [[ :$effective: != *":$entry:"* ]]; then
