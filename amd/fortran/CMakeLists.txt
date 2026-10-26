@@ -129,6 +129,9 @@ foreach(_index RANGE 0 5)
       set(_probe_linker "")
       if(_wrapper)
         set(_probe_linker LINKER_LANGUAGE Fortran)
+        # Native HIP detection may omit its C++ runtime libraries. Use the
+        # selected C++ driver's libraries in both the probe and real targets.
+        list(APPEND _links ${CMAKE_CXX_IMPLICIT_LINK_LIBRARIES})
       endif()
       gpu_suite_fortran_probe(_amd_probe_${_name} SOURCES ${_helpers} "${_source}" ${_wrapper}
         LIBRARIES ${_links} INCLUDES ${_includes} OPTIONS ${_options} ${_probe_linker})
@@ -165,6 +168,10 @@ foreach(_index RANGE 0 5)
         set_target_properties(${_target} PROPERTIES Fortran_MODULE_DIRECTORY "${_modules}"
           LINKER_LANGUAGE Fortran Fortran_PREPROCESS ON
           RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/${_library}")
+        if(NOT _impl EQUAL 0)
+          # The Flang GPU link also consumes C++ bridge objects built by GCC.
+          set_target_properties(${_target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        endif()
         target_include_directories(${_target} BEFORE PRIVATE "${_modules}" ${_includes})
         target_compile_definitions(${_target} PRIVATE ${_definitions}
           "GPU_SUITE_FORTRAN_CPU_BACKEND=\"${_backend}\""

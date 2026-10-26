@@ -190,6 +190,79 @@ endif()
         self.assertIn("Linking Fortran executable", log)
         self.assertFalse(list(self.work.rglob("must-not-run")))
 
+        # Exercise the AMD target definitions with a precompiled host object
+        # standing in for native HIP. The Fortran-only probe cannot obtain the
+        # C++ runtime from a CXX source, matching the saved rocThrust failure.
+        layout = self.work / "amd-layout"
+        layout.mkdir()
+        wrapper = layout / "rocthrust/examples/rocthrust_wrapper.hip"
+        wrapper.parent.mkdir(parents=True)
+        self.command(["c++", "-fPIC", "-c", self.work / "wrapper.cpp", "-o", wrapper])
+        shutil.copyfile(wrapper, layout / "wrapper.o")
+        for stem, library in (("blas", "rocblas"), ("reduce", "rocthrust")):
+            for name in (stem + "_cpu", stem + "_gpu", "openmp_" + library):
+                for purpose, suffix in (("examples", ""), ("benchmarks", "_bench")):
+                    path = layout / library / purpose / (name + suffix + ".f90")
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    text = (self.work / "caller.f90").read_text() if library == "rocthrust" and "cpu" not in name else "program fixture\nend program\n"
+                    path.write_text(text)
+            (layout / library / "benchmarks" / (stem + "_workload.F90")).write_text(
+                "module " + stem + "_fixture\nend module\n")
+        (layout / "common").mkdir()
+        (layout / "common/benchmark_support.f90").write_text("module support\nend module\n")
+        for name in ("benchmark_bridge", "hip_device_bridge"):
+            (layout / "common" / (name + ".cpp")).write_text("int " + name + "() { return 0; }\n")
+        (layout / "CMakeLists.txt").write_text('''cmake_minimum_required(VERSION 3.29)
+project(amd_host_layout LANGUAGES Fortran CXX)
+include("@ROOT@/cmake/GpuSuiteFortran.cmake")
+function(gpu_suite_fortran_probe output)
+  cmake_parse_arguments(P "" "LINKER_LANGUAGE" "SOURCES;LIBRARIES;OPTIONS;INCLUDES" ${ARGN})
+  set(wrapper "${CMAKE_SOURCE_DIR}/rocthrust/examples/rocthrust_wrapper.hip")
+  if(wrapper IN_LIST P_SOURCES)
+    list(REMOVE_ITEM P_SOURCES "${wrapper}")
+    list(PREPEND P_LIBRARIES "${CMAKE_SOURCE_DIR}/wrapper.o")
+  endif()
+  _gpu_suite_fortran_probe(${output} SOURCES ${P_SOURCES} LIBRARIES ${P_LIBRARIES}
+    OPTIONS ${P_OPTIONS} INCLUDES ${P_INCLUDES} LINKER_LANGUAGE Fortran)
+  set(${output} "${${output}}" PARENT_SCOPE)
+endfunction()
+function(gpu_suite_configure_executable)
+endfunction()
+function(gpu_suite_record_status label enabled reason)
+  if(NOT enabled)
+    message(FATAL_ERROR "${label}: ${reason}")
+  endif()
+endfunction()
+foreach(name GpuSuite::hipfort RocBLAS::rocblas RocBLAS::hip RocThrust::rocthrust RocThrust::hip GpuSuite::CBLAS gpu_suite::common)
+  add_library(${name} INTERFACE IMPORTED)
+endforeach()
+set(GPU_SUITE_AMD_LIBRARIES rocblas rocthrust)
+set(GPU_SUITE_BUILD_CPU ON)
+set(GPU_SUITE_BUILD_EXAMPLES ON)
+set(GPU_SUITE_BUILD_BENCHMARKS ON)
+set(GPU_SUITE_HIP_TARGETS_ENABLED TRUE)
+set(GPU_SUITE_OPENMP_TARGETS_ENABLED TRUE)
+set(GPU_SUITE_FORTRAN_HIP_WRAPPER_ENABLED TRUE)
+set(RocBLAS_FOUND TRUE)
+set(RocThrust_FOUND TRUE)
+set_source_files_properties(rocthrust/examples/rocthrust_wrapper.hip PROPERTIES EXTERNAL_OBJECT TRUE)
+include("@ROOT@/amd/fortran/CMakeLists.txt")
+foreach(target blas_gpu_bench openmp_rocblas_bench reduce_gpu reduce_gpu_bench openmp_rocthrust openmp_rocthrust_bench)
+  get_target_property(pic ${target} POSITION_INDEPENDENT_CODE)
+  if(NOT pic)
+    message(FATAL_ERROR "GPU bridge/wrapper target lacks PIC: ${target}")
+  endif()
+endforeach()
+get_target_property(cpu_pic blas_cpu_bench POSITION_INDEPENDENT_CODE)
+if(cpu_pic)
+  message(FATAL_ERROR "GPU PIC setting leaked to CPU")
+endif()
+'''.replace("@ROOT@", str(ROOT)))
+        self.command(["cmake", "-S", layout, "-B", layout / "build",
+                      "-DCMAKE_Fortran_COMPILER=" + shutil.which("gfortran")])
+        self.command(["cmake", "--build", layout / "build", "--verbose"])
+        self.assertFalse(list(self.work.rglob("must-not-run")))
+
 
 if __name__ == "__main__":
     unittest.main()
