@@ -43,10 +43,12 @@ class FakeProcesses:
         self.clean = clean
         self.build_attempts = []
         self.calls = []
+        self.environments = []
         self.pid = 424242
 
     def __call__(self, argv, **kwargs):
         self.calls.append(argv)
+        self.environments.append(dict(kwargs["env"]))
         code, output, error = self.dispatch(argv)
         kwargs["stdout"].write(output.encode())
         kwargs["stderr"].write(error.encode())
@@ -381,6 +383,13 @@ class SiriusAmdBuildTests(unittest.TestCase):
     def test_fortran_external_hipfort_is_explicit_and_recorded_without_bundled_fallback(self):
         self.fortran_fixture()
         self.env["SIRIUS_COMPUTE_ROCM_VERSION"] = "10.1.0"
+        runtime = self.rocm / "lib/llvm/lib"
+        runtime.mkdir(parents=True)
+        for name in ("libomp.so", "libomptarget.so"):
+            (runtime / name).write_text("matching ROCm runtime fixture; never loaded")
+        runtime_flag = "-DCMAKE_EXE_LINKER_FLAGS=-L" + str(runtime) + " -Wl,-rpath," + str(runtime)
+        original_library_path = "/fixture/aocl/lib:/usr/lib64:/usr/lib:" + str(runtime)
+        self.env["LIBRARY_PATH"] = original_library_path
         prefix = self.root / "separate-hipfort"
         modules = prefix / "include/fortran/amdflang/hipfort/amdgcn"
         modules.mkdir(parents=True)
@@ -398,7 +407,16 @@ class SiriusAmdBuildTests(unittest.TestCase):
         self.assertEqual(evidence["hipfort"]["library"], build.file_identity(library))
         self.assertEqual(len(evidence["module_candidates"]), 1)
         self.assertEqual(len(evidence["library_candidates"]), 1)
+        expected_library_path = str(runtime) + ":/fixture/aocl/lib:/usr/lib64:/usr/lib"
+        for argv, environment in zip(fake.calls, fake.environments):
+            if "-B" in argv or "--build" in argv:
+                key = "-B" if "-B" in argv else "--build"
+                openmp = Path(argv[argv.index(key) + 1]).name == "build-openmp"
+                self.assertEqual(environment["LIBRARY_PATH"], expected_library_path if openmp else original_library_path)
+        self.assertEqual(self.env["LIBRARY_PATH"], original_library_path)
         for argv in (a for a in fake.calls if "-S" in a):
+            profile = Path(argv[argv.index("-B") + 1]).name
+            self.assertEqual(runtime_flag in argv, profile == "build-openmp")
             if argv[argv.index("-B") + 1].endswith("build-cpu"):
                 self.assertFalse(any("HIPFORT" in arg for arg in argv))
                 self.assertFalse(any(a.startswith("-DCMAKE_Fortran_FLAGS=") for a in argv))
@@ -410,6 +428,19 @@ class SiriusAmdBuildTests(unittest.TestCase):
         for profile in build.PROFILES:
             argv = build.configure_argv(self.args, self.tools["cmake"], self.root / profile, profile, self.env)
             self.assertFalse(any(a.startswith("-DCMAKE_Fortran_FLAGS=") for a in argv))
+            self.assertEqual(runtime_flag in argv, profile == "openmp")
+            environment = build.profile_environment(self.args, profile, self.env)
+            self.assertEqual(environment["LIBRARY_PATH"], expected_library_path if profile == "openmp" else original_library_path)
+            self.assertEqual(build.profile_environment(self.args, profile, environment), environment)
+        # No fallback to the system runtime when the selected SDK is incomplete.
+        library = runtime / "libomptarget.so"
+        library.rename(runtime / "libomptarget.absent")
+        with self.assertRaisesRegex(ValueError, "OpenMP runtime libraries are missing"):
+            build.configure_argv(self.args, self.tools["cmake"], self.root / "openmp", "openmp", self.env)
+        legacy = dict(self.env, SIRIUS_COMPUTE_ROCM_VERSION="7.2.0")
+        self.assertEqual(build.profile_environment(self.args, "openmp", legacy), legacy)
+        argv = build.configure_argv(self.args, self.tools["cmake"], self.root / "legacy", "openmp", legacy)
+        self.assertFalse(any(a.startswith("-DCMAKE_EXE_LINKER_FLAGS=") for a in argv))
 
     def test_fortran_invalid_explicit_hipfort_never_uses_bundled_inputs(self):
         self.fortran_fixture()

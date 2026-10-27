@@ -187,18 +187,32 @@ class SiriusPreparationTests(unittest.TestCase):
         metadata = dict(cxx=dict(compiler_path="/fixture/clang++"),
                         openmp=dict(compile_flags="-O3 -fopenmp --offload-arch=fixture", link_flags="-fopenmp"),
                         rocm=dict(hip_include="/fixture/include"), dependencies=dict(hip=dict(path="/fixture/libhip.so")))
-        for failure in (False, True):
-            with self.subTest(failure=failure):
-                root = self.root / ("failed" if failure else "passed")
+        rocm = self.root / "rocm"
+        runtime = rocm / "lib/llvm/lib"
+        runtime.mkdir(parents=True)
+        for name in ("libomp.so", "libomptarget.so"):
+            (runtime / name).write_text("fixture runtime, never loaded")
+        for selected, failure in (("7.2.0", False), ("10.1.0", False), ("10.1.0", True)):
+            with self.subTest(selected=selected, failure=failure):
+                root = self.root / (selected + ("-failed" if failure else "-passed"))
                 root.mkdir()
-                job = SimpleNamespace(root=root, env=dict(os.environ), commands=[],
-                    args=SimpleNamespace(source_root=ROOT, expected_source_sha256="a" * 64),
+                job = SimpleNamespace(root=root, env=dict(os.environ, SIRIUS_COMPUTE_ROCM_VERSION=selected,
+                    LIBRARY_PATH="/fixture/aocl/lib:/usr/lib64"), commands=[],
+                    args=SimpleNamespace(source_root=ROOT, expected_source_sha256="a" * 64, rocm_root=rocm),
                     profiles={"openmp": {"build_metadata": metadata}}, preparation_inputs={"nodefile": self.request["nodefile"]})
                 stages = []
                 def run(stage, argv, timeout=30, env=None):
                     stages.append(stage)
                     job.commands.append(dict(stage=stage, argv=[str(a) for a in argv]))
                     if stage == "placement-compile":
+                        self.assertEqual(job.env["LIBRARY_PATH"], "/fixture/aocl/lib:/usr/lib64")
+                        if selected == "10.1.0":
+                            self.assertEqual(env["LIBRARY_PATH"], str(runtime) + ":/fixture/aocl/lib:/usr/lib64")
+                            self.assertIn("-L" + str(runtime), argv)
+                            self.assertIn("-Wl,-rpath," + str(runtime), argv)
+                        else:
+                            self.assertEqual(env, job.env)
+                            self.assertNotIn("-L" + str(runtime), argv)
                         Path(argv[-1]).write_text("inert check executable")
                     if stage == "placement-mpi":
                         self.assertEqual([str(a) for a in argv[3:9]], ["-np", "1", "-npernode", "1", "--bind-to", "none"])

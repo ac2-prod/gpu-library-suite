@@ -104,10 +104,13 @@ later success establishes the cause of an earlier failure.
 ### Preparing a ROCm 10.1 migration
 
 ROCm 10.1 is an explicit alternative to the validated 7.2 environment above.
-The saved post-maintenance inventory confirms the following installation;
-it does **not** establish a successful 10.1 suite build or numerical run.
-Existing examples, measurement inputs, results and failure records remain the
-7.2 baseline until new build/smoke and measurement records are available.
+The saved post-maintenance inventory confirms the following installation.
+After correcting OpenMP link-runtime selection, run
+`sirius-rocm10-relink-smoke-20261027T045014Z-1dee35af` passed 18 teaching examples
+and 72 numerical benchmark records per language (C/C++ and Fortran), including
+rocThrust interoperation. Its 24 relinked OpenMP executables use the selected
+LLVM 24 runtime. This is numerical smoke evidence, not a performance result.
+Existing 7.2 measurements and failure records remain unchanged.
 
 | Input | ROCm 10.1 selection |
 | --- | --- |
@@ -129,6 +132,43 @@ existing GCC runtime priority. It checks both files before continuing.
 The subsequent build/runtime record must still confirm compiler and resolved
 library identities; this path selection alone is not evidence of GPU execution
 or a complete actual-loaded-library trace.
+
+For the ROCm 10.1 **OpenMP build tree**, `amd_build.py` also passes
+`-L<ROCM_PATH>/lib/llvm/lib -Wl,-rpath,<ROCM_PATH>/lib/llvm/lib` through
+`CMAKE_EXE_LINKER_FLAGS`, equally for C/C++ and Fortran. The explicit link search
+is paired with a profile-local `LIBRARY_PATH` whose first entry is that same
+LLVM directory. The observed 10.1 Clang/Flang drivers expand `LIBRARY_PATH`
+before command-line `-L` options: adding only `-L` and RPATH still selected
+`/usr/lib64/libomptarget.so`. `amd_build.py` applies this environment to OpenMP
+configure and build commands and records it with each command. The CPU/APU
+placement helper built by `amd_prepare.py` uses the same link options and
+environment; CPU and HIP environments are preserved. `LD_LIBRARY_PATH` alone does not fix
+an executable that already requires `libomptarget.so.21.1` or searches system
+libraries first through `DT_RPATH`. Such executables need a new link; preserve
+the old build and failure logs. Before another smoke, check the new executables'
+`NEEDED` and RPATH entries against the selected ROCm runtime (`24.0git` in the
+saved 10.1 installation), then confirm execution in a separately approved job.
+CPU/HIP build flags and the validated 7.2 build recipe are unchanged. LLVM
+[requires matching compiler and offload runtime builds](https://openmp.llvm.org/SupportAndFAQ.html#q-what-are-the-llvm-components-used-in-offloading-and-how-are-they-found).
+
+For production measurement, first fix the corrected build/launcher version in
+Git and use the existing `clean-benchmarks` mode for 18 benchmarks per language,
+reusing the compiler-matched hipFORT installation. The relink smoke retains the
+original compile metadata plus separate relink evidence; do not relabel it as a
+new clean production build. Collect placement/runtime inputs and check the new
+binaries numerically before measuring. Keep the existing production sizes,
+precision, timing boundaries, warm-up, repetitions, trials and 24-thread CPU
+request identical across languages. Use six physical hosts in each of two waves
+(3,240 rows per wave and language), with separate immutable language campaigns.
+The new build, smoke and measurement operations require execution approval;
+old results and failed runs are not overwritten.
+
+When preparing a threaded Fortran FFTW smoke, set `cpu_threads` to the requested
+count and use `cpu-fftw-threaded` with `cpu_parallelism: "threaded"`, but keep
+`cpu_threads_effective: null`. The bridge rejects a claimed effective worker
+count that has not been observed. This metadata distinction does not change the
+requested thread count, workload or timing boundaries; the canonical serial
+Fortran smoke configuration remains valid as supplied.
 
 #### Obtain matching hipFORT before the Fortran build
 

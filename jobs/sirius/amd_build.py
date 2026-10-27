@@ -394,6 +394,26 @@ def gcc_toolchain_flag(compiler):
     return "--gcc-toolchain=" + shlex.quote(str(compiler.parent.parent))
 
 
+def selected_openmp_runtime(args, env):
+    if env.get("SIRIUS_COMPUTE_ROCM_VERSION") == "10.1.0":
+        runtime = args.rocm_root / "lib/llvm/lib"
+        if not all((runtime / name).is_file() for name in ("libomp.so", "libomptarget.so")):
+            raise ValueError("Selected ROCm OpenMP runtime libraries are missing")
+        return runtime
+    return None
+
+
+def profile_environment(args, profile, env):
+    result = dict(env)
+    runtime = selected_openmp_runtime(args, env) if profile == "openmp" else None
+    if runtime is not None:
+        # These ROCm drivers prepend LIBRARY_PATH before explicit -L options.
+        # Scope this ordering to OpenMP configure/build, not CPU or HIP.
+        remaining = [p for p in env.get("LIBRARY_PATH", "").split(os.pathsep) if p and p != str(runtime)]
+        result["LIBRARY_PATH"] = os.pathsep.join([str(runtime)] + remaining)
+    return result
+
+
 def configure_argv(args, cmake, build, profile, env, selected_cpu_options=None):
     flags = {"CMAKE_BUILD_TYPE": "Release", "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
              "GPU_SUITE_VENDOR": "amd", "GPU_SUITE_AMD_LIBRARIES": ";".join(FAMILIES),
@@ -414,6 +434,12 @@ def configure_argv(args, cmake, build, profile, env, selected_cpu_options=None):
                      CMAKE_HIP_ARCHITECTURES=args.gpu_arch)
         if profile == "openmp":
             flags["GPU_SUITE_AMD_GPU_TARGET"] = args.gpu_arch
+            if env.get("SIRIUS_COMPUTE_ROCM_VERSION") == "10.1.0":
+                # Pair these flags with profile_environment: this driver's
+                # LIBRARY_PATH entries precede explicit -L options.
+                runtime = selected_openmp_runtime(args, env)
+                flags["CMAKE_EXE_LINKER_FLAGS"] = (
+                    "-L" + shlex.quote(str(runtime)) + " -Wl,-rpath," + shlex.quote(str(runtime)))
     if args.source_language == "fortran":
         flags["CMAKE_Fortran_COMPILER"] = str(args.cpu_fortran_compiler if profile == "cpu" else args.amd_fortran_compiler)
         if profile != "cpu":
@@ -572,7 +598,8 @@ class Build:
         prefix = self.root / "logs" / ("%03d-%s" % (len(self.commands) + 1, stage))
         item = {"stage": stage, "argv": [str(v) for v in argv], "started": utc(), "exit_status": None,
                 "stdout": str(prefix) + ".stdout", "stderr": str(prefix) + ".stderr", "timeout_seconds": timeout,
-                "process_started": False, "timed_out": False}
+                "process_started": False, "timed_out": False,
+                "library_path": (self.env if env is None else env).get("LIBRARY_PATH")}
         self.commands.append(item)
         try:
             with open(item["stdout"], "xb") as out, open(item["stderr"], "xb") as err:
@@ -851,7 +878,8 @@ def build_profile(job, profile, build, names, cmake):
         record = {"command_index": len(job.commands) + 1}
         try:
             job.run("build-" + profile + "-" + target,
-                    [cmake, "--build", build, "--parallel", "1", "--verbose", "--target", target], remaining)
+                    [cmake, "--build", build, "--parallel", "1", "--verbose", "--target", target], remaining,
+                    env=profile_environment(job.args, profile, job.env))
             record.update(compile_status="SUCCEEDED", reason="Compile/link command exited zero; not yet verified")
         except CommandFailure as error:
             command = job.commands[record["command_index"] - 1]
@@ -995,7 +1023,8 @@ def execute(job):
                     continue
                 if profile == "cpu" and job.aocl_selection:
                     validate_aocl_selection(job.aocl_selection)
-                output = job.run("configure-" + profile, configure_argv(job.args, cmake, build, profile, job.env, job.cpu_flags), job.args.configure_timeout)
+                output = job.run("configure-" + profile, configure_argv(job.args, cmake, build, profile, job.env, job.cpu_flags),
+                                 job.args.configure_timeout, env=profile_environment(job.args, profile, job.env))
                 names = profile_targets(job, profile, build, output)
                 if profile == "cpu" and job.aocl_selection:
                     validate_aocl_selection(job.aocl_selection, names=names)

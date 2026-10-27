@@ -211,11 +211,15 @@ def prepare(job):
         executable = root / "apu_probe"
         flags = shlex.split(metadata["openmp"]["compile_flags"])
         linker = shlex.split(metadata["openmp"]["link_flags"])
+        runtime = amd_build.selected_openmp_runtime(job.args, job.env)
+        if runtime is not None:
+            linker[:0] = ["-L" + str(runtime), "-Wl,-rpath," + str(runtime)]
         argv = [metadata["cxx"]["compiler_path"], "-std=c++17", "-D__HIP_PLATFORM_AMD__=1",
                 "-isystem", metadata["rocm"]["hip_include"], *flags, str(source),
                 *linker, metadata["dependencies"]["hip"]["path"], "-o", str(executable)]
         summary["placement"] = "RUNNING"
-        job.run("placement-compile", argv, 120)
+        job.run("placement-compile", argv, 120,
+                env=amd_build.profile_environment(job.args, "openmp", job.env))
         production.save(root / "probe-build.json", dict(source=identity(source), binary=identity(executable), argv=argv))
         placement_request = dict(probe=identity(executable), scheduler_job_id=job.env["PBS_JOBID"],
                                  nodefile=job.preparation_inputs["nodefile"])
