@@ -317,14 +317,28 @@ class RocfftComputeModuleTests(unittest.TestCase):
 
     def test_compute_rocm10_selects_matching_modules_and_openmp_runtime(self):
         values = self.rocm10_fixture()
+        root = self.base / "rocm10"
+        # Even an inherited compiler-runtime path must not override CPU libgomp.
+        values["FAKE_ROCM_LD"] = ":".join(map(str, [root / "lib/llvm/lib", root / "lib"] + self.system_libraries))
         result = self.run_fake(**values)
         self.assertEqual(result.returncode, 0, result.stderr)
         environment = json.loads(self.capture.read_text())
-        root = self.base / "rocm10"
         self.assertEqual(environment["HIP_CLANG"], str(root / "bin/amdclang++"))
         self.assertEqual(environment["ROCM_PATH"], str(root))
-        expected = self.gcc_libraries + [root / "lib/llvm/lib", root / "lib", self.aocl / "lib"] + self.system_libraries + [self.unrelated]
+        expected = self.gcc_libraries + [root / "lib"] + self.system_libraries + [self.aocl / "lib", self.unrelated]
         self.assertEqual(environment["LD_LIBRARY_PATH"], ":".join(map(str, expected)))
+        # Model loader precedence for the recorded artifacts: OpenMP has RPATH
+        # (not RUNPATH); CPU uses its GCC provider. No ELF program executes here.
+        system = self.system_libraries[0]
+        llvm = root / "lib/llvm/lib"
+        for path in (system / "libgomp.so.1", system / "libomp.so", llvm / "libgomp.so.1"):
+            path.write_text("fixture only")
+        def resolve(name, rpath):
+            directories = [Path(p) for p in environment["LD_LIBRARY_PATH"].split(":")]
+            return next(p / name for p in rpath + directories + self.system_libraries if (p / name).is_file())
+        self.assertEqual(resolve("libgomp.so.1", []), system / "libgomp.so.1")
+        self.assertEqual(resolve("libomp.so", [llvm, root / "lib"]), llvm / "libomp.so")
+        self.assertEqual(resolve("libomptarget.so", [llvm, root / "lib"]), llvm / "libomptarget.so")
         self.assertEqual([line for line in self.modules.read_text().splitlines() if line.startswith("load ")],
                          ["load gcc/14.2.1", "load aocl/5.1.0/gcc14.2.1", "load rocm/10.1.0", "load openmpi/5.0.10/rocm10.1.0"])
         self.assertNotIn("HSA_XNACK", environment)

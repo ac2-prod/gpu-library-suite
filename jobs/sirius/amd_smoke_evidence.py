@@ -282,7 +282,9 @@ def _hip_link_inputs(argv, compiler, program):
                 raise ValueError("unreviewed recorded HIP link option")
             # -l and -L remain raw evidence only; never guess their resolution.
         else:
-            if re.search(r"(?:\.o|\.a|\.so(?:\.[0-9]+)*)$", token) is None:
+            # A versioned ROCm DSO can include a build ID, e.g. .so.7.16.26385-0000000.
+            # This admits the filename only; argv, ELF and identity checks still apply.
+            if re.search(r"(?:\.o|\.a|\.so(?:(?:\.[0-9]+)+(?:-[A-Za-z0-9]+)?)?)$", token) is None:
                 raise ValueError("ambiguous recorded HIP link input")
             inputs.append((index, token))
         index += 1

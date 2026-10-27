@@ -412,14 +412,16 @@ class SiriusProductionTests(unittest.TestCase):
         Path(self.plan["runtime"]["path"]).write_bytes(dump_bytes(self.runtime))
         self.plan["runtime"]["sha256"] = production.digest(self.runtime)
         revision = dict(artifact_commit=base, launcher_commit="a" * 40,
-                        changed_paths=["jobs/sirius/amd_production.py"])
+                        changed_paths=["jobs/sirius/amd_production.py", "jobs/sirius/rocfft_compute_modules.sh",
+                                       "tests/python/test_rocfft_module_build.py"])
         outputs = {"git-head": "a" * 40 + "\n", "git-status": "",
-                   "git-tool-revision": "jobs/sirius/amd_production.py\n"}
+                   "git-tool-revision": "\n".join(revision["changed_paths"]) + "\n"}
         processes = SimpleNamespace(run=lambda argv, env, label: SimpleNamespace(stdout=outputs[label]))
         production.clean_source(processes, self.manifest, revision)
         self.assertEqual({e["git_commit"] for e in self.manifest["entries"]}, {base})
         for changed in (dict(revision, launcher_commit=None),
                         dict(revision, artifact_commit="b" * 40),
+                        dict(revision, changed_paths=["jobs/sirius/amd_build.py"]),
                         dict(revision, changed_paths=["amd/c-cpp/rocfft/benchmarks/rocfft_hip.cpp"]),
                         dict(revision, changed_paths=[])):
             with self.subTest(revision=changed), self.assertRaises(ValueError):

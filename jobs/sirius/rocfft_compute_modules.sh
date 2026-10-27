@@ -115,20 +115,23 @@ _sirius_compute_prepare_modules() {
         [[ -f $rocm_root/.info/version && $(< "$rocm_root/.info/version") == "$rocm_version" ]] || {
             _sirius_compute_module_error 'ROCm version file differs from the selected version'; return 2;
         }
-        # The new module adds core/lib, but not its compiler runtime directory.
-        # Prefer the matching OpenMP runtime to system copies; keep GCC first.
+        # OpenMP artifacts carry the selected compiler runtime in their RPATH.
+        # Do not export this directory globally: its libgomp alias would also
+        # replace the GCC runtime used by AOCL CPU libraries.
         llvm_libraries=$rocm_root/lib/llvm/lib
         [[ -f $llvm_libraries/libomp.so && -f $llvm_libraries/libomptarget.so ]] || {
             _sirius_compute_module_error 'selected ROCm OpenMP runtime libraries are missing'; return 2;
         }
     fi
-    # Reapply GCC precedence only after ALL module loads. Retain every observed
-    # AOCL/ROCm/initial entry even if a later module replaced the whole variable.
+    # Reapply GCC toolset precedence after ALL module loads. Retain module and
+    # initial directories, except ROCm 10.1's compiler runtime: each OpenMP
+    # artifact selects it through RPATH without changing CPU libgomp resolution.
     effective=$gcc_paths
-    for remaining in "$llvm_libraries" "$after_mpi" "$after_rocm" "$after_aocl" "$after_gcc" "$before_gcc"; do
+    for remaining in "$after_mpi" "$after_rocm" "$after_aocl" "$after_gcc" "$before_gcc"; do
         while [[ -n $remaining ]]; do
             entry=${remaining%%:*}
-            if [[ :$effective: != *":$entry:"* ]]; then
+            if [[ $rocm_version == 10.1.0 && $entry == "$llvm_libraries" ]]; then entry=''; fi
+            if [[ -n $entry && :$effective: != *":$entry:"* ]]; then
                 effective=${effective:+$effective:}$entry
             fi
             [[ $remaining == *:* ]] || break

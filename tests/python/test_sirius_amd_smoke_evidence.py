@@ -578,6 +578,29 @@ class SiriusAmdSmokeEvidenceTests(unittest.TestCase):
             descriptor[key] = self.identity(path)
         link = evidence.validate_link_evidence(entry, metadata, descriptor)["link_dependency_file"]
         self.assertEqual(next(item for item in link["ordered_inputs"] if item["token"] == alias)["path"], library)
+        # ROCm 10.1 records this versioned HIP DSO as an additional explicit input.
+        versioned = self.file("libamdhip64.so.7.16.26385-0000000")
+        previous = metadata["dependencies"]["hip"]["path"]
+        metadata["dependencies"]["hip"] = self.identity(versioned)
+        argv = [str(versioned) if item == previous else item for item in argv]
+        for key in ("link_command", "build_stdout"):
+            path = Path(descriptor[key]["path"])
+            path.write_text(shlex.join(argv) + ("\n[100%] Built target program\n" if key == "build_stdout" else "\n"))
+            descriptor[key] = self.identity(path)
+        proof = evidence.validate_link_evidence(entry, metadata, descriptor)
+        self.assertEqual(proof["link_dependency_file"]["argv"], argv)
+        self.assertEqual(proof["dependencies"]["hip"]["sha256"], self.identity(versioned)["sha256"])
+        loaded = [Path(item["path"]) for item in proof["dependencies"].values() if item["kind"] == "elf"]
+        evidence.validate_artifact_resolution(entry, metadata, self.ldd(loaded), descriptor)
+        metadata["dependencies"]["hip"]["sha256"] = "0" * 64
+        with self.assertRaises(ValueError):
+            evidence.validate_link_evidence(entry, metadata, descriptor)
+        # Empty, unversioned and punctuated build suffixes remain outside the grammar.
+        for suffix in (".so-0000000", ".so.7-", ".so.7--0000000", ".so.7-0000000.extra"):
+            invalid = self.file("invalid/libamdhip64" + suffix)
+            changed = [str(invalid) if item == str(versioned) else item for item in argv]
+            with self.subTest(suffix=suffix), self.assertRaisesRegex(ValueError, "ambiguous recorded HIP link input"):
+                evidence._hip_link_inputs(changed, metadata["hip"]["compiler_path"], self.program)
 
     def test_static_archive_binds_link_input_without_fake_dso_requirement(self):
         entry, metadata, _ = self.sparse_inputs()

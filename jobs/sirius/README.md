@@ -273,6 +273,18 @@ to the existing `GPU_SUITE_HIPFORT_MODULE_DIR` / `GPU_SUITE_HIPFORT_LIBRARY`
 CMake inputs. Incomplete explicit inputs never fall back to bundled hipFORT.
 C/C++ builds do not require hipFORT.
 
+For ROCm 10.1, OpenMP artifacts and the CPU/APU helper must record the selected
+ROCm LLVM library directory in their RPATH. The compute environment retains
+GCC toolset, AOCL, ROCm core, MPI and system paths, but removes the LLVM directory
+from `LD_LIBRARY_PATH`. This lets CPU AOCL use its GCC `libgomp` provider while
+OpenMP target uses the artifact's ROCm `libomp` and
+`libomptarget`; exporting LLVM's directory globally can substitute its
+`libgomp` compatibility alias for the CPU provider. Verify all artifact paths
+and hashes with the existing runtime collection before measurement.
+An environment-only repair to this helper can use the bounded launcher-revision
+record when reusing unchanged clean artifacts. Collect a new runtime input for
+the repaired environment; never overwrite the earlier runtime or build record.
+
 Use separate, new build/run directories for each language and CPU/HIP/OpenMP
 profile. `AMD_BUILD_MODE=all` builds 36 example/benchmark artifacts per language;
 `clean-benchmarks` retains the existing 18-artifact mode and adds CPU/APU checks

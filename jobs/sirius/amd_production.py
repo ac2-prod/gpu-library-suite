@@ -56,6 +56,7 @@ HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,253}\Z")
 TOOL_REVISION_PATHS = frozenset({
     "jobs/sirius/README.md", "jobs/sirius/amd_prepare.py", "jobs/sirius/amd_wave.py",
     "jobs/sirius/amd_production.py", "jobs/sirius/amd_smoke_evidence.py",
+    "jobs/sirius/rocfft_compute_modules.sh", "tests/python/test_rocfft_module_build.py",
     "tests/python/run_profiled_unittests.py", "tests/python/test_sirius_amd_prepare.py",
     "tests/python/test_sirius_amd_production.py", "tests/python/test_sirius_amd_smoke_evidence.py",
     "docs/RESULT_SCHEMA.md", "docs/BENCHMARK_PROTOCOL.md",
