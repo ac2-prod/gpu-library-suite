@@ -7,9 +7,9 @@ and OpenMP target data management. Each library has three teaching programs in
 `examples/` and three separate benchmark programs in `benchmarks/`.
 Start with a CPU example, then compare the HIP and OpenMP versions of the same
 operation. CMake supplies the required helper sources and mixed-language links.
-The [validation report](../../docs/VALIDATION_REPORT.md#amd-fortran-production-validation)
+The [validation report](../../docs/VALIDATION_REPORT.md#amd-rocm10-validation)
 records successful Sirius builds, numerical checks including rocThrust, and
-6,480 performance records from six physical nodes over two waves.
+6,480 performance records from six physical nodes over two waves with ROCm 10.1.0.
 
 ## Source files
 
@@ -86,6 +86,15 @@ files from another compiler are not interchangeable. Set
 hard-coded. The HIP tree uses `GPU_SUITE_BUILD_HIP=ON`; the OpenMP tree uses
 `GPU_SUITE_BUILD_OPENMP=ON` with an AMD LLVM Flang compiler and an explicit
 `GPU_SUITE_AMD_GPU_TARGET`. Keep them in separate build trees.
+
+The ROCm 10.1.0 validation used hipFORT 0.10.0 built with the same AMD LLVM
+Flang 24 compiler as the GPU programs. Old ROCm 7.2 hipFORT modules were not
+reused. Common C and Fortran support objects are position-independent, and
+rocThrust's final Fortran link explicitly includes the C++ runtime. For OpenMP,
+select matching compiler, `libomp` and `libomptarget` builds at both link and run
+time; finding a system library with the same name is insufficient. The
+[Sirius recipe](../../jobs/sirius/README.md#rocm10-workflow) documents the verified
+dependency build and search-path setup without changing the workload sources.
 
 The first five HIP examples call C libraries through hipFORT and do not need
 HIP compilation of the Fortran sources. rocThrust additionally compiles
@@ -165,7 +174,7 @@ Use `--scope compute` for the displayed **library** scope and
 defines the exact boundaries. They follow the corresponding AMD C/C++ timer,
 synchronization and repetition sequence. This alignment does not make compiler,
 language binding or RNG-algorithm differences disappear.
-All AMD FFT implementations restore canonical input outside each timed execute.
+In the library scope, all AMD FFT implementations restore canonical input outside each timed execute.
 Solver uses `repeat=1`; other mutable state is restored after warm-up and before
 each trial. CPU thread settings are requests: external-library effective worker
 counts remain unknown; intrinsic RAND and reduction remain serial.
@@ -178,10 +187,12 @@ these records from C/C++; do not merge existing C/C++ measurements into them.
 
 ## Tested configuration and interpretation limits
 
-The recorded configuration used GNU Fortran 14.2.1 for CPU code, AMD LLVM Flang
-22.0.0 and matching hipFORT from ROCm 7.2.0 for GPU code, and AOCL 5.1.0.
-These are tested versions, not universal installation requirements. The
-[Sirius procedure](../../jobs/sirius/README.md#amd-fortran-current-workflow)
+The current recorded configuration uses GNU Fortran 14.2.1 for CPU code,
+AMD LLVM Flang 24.0.0 from ROCm 10.1.0 and compiler-matched hipFORT 0.10.0 for
+GPU code, and AOCL 5.1.0. The earlier Flang 22.0.0 / ROCm 7.2.0 validation is
+retained as a separate environment. These are tested versions, not universal
+installation requirements. The
+[Sirius procedure](../../jobs/sirius/README.md#rocm10-workflow)
 describes site-specific modules, runtime inputs and allocations.
 
 | Operation | CPU implementation used in the recorded comparison |
@@ -200,7 +211,8 @@ library files do not establish every library actually loaded during execution.
 
 Performance figures use five trials per condition, node medians within each
 wave, then equally weighted wave medians. Both waves used the same six hosts;
-they are repeated observations, not twelve different machines. The latest
-6,480-row campaign replaces the earlier 5,400-row provisional comparison for
-this source version; old data and failure records remain separate. Software or
-hardware changes require a new comparison rather than relabelling saved results.
+they are repeated observations, not twelve different machines. The ROCm 10.1.0
+campaign contains 6,480 rows of its own; neither the earlier 7.2 aligned results
+nor the 5,400-row provisional comparison are input to its figures. Old data and
+failure records remain separate. Software or hardware changes require a new
+comparison rather than relabelling saved results.

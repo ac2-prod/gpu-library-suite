@@ -1210,6 +1210,21 @@ NVIDIA FFT results are also shown, disclose the methods and do not describe the
 comparison as identical timing procedures or a pure GPU-hardware speed ratio.
 The existing end-to-end scope is unchanged.
 
+<a id="fft-output-initialization"></a>
+
+The recorded CUDA and HIP FFT benchmarks explicitly zero the device output in
+their restoration helper. That work is outside **library** timing but inside
+**end-to-end** timing. Their OpenACC/OpenMP end-to-end paths allocate an output
+mapping without an equivalent explicit device zero-fill. For these out-of-place
+C2C transforms, output zero-fill is an implementation choice, not a cuFFT or
+rocFFT requirement; it must not be confused with restoring the FFT input.
+
+The current results retain this difference to preserve the published NVIDIA
+C/C++ baseline and the language-aligned implementations. Removal belongs to a
+coordinated future benchmark revision and new measurements, not a silent edit
+to this dataset. Its isolated cost has not been measured. Consequently FFT
+end-to-end differences must not be attributed entirely to an API or runtime.
+
 For HIP/OpenMP `compute`, plan, execution-info creation, work-buffer size
 query/allocation/binding and array allocation/map are persistent and prepared
 before timing. Input transfer/restoration and pre-timing synchronization remain

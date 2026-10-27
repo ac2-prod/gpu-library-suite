@@ -13,9 +13,9 @@ values here describe the tested Sirius environment; check them against the
 current installation before preparing a new job.
 
 AMD C/C++ and Fortran have completed real builds, numerical checks and
-performance evaluation. The aligned Fortran comparison contains 6,480 verified
+performance evaluation with ROCm 10.1.0. Each language has 6,480 verified
 records from six hosts over two waves. Start with the
-[current Fortran workflow](#amd-fortran-current-workflow) below; the later
+[ROCm 10.1 workflow](#rocm10-workflow) below; the later
 sections retain the historical preparation and failure records. The
 [validation report](../../docs/VALIDATION_REPORT.md) identifies the measured
 source versions and limits. Effective CPU worker counts and complete actual
@@ -66,7 +66,11 @@ a benchmark-only build; keep CPU, HIP and OpenMP in separate build trees.
 | Measure | Review [pilot](amd-fortran-pilot.json) / [production](amd-fortran-benchmark.json) inputs and use `amd_prepare.py`, `amd_production.py` and `amd_wave.py` with one immutable config, manifest and runtime input per campaign |
 | Review results | Check scheduler completion, every node's status and expected row count, numerical verification, finite timings and provenance before aggregating |
 
-The tested module stack is `gcc/14.2.1`, `aocl/5.1.0/gcc14.2.1` and
+The following environment and run table record the completed **ROCm 7.2.0**
+workflow. For the subsequent 10.1 validation and dependency selection, use the
+[ROCm 10.1 workflow](#rocm10-workflow); the build modes above are shared.
+
+The tested 7.2 module stack is `gcc/14.2.1`, `aocl/5.1.0/gcc14.2.1` and
 `rocm/7.2.0`. Measurement launch also uses `openmpi/5.0.10/rocm7.2.0`.
 `rocfft_compute_modules.sh` initializes modules and preserves GCC runtime-library
 precedence after loading them. CPU uses GNU Fortran 14.2.1; GPU uses AMD LLVM
@@ -101,16 +105,23 @@ not distributed with the repository. Earlier failed waves and provisional
 results remain historical evidence; do not reuse their outputs or claim that
 later success establishes the cause of an earlier failure.
 
-### Preparing a ROCm 10.1 migration
+<a id="preparing-a-rocm-101-migration"></a>
+<a id="rocm10-workflow"></a>
 
-ROCm 10.1 is an explicit alternative to the validated 7.2 environment above.
-The saved post-maintenance inventory confirms the following installation.
+### ROCm 10.1: validated build and measurement workflow
+
+ROCm 10.1.0 is the environment used for the 2026-10-27 C/C++ and Fortran
+evaluations. Select it explicitly; the scripts retain their 7.2 default for
+historical reproducibility. The saved inventory confirms the following installation.
 After correcting OpenMP link-runtime selection, run
 `sirius-rocm10-relink-smoke-20261027T045014Z-1dee35af` passed 18 teaching examples
 and 72 numerical benchmark records per language (C/C++ and Fortran), including
 rocThrust interoperation. Its 24 relinked OpenMP executables use the selected
-LLVM 24 runtime. This is numerical smoke evidence, not a performance result.
-Existing 7.2 measurements and failure records remain unchanged.
+LLVM 24 runtime. That relink run is numerical smoke evidence. Subsequent clean
+measurement binaries passed 72 smoke records and 6,480 production records per
+language; see the [validation report](../../docs/VALIDATION_REPORT.md#amd-rocm10-validation)
+for run, source and runtime identities. Existing 7.2 measurements and failure
+records remain unchanged.
 
 | Input | ROCm 10.1 selection |
 | --- | --- |
@@ -122,7 +133,7 @@ Existing 7.2 measurements and failure records remain unchanged.
 | Observed compiler identity | Clang/Flang `24.0.0git`, LLVM commit `d6f6cb691863e9258034ab48c1dfce21689d5606` |
 | CMake / Python | Observed CMake 3.31.8 / Python 3.9.25; retain the existing tools |
 | GPU target | Retain `gfx942:sramecc+:xnack-` for HIP and OpenMP; do not substitute `native` |
-| MPI for clean-build preparation | `openmpi/5.0.10/rocm10.1.0`; used only as the launcher, with no MPI link in benchmark binaries |
+| MPI for placement and measurement launch | `openmpi/5.0.10/rocm10.1.0`; used only as the launcher, with no MPI link in benchmark binaries |
 | Version evidence | The selected prefix's `.info/version` must contain `10.1.0` |
 
 The new `rocm` module adds `core-10.1/lib` to `LD_LIBRARY_PATH`, but not
@@ -262,6 +273,12 @@ module hashes. Compatibility remains unverified until compile/link of the
 actual examples and the subsequent numerical smoke. Installing hipFORT alone
 does not pass those checks.
 
+Those compile/link and numerical checks have passed for the recorded 0.10.0
+dependency: it was built in
+`sirius-rocm10-fortran-build-20261026T221818Z-9b1992c8` and reused by the later
+successful Fortran builds. Reuse requires the same compiler, source and installed
+archive/module hashes. A different installation needs its own checks.
+
 #### Select the new stack for suite builds
 
 Set `SIRIUS_COMPUTE_ROCM_VERSION=10.1.0` explicitly in the reviewed build packet.
@@ -309,12 +326,21 @@ allows 15 minutes for hipFORT, then 40 minutes for the 36 suite artifacts,
 leaving five minutes for startup and records; these are bounds, not measured
 10.1 build durations. The C/C++ job allows 55 minutes for its 36 artifacts.
 These initial build-only jobs perform no GPU execution; smoke, CPU/APU checks
-and runtime collection precede subsequent performance approval. No new SSH, build,
-smoke or measurement is authorized by this preparation. GPU-library API and
-new compiler compatibility are real-build/smoke acceptance items, not reasons
-to change the six operations speculatively. Preserve the 2026-10-20 teaching
-decks; the migrated editions will use their actual completion date after
-validation and remeasurement.
+and runtime collection precede subsequent performance approval. These gates
+were subsequently completed for both languages. The C/C++ clean18 build
+produced all binaries but stopped during evidence preparation; a separate
+runtime-only job completed that preparation while preserving the binaries and
+the failed job record. The Fortran clean18 build and both 72-row smoke jobs
+then passed. Four production jobs (two per language) each passed 3,240 records.
+No GPU-library application-call changes were needed for this migration.
+
+Build changes cover PIC support, GCC/C++ runtime selection, compiler-matched
+hipFORT and the matching OpenMP link/runtime paths. Measurement sizes, precision,
+timers, synchronization and repetitions remain aligned across the two languages.
+No new SSH, build, smoke or measurement is authorized by this documentation.
+The 2026-10-20 teaching editions describe the 7.2 measurements and are preserved;
+the separately distributed 2026-10-27 editions use the 10.1 results and are under
+member review. Teaching slides and saved runs are not repository artifacts.
 
 <a id="amd-fortran-first-36-artifact-build-preparation"></a>
 

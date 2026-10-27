@@ -10,7 +10,7 @@ The repository includes NVIDIA C/C++, NVIDIA Fortran, AMD C/C++, and AMD Fortran
 
 ## Choose your implementation
 
-Choose the column matching your GPU and language, then run one example. CPU-only examples need no GPU. General Linux usage does not require Pegasus or Sirius access. AMD Fortran has completed build, numerical validation and a six-node, two-wave performance evaluation on Sirius; see the [tested versions and limits](docs/VALIDATION_REPORT.md#amd-fortran-production-validation).
+Choose the column matching your GPU and language, then run one example. CPU-only examples need no GPU. General Linux usage does not require Pegasus or Sirius access. AMD C/C++ and Fortran have completed builds, numerical validation and separate six-node, two-wave evaluations with ROCm 10.1.0 on Sirius; see the [tested versions and limits](docs/VALIDATION_REPORT.md#amd-rocm10-validation).
 
 | Operation | NVIDIA C/C++: CUDA / OpenACC | NVIDIA Fortran: CUDA Fortran / OpenACC | AMD C/C++: HIP / OpenMP target | AMD Fortran: HIP / OpenMP target |
 | --- | --- | --- | --- | --- |
@@ -79,6 +79,8 @@ AMD FFT timing accommodates required input restoration and differs from NVIDIA F
 Published material includes NVIDIA and AMD sources in both C/C++ and Fortran, together with configurations, tools, tests, and documentation. Saved raw measurements, execution logs, PPTX files, and private review material are not part of the checkout. Using the examples does not require the authors’ saved data or conversation history.
 
 Builds, numerical checks, and measurements have been recorded for NVIDIA on Pegasus and AMD on Sirius. The [NVIDIA Fortran evaluation](docs/VALIDATION_REPORT.md#fortran-production-validation) rebuilt all 18 benchmarks after aligning timing and build profiles with NVIDIA C/C++, passed 72 numerical smoke cases, and verified all 6,480 production records across two six-node waves. See the [validation report](docs/VALIDATION_REPORT.md) and each family’s recorded coverage. These establish evidence for those versions/environments, not a guarantee for another installation or later edits. Unobserved effective CPU workers and complete loaded-library identity remain explicit limitations.
+
+The [ROCm 10.1.0 evaluation](docs/VALIDATION_REPORT.md#amd-rocm10-validation) passed 72 benchmark smoke cases and all 6,480 production records **per language**, using 18 measurement binaries each. It retains the aligned C/C++ and Fortran measurement conditions. The earlier ROCm 7.2.0 results remain separate historical evidence. Migration changed build, dependency and runtime selection, without changing the six application workloads or their library calls. For installation details, see the [Sirius environment guide](jobs/sirius/README.md#rocm10-workflow).
 
 Maintained under `ac2-prod`; this is not an official HAIRDESC repository.
 

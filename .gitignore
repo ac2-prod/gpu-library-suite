@@ -23,3 +23,7 @@ __pycache__/
 
 # Owner-supplied AMD Fortran teaching deck (not distributed).
 /HAIRDESC_AMD_GPU_Library_F_20261020.pptx
+
+# Separately distributed ROCm 10.1 teaching editions (not repository artifacts).
+/HAIRDESC_AMD_GPU_Library_C_20261027.pptx
+/HAIRDESC_AMD_GPU_Library_F_20261027.pptx

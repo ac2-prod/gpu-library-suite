@@ -619,8 +619,15 @@ AMD FortranはCPU・HIP・OpenMP targetを、対応するAMD C/C++版と同じ�
 サイズ・計測境界・同期・反復手順で測定します。表示名は**library／end-to-end**、
 内部scope名は`compute`／`end-to-end`です。分野ごとの正確な区間とOpenMPの
 mapping解放位置は[英語版の対応表](BENCHMARK_PROTOCOL.md#amd-fortran-binding)を参照してください。
-rocFFTは入力復元を各計測区間の外に置き、各FFTと完了待ちを個別に計時します。
+rocFFTのlibrary計測は入力復元を各計測区間の外に置き、各FFTと完了待ちを個別に計時します。
 rocSOLVERのrepeatは両scopeとも1です。
+
+現行CUDA／HIP FFT benchmarkの出力ゼロ初期化は、libraryでは計測外、end-to-endでは
+計測内です。OpenACC／OpenMPのend-to-endには同等の明示的なdeviceゼロ初期化が
+ありません。今回のout-of-place C2Cで出力をゼロにすることはAPIの必須要件ではなく、
+入力の復元とも別の処理です。公開済みNVIDIA C/C++版と、それに揃えた実装・結果を
+維持するため今回は変更せず、次回のbenchmark改訂と再測定時に見直します。
+この処理だけの費用は測定していません。[計測上の扱い](BENCHMARK_PROTOCOL.md#fft-output-initialization)を参照してください。
 
 CPU BLAS／SolverはFortranの`dgemm`／`dgetrf`／`dgetrs`を呼びます。
 共通のbackend識別名にCBLAS／LAPACKEが含まれていても、実際の呼出しを
@@ -630,8 +637,8 @@ CPU BLAS／SolverはFortranの`dgemm`／`dgetrf`／`dgetrs`を呼びます。
 言語間の差を言語だけの効果とは断定できません。NVIDIA Fortranの計測手順は
 今回のAMD版の統一対象には含みません。
 
-計測手順統一後の[6,480行の検証結果](VALIDATION_REPORT.md#amd-fortran-production-validation)は、
-以前の暫定5,400行と別のcampaignです。6ノード×2 waveを、試行中央値→ノード間中央値→
+[ROCm 10.1.0での検証結果](VALIDATION_REPORT.md#amd-rocm10-validation)は各言語6,480行で、
+以前の7.2の結果・暫定5,400行と別のcampaignです。6ノード×2 waveを、試行中央値→ノード間中央値→
 等重みのwave間中央値の順に集計し、古いsource・binary・runtimeの結果は混在させません。
 記録したruntime入力の一致は確認済みですが、全実ロードライブラリや外部CPUライブラリの
 実効worker数を測定したものではありません。

@@ -7,7 +7,7 @@
 まずCPU版を動かし、同じ演算のHIP版・OpenMP版と比較してください。
 CMakeを使うと、必要な補助ソースと混合言語のリンク入力も組み込まれます。
 Siriusでのビルド、rocThrust連携を含む数値検証、6物理ノード×2 waveの
-性能評価6,480行の結果は[検証報告](../../docs/VALIDATION_REPORT.md#amd-fortran-production-validation)にまとめています。
+ROCm 10.1.0環境での性能評価6,480行の結果は[検証報告](../../docs/VALIDATION_REPORT.md#amd-rocm10-validation)にまとめています。
 
 | 分野 | CPU教材 | HIP教材 | OpenMP教材 |
 | --- | --- | --- | --- |
@@ -116,7 +116,7 @@ Solverはfactorizationのinfoを確認してからsolveへ進みます。
 [AMD Fortranの計測仕様](../../docs/BENCHMARK_PROTOCOL.md#amd-fortran-binding)に従い、
 計測境界・同期・反復手順を対応するAMD C/C++版に揃えています。
 ただし、コンパイラ・言語の呼出し規約・乱数アルゴリズムの違いは残ります。AMD FFTはCPUを含め
-各execute前の入力復元を計測外に置き、Solverは`repeat=1`とします。
+library計測では各execute前の入力復元を計測外に置き、Solverは`repeat=1`とします。
 外部CPUライブラリの実効スレッド数は未確認、組込みRAND／sumは逐次です。
 CPUとGPUの乱数生成器は異なります。
 
@@ -126,10 +126,18 @@ CPUとGPUの乱数生成器は異なります。
 
 ## 検証した環境と結果の読み方
 
-記録された環境は、CPUがGNU Fortran 14.2.1、GPUがAMD LLVM Flang 22.0.0と
-ROCm 7.2.0の互換hipFORT、CPU数値ライブラリがAOCL 5.1.0です。
+現在の検証環境は、CPUがGNU Fortran 14.2.1、GPUがROCm 10.1.0のAMD LLVM
+Flang 24.0.0と同じcompilerで構築したhipFORT 0.10.0、CPU数値ライブラリがAOCL 5.1.0です。
+以前のFlang 22.0.0／ROCm 7.2.0の検証は、別環境の記録として保持しています。
 これは検証済みの組合せであり、全環境で同じ版を必須とするものではありません。
-module・runtime入力・計算資源の指定は[Siriusの手順](../../jobs/sirius/README.md#amd-fortran-current-workflow)を参照してください。
+module・runtime入力・計算資源の指定は[Siriusの手順](../../jobs/sirius/README.md#rocm10-workflow)を参照してください。
+
+ROCm 10.1.0では、古いhipFORTの`.mod`を再利用せず、GPU用Fortran compilerと
+一致するhipFORTを使います。共通C／FortranサポートコードはPICで構築し、rocThrustの
+Fortran最終リンクにはC++ runtimeを明示します。OpenMPはcompilerと同じ版の
+`libomp`／`libomptarget`をリンク時・実行時とも選択してください。同名のシステム
+ライブラリを見つけただけでは互換性を確認できません。検証済みの依存構築・探索順は
+上記Sirius手順にまとめています。演算ソースの呼出し手順は変更していません。
 
 | 演算 | 記録された比較のCPU実装 |
 | --- | --- |
@@ -147,6 +155,6 @@ module・runtime入力・計算資源の指定は[Siriusの手順](../../jobs/si
 
 各条件5試行からノード中央値、wave内の中央値、等重みのwave間中央値を求めています。
 2 waveは同じ6物理ノードでの反復であり、異なる12台での測定ではありません。
-計測手順を統一した6,480行を現在の比較に用い、以前の暫定5,400行や失敗記録とは
-混在させません。ソフトウェア・ハードウェア更新後は、保存済み結果を新環境の結果と
+ROCm 10.1.0で取得した6,480行を現在の比較に用い、7.2の計測手順統一後の結果、
+以前の暫定5,400行や失敗記録とは混在させません。ソフトウェア・ハードウェア更新後は、保存済み結果を新環境の結果と
 読み替えず、新たな比較として扱います。

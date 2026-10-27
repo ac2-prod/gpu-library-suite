@@ -10,7 +10,7 @@ NVIDIA C/C++・NVIDIA Fortran・AMD C/C++・AMD Fortranを収録しています�
 
 ## 使いたい実装を選ぶ
 
-必要なGPUとコンパイラがある列を選び、まず1つの演算を動かしてください。CPUサンプルだけならGPUは不要です。一般のLinux環境で利用でき、Pegasus／Siriusのアカウントは必要ありません。AMD FortranはSiriusでビルド・数値検証・6ノード×2 waveの性能評価を完了しています。[検証した版・環境と限界](docs/VALIDATION_REPORT.md#amd-fortran-production-validation)を参照してください。
+必要なGPUとコンパイラがある列を選び、まず1つの演算を動かしてください。CPUサンプルだけならGPUは不要です。一般のLinux環境で利用でき、Pegasus／Siriusのアカウントは必要ありません。AMD C/C++・FortranはSiriusのROCm 10.1.0環境でビルド・数値検証・各言語6ノード×2 waveの性能評価を完了しています。[検証した版・環境と限界](docs/VALIDATION_REPORT.md#amd-rocm10-validation)を参照してください。
 
 | 演算 | NVIDIA C/C++：CUDA・OpenACC | NVIDIA Fortran：CUDA Fortran・OpenACC | AMD C/C++：HIP・OpenMP target | AMD Fortran：HIP・OpenMP target |
 | --- | --- | --- | --- | --- |
@@ -79,6 +79,8 @@ AMD FFTは入力復元要件に合わせて計測しており、NVIDIA FFTとrep
 NVIDIA・AMDのC/C++版とFortran版のソース、設定、ツール、テスト、文書を公開しています。測定raw、実行ログ、PPTX、非配布の保存資料はcheckoutに含みません。ソースを利用するために、著者の保存データや会話履歴は必要ありません。
 
 PegasusでNVIDIA、SiriusでAMDのbuild・数値検証・性能測定の記録があります。[NVIDIA Fortranの再評価](docs/VALIDATION_REPORT.md#fortran-production-validation)では、NVIDIA C/C++に計測方法とビルド設定を揃えた18 benchmarkを再構築し、72件の数値smokeと6ノード×2 waveの本測定6,480行すべてが成功しました。[検証報告](docs/VALIDATION_REPORT.md)と各分野の確認範囲を参照してください。これらは記録された版・環境の結果であり、別環境や後続変更の動作保証ではありません。CPU実効worker数や完全な実ロードライブラリ来歴など、未確認事項は保持しています。
+
+[ROCm 10.1.0での再評価](docs/VALIDATION_REPORT.md#amd-rocm10-validation)では、C/C++・Fortranの**各言語18本**の測定用実行ファイルで、数値smoke 72件と本測定6,480行がすべて成功しました。両言語で揃えた測定条件を維持し、以前のROCm 7.2.0の結果とは分けて集計しています。移行で変更したのはビルド・依存・runtimeの選択で、6分野の演算内容やライブラリ呼出しは変更していません。環境構築の詳細は[Siriusの環境説明](jobs/sirius/README.md#rocm10-workflow)を参照してください。
 
 管理主体は`ac2-prod`です。HAIRDESCの公式リポジトリではありません。
 

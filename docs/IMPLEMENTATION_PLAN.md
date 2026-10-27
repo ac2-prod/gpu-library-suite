@@ -39,7 +39,14 @@ Fortran timing/build alignment has completed its own 18-benchmark rebuild,
 [current NVIDIA Fortran result](VALIDATION_REPORT.md#fortran-production-validation).
 The [AMD Fortran completion status](#amd-fortran-source-implementation) and
 validation report distinguish current results from earlier preparation milestones.
-Further real execution requires separate approval.
+The [ROCm 10.1.0 reevaluation](VALIDATION_REPORT.md#amd-rocm10-validation) is
+also complete: 18 measurement binaries, 72 smoke records and 6,480 production
+records per AMD language, with six checked figures each. Its campaigns remain
+separate from ROCm 7.2.0. The separately distributed 2026-10-27 teaching editions
+use these results and are under member review; that review is not yet acceptance.
+Current work is documentation and review follow-up, not another measurement
+campaign. The existing FFT output initialization remains until a coordinated
+future revision. Further real execution requires separate approval.
 
 ## Planning baseline and cross-phase constraints
 
@@ -1534,8 +1541,11 @@ were checked against those records. The [validation report](VALIDATION_REPORT.md
 owns run identities, coverage and limitations.
 
 The earlier 5,400-row provisional comparison and failed waves remain
-historical evidence, separate from the aligned campaign. Measurements after a
-system update require a new environment identity and separate execution scope.
+historical evidence, separate from the aligned campaign. The subsequent ROCm
+10.1.0 campaign has its own 6,480 verified records and environment identity;
+see the [current validation](VALIDATION_REPORT.md#amd-rocm10-validation).
+Measurements after another system update require a new environment identity
+and separate execution scope.
 Effective external-library worker counts and complete loaded-library identity
 remain unknown; they are disclosed rather than inferred from requested threads.
 NVIDIA Fortran timing alignment is outside this completed AMD work.

@@ -140,6 +140,13 @@ cmake --build "$BUILD_ROOT/hip" --target "$GPU_TARGET" --parallel 2 &&
 ## 6. AMD C/C++ OpenMP target
 
 OpenMP maps arrays and passes their device addresses to the GPU library. Do not assume USM or omitted copies. The rocThrust OpenMP caller and `rocthrust_wrapper.hip` are linked as separate translation units.
+
+Use `libomp` and `libomptarget` from the selected compiler build. On systems
+with several LLVM installations, verify the expanded link search and runtime
+resolution; a successful link against an older system runtime is insufficient.
+The [Sirius ROCm 10.1 recipe](../jobs/sirius/README.md#rocm10-workflow) records the
+tested link-path and RPATH setup for both C/C++ and Fortran.
+
 ```bash
 test "$VENDOR" = amd || exit 1
 : "${ROCM_ROOT:?Set the installed ROCm prefix}"

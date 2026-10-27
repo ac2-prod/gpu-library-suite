@@ -3,12 +3,13 @@
 ## Current coexistence status
 
 This report distinguishes source compatibility checks, real numerical execution
-and performance measurements. The current summary includes the aligned AMD and
-NVIDIA Fortran evaluations completed on 2026-10-21. Each result applies to its recorded source
+and performance measurements. The current summary includes the AMD C/C++ and Fortran ROCm 10.1.0 evaluations
+completed on 2026-10-27 and the aligned NVIDIA Fortran evaluation of 2026-10-21. Each result applies to its recorded source
 and environment; historical sections retain the status at the time of that run.
 
 | Evidence | Confirmed result | Source boundary |
 | --- | --- | --- |
+| AMD C/C++ and Fortran on Sirius, ROCm 10.1.0 | 18 measurement binaries, 72/72 benchmark smoke records and 6,480/6,480 production records per language; six checked figures each | Separate language campaigns and build identities; [current environment and results](#amd-rocm10-validation). The rows below retain earlier 7.2 and NVIDIA evidence. |
 | AMD C/C++ on Sirius | Six-family build: 36 teaching/benchmark artifacts; focused numerical coverage: 18 teaching examples and 576 records, all passing | rocFFT and the other five families use the distinct snapshots recorded below; these are not one campaign or a test of every later edit. |
 | NVIDIA local/fixture compatibility after AMD addition | Existing CMake, CPU-provider, CLI/schema/manifest, runner/aggregation/plot and Fortran checks passed | Synthetic providers and local compilers are not GPU or performance evidence. |
 | NVIDIA C/C++ and Fortran on Pegasus | 36 benchmark artifacts built; 72/72 numerical smoke cases passed, including Fortran Thrust CUDA/OpenACC interoperation | Clean commit `eb9e594be3ea4f1dc4bef6fb562223961c60a43a`; details and private evidence identities are recorded below. |
@@ -24,6 +25,148 @@ pending states below retain their original meaning; later successful runs do
 not rewrite them. Saved raw data, job logs and teaching slides are not distributed
 in this repository. Public configs and source allow users to make their own
 measurements with the [build guide](BUILDING.md) and [measurement protocol](BENCHMARK_PROTOCOL.md).
+
+<a id="amd-rocm10-validation"></a>
+
+## AMD C/C++ and Fortran: ROCm 10.1.0 validation
+
+Both AMD language families completed numerical checks and performance evaluation
+with the post-maintenance Sirius environment. Each comparison uses only its own
+new CPU, HIP and OpenMP target binaries and raw trials. ROCm 7.2.0 data, earlier
+partial-wave selections and failed jobs remain separate historical evidence.
+
+### What changes for application developers
+
+The six workloads and their roc-library API calls are unchanged by this
+migration. The changes concern build and runtime compatibility: PIC for common
+support code, the Fortran C++ runtime link for rocThrust, GCC toolchain selection,
+compiler-matched hipFORT, and selection of matching OpenMP libraries at link and
+run time. See the [Sirius recipe](../jobs/sirius/README.md#rocm10-workflow) for
+verified paths and module setup, and the [AMD Fortran guide](../amd/fortran/README.md)
+for portable build requirements.
+
+The tested stack is ROCm 10.1.0, AMD Clang/Flang 24.0.0 (driver build
+`24.0.0git`), hipFORT 0.10.0, GCC/GNU Fortran 14.2.1, AOCL 5.1.0 and OpenMPI
+5.0.10. The GPU target remains `gfx942:sramecc+:xnack-`; no forced USM or XNACK
+enablement was added. hipFORT was built with the selected Flang compiler from
+pinned upstream sources and reused by the successful Fortran builds.
+
+CPU providers remain AOCL FFTW OpenMP, multithreaded BLIS, AOCL Sparse and
+libFLAME with that BLIS. RAND and reduction use serial language-specific CPU
+implementations. The numerical-library series request 24 CPU threads; this is
+not a measurement of effective worker counts.
+
+### Coverage and retained evidence
+
+| Check | C/C++ | Fortran |
+| --- | --- | --- |
+| Teaching examples after OpenMP runtime repair | 18/18 passed | 18/18 passed |
+| Clean measurement binaries | 18/18 built and retained | 18/18 built |
+| Smoke using those measurement binaries | 72/72 passed | 72/72 passed |
+| Production wave 0 | 3,240/3,240 passed | 3,240/3,240 passed |
+| Production wave 1 | 3,240/3,240 passed | 3,240/3,240 passed |
+| Accepted rows / complete node-wave blocks | 6,480 / 12 | 6,480 / 12 |
+| Figures / independently checked elapsed-time points | 6 / 108 | 6 / 108 |
+
+The C/C++ clean18 job (`47163.pbs`) built all 18 binaries but failed during
+runtime-evidence preparation. The later runtime-only job (`47165.pbs`) completed
+that preparation without rebuilding them. The first job's failure status and
+logs are preserved; it is not reclassified as a successful job. Fortran clean18
+(`47167.pbs`), the two measurement-binary smoke jobs (`47168.pbs`, `47169.pbs`),
+and all four production jobs recorded exit 0. The earlier teaching smoke used
+`sirius-rocm10-relink-smoke-20261027T045014Z-1dee35af`; those teaching checks and
+the later clean-binary measurements have distinct build provenance.
+
+| Language | Measurement build RUN_ID | Production RUN_ID | Wave 0 / 1 PBS jobs |
+| --- | --- | --- | --- |
+| C/C++ | `sirius-rocm10-c-cpp-clean18-20261027T051301Z-172f2c8b` | `sirius-rocm10-c-cpp-production-20261027T062127Z-311559a7` | `47176.pbs` / `47179.pbs` |
+| Fortran | `sirius-rocm10-fortran-clean18-20261027T060422Z-311559a7` | `sirius-rocm10-fortran-production-20261027T062127Z-311559a7` | `47177.pbs` / `47186.pbs` |
+
+| Identity | C/C++ | Fortran |
+| --- | --- | --- |
+| Binary source commit | `4e74ad34b878c6e7c0e3d52f307775fbc5ad8f34` | `bdb90ae0261b174c2a38840bcf8cd3285da136b7` |
+| Source snapshot SHA-256 | `172f2c8bb47cdb360c63006d7f00010807f84a5a3660e365f55ea86089955452` | `311559a7aa8318c7c17bc47a69e1c3a28b2b40d188ead679d1c3462dfc26895a` |
+| Executable manifest SHA-256 | `b49ad2ed14d168c7da3de9e505138a33dcf9cdecafaa46396ea856cd10cc4bf0` | `4df42a1cc0870db155823d9162bc9e9d81ac61fcb9fd8642094c6b00468c5b07` |
+| Runtime environment SHA-256 | `e52358dbc492faddd77442f1af9083c25bbc8efd9503ee1828aa3e02d93a3ffa` | `0f4ffc7aa5746d4b043f42052643a6eac7120acf823a212246ee96fceff026d2` |
+
+The source identities differ because the C/C++ binaries were retained during
+launcher/evidence repairs. They were not relabelled with the later launcher
+commit. Each manifest preserves all 18 binary hashes. Configurations also have
+separate identities for the two languages; corresponding workload sizes,
+precision, warm-up, repeats, trials, timing boundaries and CPU requests remain
+aligned, while native language bindings and CPU RNG/reduction implementations
+differ.
+
+Both languages and both waves used the same six physical hosts: a01, a12, a13,
+a15, a18 and a23. Each host ran one worker on its verified CPU/NUMA/APU mapping.
+This is repeated observation of six hosts, not twelve distinct machines. Each
+block contains 540 rows: six families × three sizes × three implementations ×
+two scopes × five trials. No rows or slow hosts were excluded. All accepted
+records passed numerical verification with positive, finite elapsed times.
+
+### Aggregation and interpretation
+
+The retained analysis directory is
+`runs/amd-rocm10-c-fortran-comparison-20261027T093530Z`. Its language-specific
+selection records bind raw-file hashes to config, manifest and runtime inputs.
+Five-trial node medians are reduced to six-node wave medians and then to the
+median of the two equally weighted waves. Trials are not pooled. The existing
+C/C++ renderer produces six two-panel figures per language, labelled **library**
+and **end-to-end**, in milliseconds; internal scope `compute` is unchanged.
+All 216 plotted elapsed-time points and 144 paired-speedup summaries were
+independently checked against the selected records. HIP and OpenMP identities,
+colors and embedded figures were checked separately.
+
+The table below shows the largest case in each family, in milliseconds per
+operation. It describes these implementations and inputs, not general library
+performance. CPU, HIP and OpenMP values in each row have the same size and scope.
+
+| Language | Workload / size | Scope | CPU (ms) | HIP (ms) | OpenMP (ms) |
+| --- | --- | --- | ---: | ---: | ---: |
+| C/C++ | FFT, 16,384 × batch 4,096 | library | 11.7015 | 0.644382 | 0.70151 |
+| C/C++ | FFT, 16,384 × batch 4,096 | end-to-end | 12.2858 | 85.3749 | 47.4997 |
+| C/C++ | DGEMM, N=4,096 | library | 110.215 | 1.47486 | 1.47628 |
+| C/C++ | DGEMM, N=4,096 | end-to-end | 110.6 | 29.7833 | 16.2855 |
+| C/C++ | SpMV, N=4,194,304 | library | 10.6342 | 0.13952 | 0.140114 |
+| C/C++ | SpMV, N=4,194,304 | end-to-end | 139.467 | 23.7622 | 13.0206 |
+| C/C++ | LU + solve, N=12,288, 16 RHS | library | 2004.12 | 158.501 | 158.198 |
+| C/C++ | LU + solve, N=12,288, 16 RHS | end-to-end | 1995.24 | 231.177 | 186.822 |
+| C/C++ | RNG, N=67,108,864 | library | 486.972 | 0.176385 | 0.177246 |
+| C/C++ | RNG, N=67,108,864 | end-to-end | 477.467 | 31.03 | 10.3485 |
+| C/C++ | Square sum, N=67,108,864 | library | 23.9287 | 0.152919 | 0.155289 |
+| C/C++ | Square sum, N=67,108,864 | end-to-end | 19.4811 | 26.9881 | 9.44124 |
+| Fortran | FFT, 16,384 × batch 4,096 | library | 11.6172 | 0.643596 | 0.673322 |
+| Fortran | FFT, 16,384 × batch 4,096 | end-to-end | 12.2278 | 85.3847 | 47.9013 |
+| Fortran | DGEMM, N=4,096 | library | 110.335 | 1.47788 | 1.47778 |
+| Fortran | DGEMM, N=4,096 | end-to-end | 110.117 | 29.9374 | 16.4671 |
+| Fortran | SpMV, N=4,194,304 | library | 10.6021 | 0.139516 | 0.13866 |
+| Fortran | SpMV, N=4,194,304 | end-to-end | 137.328 | 24.0458 | 13.0913 |
+| Fortran | LU + solve, N=12,288, 16 RHS | library | 1902.79 | 157.19 | 157.841 |
+| Fortran | LU + solve, N=12,288, 16 RHS | end-to-end | 1897.83 | 230.078 | 187.639 |
+| Fortran | RNG, N=67,108,864 | library | 263.662 | 0.176828 | 0.178721 |
+| Fortran | RNG, N=67,108,864 | end-to-end | 263.491 | 30.3983 | 10.4854 |
+| Fortran | Square sum, N=67,108,864 | library | 55.1135 | 0.153118 | 0.156237 |
+| Fortran | Square sum, N=67,108,864 | end-to-end | 55.0875 | 26.9393 | 9.4534 |
+
+At these largest cases, HIP and OpenMP library times are close in most families,
+while OpenMP has lower end-to-end times. Allocations, copies/mappings, setup,
+synchronization and retrieval are part of those pipelines. Their separate
+costs were not measured, so the results do not identify a defect in the HIP API
+or prove a particular OpenMP runtime optimization. Shared physical HBM does not
+establish zero-copy execution. The [retained FFT output initialization](BENCHMARK_PROTOCOL.md#fft-output-initialization)
+is an additional implementation difference, not a rocFFT requirement, and
+cannot explain the other five families' results.
+
+Effective CPU library worker counts and complete actual loaded-library identity
+remain unobserved. Link/runtime-resolution evidence is retained but is not a
+complete execution trace. Earlier GPU failures remain undiagnosed; successful
+new waves do not establish that maintenance fixed their cause. No additional
+profiling or remeasurement is part of this result.
+
+The separately distributed 2026-10-20 teaching editions retain their ROCm 7.2.0
+results. The 2026-10-27 C/C++ and Fortran editions use these new figures and are
+under member review; review completion is not claimed. Slides, raw measurements,
+figures and job logs remain outside the repository distribution.
 
 <a id="fortran-production-validation"></a>
 
@@ -154,6 +297,10 @@ Fortran campaigns remain separate from this replacement comparison.
   allows readers to generate their own results without those files.
 
 ## AMD Fortran production validation
+
+This section records the **ROCm 7.2.0** evaluation. The subsequent
+[ROCm 10.1.0 results](#amd-rocm10-validation) use separate source/binary/runtime
+identities and do not replace these historical records.
 
 The six AMD Fortran families have real CPU, HIP and OpenMP target execution
 evidence. The initial build produced 18 examples and 18 benchmarks; the examples
@@ -1409,6 +1556,9 @@ new real execution and Git publication still require separate approval.
 <a id="amd-production-comparison"></a>
 
 ## AMD本評価：BLIS修正後の比較と測定終了
+
+以下はROCm 7.2.0環境の記録です。[ROCm 10.1.0の再評価](#amd-rocm10-validation)とは
+別のcampaignとして保持し、旧結果・FAILED記録は変更しません。
 
 2026-10-18の再監査では、採用データについて追加の再測定を必要とする
 重大な不整合は見つかりませんでした。これは保存済みコード・生成済みbuild条件・
