@@ -104,6 +104,7 @@ resume SSH transport development.
 
 ## Teaching examples
 
+- For Japanese-to-English translation of HAIRDESC PowerPoint teaching materials, always use the [project translation skill](.agents/skills/hairdesc-pptx-translation/SKILL.md) and never use LibreOffice.
 - `examples/` is the source of truth for code printed in the teaching material.
 - Filenames must exactly match the canonical material.
 - Each C/C++ example is a complete, independently compilable single-source
