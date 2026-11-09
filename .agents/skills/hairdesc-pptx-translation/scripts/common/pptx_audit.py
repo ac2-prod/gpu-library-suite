@@ -4,6 +4,7 @@ import argparse
 from collections import Counter, defaultdict
 import json
 import subprocess
+import exact_replacements
 from office_package import (
     ET,
     JA,
@@ -397,7 +398,7 @@ def checked_inputs(args):
     return allow, ex["approved"]
 
 
-def compare(original, candidate, allow, manifest, dotnet, dll, exceptions=None):
+def compare(original, candidate, allow, manifest, dotnet, dll, exceptions=None, exact_inputs=None):
     from apply_translation import expected
     from check_changes import masked_equal
 
@@ -405,7 +406,8 @@ def compare(original, candidate, allow, manifest, dotnet, dll, exceptions=None):
     candidate = local_path(candidate)
     a = Package(original)
     b = Package(candidate)
-    baseline, changed, translated = expected(a, allow, manifest, exceptions)
+    baseline, changed, translated = expected(a, allow, manifest, exceptions, exact_inputs)
+    approved, trail = exact_replacements.validate(a, allow, manifest, exact_inputs)
     require(not b.errors, "; ".join(b.errors))
     require(a.data.keys() == b.data.keys(), "Package member set changed")
     for p in a.data:
@@ -428,14 +430,15 @@ def compare(original, candidate, allow, manifest, dotnet, dll, exceptions=None):
     require(not left, "Residual Japanese: " + str(left[:3]))
 
     # Explicit paragraph reconstruction also detects tokens spanning multiple formatted runs.
-    def paragraphs(data):
+    def paragraphs(data, exact_before=None):
         groups = defaultdict(list)
         for r in data["ranges"].values():
             if r["paragraph"] and r["slot"] == "text":
-                groups[(r["part"], r["paragraph"])].append(r["source"])
+                value = (exact_before or {}).get(r["id"], {}).get("target_text", r["source"])
+                groups[(r["part"], r["paragraph"])].append(value)
         return {k: "".join(v) for k, v in groups.items()}
 
-    originals, edits = paragraphs(allow), paragraphs(new_allow)
+    originals, edits = paragraphs(allow, approved), paragraphs(new_allow)
     require(
         originals.keys() == edits.keys()
         and all(
@@ -462,6 +465,7 @@ def compare(original, candidate, allow, manifest, dotnet, dll, exceptions=None):
         manifest_sha256=digest(json.dumps(manifest, sort_keys=True, ensure_ascii=False).encode()),
         validator_sha256=file_hash(dll),
         documented_exceptions=sorted(exceptions),
+        approved_exact_replacements=trail,
         visual_reviews=manifest["visual_reviews"],
         source_sdk=before_sdk,
         english_sdk=after_sdk,
@@ -485,6 +489,7 @@ def main():
         cmp.add_argument("--" + key, required=True)
     cmp.add_argument("--slides", required=True)
     cmp.add_argument("--exceptions")
+    exact_replacements.add_arguments(cmp)
     a = pa.parse_args()
     if a.command == "inventory":
         pkg = Package(a.source)
@@ -498,7 +503,8 @@ def main():
     else:
         allow, exceptions = checked_inputs(a)
         report = compare(
-            a.source, a.english, allow, load_json(a.manifest), a.dotnet, a.validator, exceptions
+            a.source, a.english, allow, load_json(a.manifest), a.dotnet, a.validator, exceptions,
+            exact_replacements.read_inputs(a)
         )
         new_json(a.out, report)
         require(

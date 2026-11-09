@@ -37,6 +37,14 @@ en="$QA_WORK/en/render_check.pptx"
 - **画像は描画で確認する。** 日本語検出とOCRは補助。PNG/JPEG/EMF/WMF/SVGの形式だけで編集可能とは判定しない。ロゴは日本語を含んでも保持する。既に英語の図、保護ロゴ、非表示の継承プレースホルダー等の判断は部品・位置・証拠を `visual_reviews` に記入する。原図の使用、ネイティブ図形での再作成、元画像を保持したラベル置換を検討する際は [編集不能図の規則](references/non-editable-figures.md) を読む。共有画像・共有データ等を変える必要があればその箇所を保留し、別の方法について所有者と合意してから扱う。判読できないラベル・接続先を推測しない。
 - 日本語の意図的な本文保持には、翻訳マニフェストとは別に所有者承認済みのJSONを用意する。内容は `source_sha256`、`slides`、`approved`（厳密な範囲ID→理由）。`keep_reason` と同じ理由を記録し、編集・監査の両コマンドに `--exceptions <file>` を渡す。マニフェストの自己申告だけでは本文保持を認めない。
 
+### 所有者が位置と訳文を指定した完全一致置換
+
+指定訳が通常の保護トークン検査に抵触する場合や、等幅のコメント・説明ラベルを訳す場合は、編集manifestとは別に、承認済みの位置と訳文を記録する。編集とcompareの両方に同じ `--exact-approvals <承認JSON> --manuscript <和英対応JSON>` を渡す。編集manifestの `exact_approvals_sha256` は承認JSONの実バイトのSHA-256。承認JSONには `version: 1`、原本の `source_sha256`、対象の `slides`、和英対応JSONの `manuscript_sha256`、`approved_exact_replacements` の配列を置く。
+
+各置換は棚卸し済みの1テキストランに限定する。`slide, part, kind, shape_id, paragraph, paragraph_index, run_index, xpath, range_id` は原本から取得する。段落・ラン番号は各親の中での1始まり、XPathは名前空間付き完全一致。さらに `source_text, target_text, unit, source_role, format_policy, reason` を指定する。和英対応表の各単位には `unit, page, kind, part, shape, paragraph, range_ids, source, translation` を記録する。手動改行・フィールドで区切った元の文字列とラン列から、候補の連結文字列が承認した訳文に一致することを検査する。同じ文が複数箇所にあれば出現ごとに登録する。ワイルドカード、正規表現、範囲を一意に解決できない承認は受け付けない。
+
+`standard_translation` は比例書体の本文・注釈用。`preserve_monospace` はコードコメント、説明ラベル、注釈用で、書式変更は言語属性だけに限定する。コード本体、コマンド、API、識別子、数値・単位、文字列リテラルを保持する。コメントではコメント外のバイトと区切り記号も照合する。承認対象外には従来の検査を適用し、compareには照合した位置・原文・訳文・保護情報を残す。既存ランと既承認の訳文が両立しないときは、競合する実文字列を示し、該当箇所の新たな承認を得てから進める。
+
 ## 書式と部分編集
 
 英文プロポーショナル書体は **Segoe UI**。本文は原文の適合サイズを尊重し、原則12 pt以上の整数。フッターは例外。コード等の等幅書体とサイズを保つ。原文に明示値がなければ、段落・プレースホルダー・マスター・テーマの継承と自動調整を確認し、未確定の描画値を推測で埋めない。

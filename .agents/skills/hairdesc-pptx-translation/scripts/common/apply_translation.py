@@ -21,6 +21,7 @@ from office_package import (
 )
 from pptx_audit import inventory
 from text_ranges import MONO, protected, preserve_literals
+import exact_replacements
 
 
 def change_format(n, row, changes, reason):
@@ -68,7 +69,7 @@ def change_format(n, row, changes, reason):
         rp.set("lang", changes["lang"])
 
 
-def expected(pkg, allow, manifest, exceptions=None):
+def expected(pkg, allow, manifest, exceptions=None, exact_inputs=None):
     pages = allow["slides"]
     require(
         pages == sorted(set(pages))
@@ -85,6 +86,7 @@ def expected(pkg, allow, manifest, exceptions=None):
     rootmap = {}
     used = set()
     translated = []
+    exact, _ = exact_replacements.validate(pkg, authority, manifest, exact_inputs)
 
     def target(row):
         p = row["part"]
@@ -119,13 +121,14 @@ def expected(pkg, allow, manifest, exceptions=None):
                 and not entry.get("format_changes"),
                 "Retention needs an independent owner exception for this exact range",
             )
-        else:
+        elif key not in exact:
             require(r["editable"], "Protected code/English-only range: " + key)
         require(
             not JA.search(val) or keep.strip(), "Japanese remains without retention reason: " + key
         )
-        require(protected(val) == r["protected_tokens"], "Protected tokens changed: " + key)
-        require(preserve_literals(r["source"], val), "Original technical literal changed: " + key)
+        if key not in exact:
+            require(protected(val) == r["protected_tokens"], "Protected tokens changed: " + key)
+            require(preserve_literals(r["source"], val), "Original technical literal changed: " + key)
         for extra in entry.get("extra_protected", []):
             require(
                 isinstance(extra, str)
@@ -154,11 +157,18 @@ def expected(pkg, allow, manifest, exceptions=None):
         (authority["ranges"][k]["part"], authority["ranges"][k]["shape"].get("id"))
         for k in translated
     }
+    fixed_shapes = {
+        (r["part"], r["shape_id"]) for r in exact.values() if r["format_policy"] == "preserve_monospace"
+    }
     for adj in manifest["adjustments"]:
         k = adj["id"]
         require(k not in positions and k in authority["geometry"], "Unlisted geometry")
         positions.add(k)
         r = authority["geometry"][k]
+        require(
+            (r["part"], r["shape"].get("id")) not in fixed_shapes,
+            "Monospace exact shape geometry must be preserved",
+        )
         require(
             (r["part"], r["shape"]["id"]) in editable_shapes
             and adj["before"] == r["source"]
@@ -204,7 +214,7 @@ def expected(pkg, allow, manifest, exceptions=None):
     return base, changed, translated
 
 
-def apply(source, output, allow, manifest, exceptions=None):
+def apply(source, output, allow, manifest, exceptions=None, exact_inputs=None):
     source = local_path(source)
     pkg = Package(source)
     dest = local_path(output)
@@ -212,7 +222,7 @@ def apply(source, output, allow, manifest, exceptions=None):
         dest.suffix.lower() == ".pptx" and not dest.exists() and dest != pkg.path.resolve(),
         "Output must be a new local PPTX",
     )
-    _, changed, _ = expected(pkg, allow, manifest, exceptions)
+    _, changed, _ = expected(pkg, allow, manifest, exceptions, exact_inputs)
     with TemporaryDirectory(dir=dest.parent) as tmp:
         test = Path(tmp) / "candidate.pptx"
         clone_zip(source, test, changed)
@@ -234,8 +244,9 @@ if __name__ == "__main__":
         cli.add_argument("--" + arg, required=True)
     cli.add_argument("--slides", required=True)
     cli.add_argument("--exceptions")
+    exact_replacements.add_arguments(cli)
     from pptx_audit import checked_inputs
 
     a = cli.parse_args()
     allow, exceptions = checked_inputs(a)
-    print(apply(a.source, a.output, allow, load_json(a.manifest), exceptions))
+    print(apply(a.source, a.output, allow, load_json(a.manifest), exceptions, exact_replacements.read_inputs(a)))
