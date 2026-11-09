@@ -422,10 +422,14 @@ def compare(original, candidate, allow, manifest, dotnet, dll, exceptions=None, 
     require(not after["blocking"], str(after["blocking"]))
     require(baseline["notes"] == after["notes"], "Notes shapes/paragraph counts changed")
     exceptions = {r["id"] for r in manifest["translations"] if r.get("keep_reason")}
+    # validate() established that each remaining Japanese character is in the original literal.
+    literal_text = {k: rule["target_text"] for k, rule in approved.items()
+                    if rule["source_role"] == "fortran_comment" and JA.search(rule["target_text"])}
     left = [
         {"id": k, "slide": v["slide"], "text": v["source"]}
         for k, v in new_allow["ranges"].items()
         if JA.search(v["source"]) and k not in exceptions
+        and v["source"] != literal_text.get(k)
     ]
     require(not left, "Residual Japanese: " + str(left[:3]))
 

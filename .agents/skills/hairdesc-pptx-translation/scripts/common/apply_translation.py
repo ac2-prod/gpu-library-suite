@@ -123,9 +123,10 @@ def expected(pkg, allow, manifest, exceptions=None, exact_inputs=None):
             )
         elif key not in exact:
             require(r["editable"], "Protected code/English-only range: " + key)
-        require(
-            not JA.search(val) or keep.strip(), "Japanese remains without retention reason: " + key
-        )
+        # A checked Fortran comment run can also contain immutable Japanese in a code literal.
+        require(not JA.search(val) or keep.strip()
+                or exact.get(key, {}).get("source_role") == "fortran_comment",
+                "Japanese remains without retention reason: " + key)
         if key not in exact:
             require(protected(val) == r["protected_tokens"], "Protected tokens changed: " + key)
             require(preserve_literals(r["source"], val), "Original technical literal changed: " + key)

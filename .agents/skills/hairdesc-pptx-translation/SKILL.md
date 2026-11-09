@@ -45,6 +45,8 @@ en="$QA_WORK/en/render_check.pptx"
 
 `standard_translation` は比例書体の本文・注釈用。`preserve_monospace` はコードコメント、説明ラベル、注釈用で、書式変更は言語属性だけに限定する。コード本体、コマンド、API、識別子、数値・単位、文字列リテラルを保持する。コメントではコメント外のバイトと区切り記号も照合する。承認対象外には従来の検査を適用し、compareには照合した位置・原文・訳文・保護情報を残す。既存ランと既承認の訳文が両立しないときは、競合する実文字列を示し、該当箇所の新たな承認を得てから進める。
 
+Fortran自由形式の通常コメントには `source_role: fortran_comment` と `format_policy: preserve_monospace` を指定し、日本語を含む各ランの位置・原文・訳文を個別に登録する。C/C++コメントは従来どおり `code_comment` を使う。PowerPointのランをコード行ごにつなぎ、文字列の外にある最初の `!` から行末までを判定する。単一・二重引用符の内側の `!`、二重化した引用符、継続した文字列を保護する。コード本体、インデント、`!` の前後の空白、継続記号 `&` は保持する。行頭の `!$acc`、`!$omp`、`!$ompx`、`!$cuf`、その他の `!$` 行、固定形式の `c$acc`・`*$omp` 等の指示行は行全体を保護する。例えば `! FFT` と `長` が別ランなら、後者だけを ` length` にする。登録位置の一致に加え、同じコード行の未登録ランが元のままであることを編集と比較の両方で検査する。
+
 ## 書式と部分編集
 
 英文プロポーショナル書体は **Segoe UI**。本文は原文の適合サイズを尊重し、原則12 pt以上の整数。フッターは例外。コード等の等幅書体とサイズを保つ。原文に明示値がなければ、段落・プレースホルダー・マスター・テーマの継承と自動調整を確認し、未確定の描画値を推測で埋めない。
@@ -114,6 +116,7 @@ cp -R "$c/openxml-validator" "$QA_WORK/validator"
 "$DOTNET_BIN" restore "$QA_WORK/validator/Validator.csproj" --locked-mode --configfile "$QA_WORK/validator/NuGet.Config" -p:NuGetAudit=false
 "$DOTNET_BIN" build "$QA_WORK/validator/Validator.csproj" -c Release --no-restore
 VALIDATOR_DLL="$QA_WORK/validator/bin/Release/net10.0/Validator.dll"
+DOTNET_BIN="$DOTNET_BIN" VALIDATOR_DLL="$VALIDATOR_DLL" "$QA_PYTHON" -B "$c/test_fortran_comments.py"
 "$QA_PYTHON" -B "$c/verify_fixture.py" --platform static --dotnet "$DOTNET_BIN" --work "$QA_WORK/static"
 # 合成fixtureのmacOS描画は停止中。既知正常な資料には上のrender.pyを使用する。
 ```
