@@ -5,6 +5,7 @@ import re
 
 from office_package import AuditError, JA, address, digest, local_path, q, require, xp
 from text_ranges import COMMAND, MONO, preserve_literals
+import approval_context as context
 
 # Protect technical material even when a registered prose translation introduces a word
 # such as GPU. Word-internal hyphens in English prose are not command-line options.
@@ -17,12 +18,12 @@ LEXEMES = re.compile(r"""
   | (?P<api>\b(?:cuda|cufft|cublas|cusparse|cusolver|curand|rocfft|rocblas|rocsparse|rocsolver|rocrand|hip|omp)[A-Z_][A-Za-z0-9_]*)
   | (?P<number>(?<![A-Za-z0-9_])[+\-]?(?:\d+(?:\.\d+)*|\.\d+)(?:[eE][+\-]?\d+)?(?:[ \t]*(?:[kMGT]?i?B(?:/s)?|[µμu]s|ms|ns|s|GHz|MHz|Hz|[GMKT]?FLOP/s|%)(?![A-Za-z]))?)
 """, re.ASCII | re.VERBOSE)
-QUOTES = re.compile(r'"(?:\\.|[^"\\\n])*"|(?<!\w)\'(?:\\.|[^\'\\\n])+\'(?!\w)', re.ASCII)
+QUOTES = context.QUOTES
 LOC = ("slide", "part", "kind", "shape_id", "paragraph", "paragraph_index", "run_index", "xpath", "range_id")
 RULE_KEYS = set(LOC) | {"source_text", "target_text", "format_policy", "source_role", "reason", "unit"}
 POLICIES = {
-    "standard_translation": {"prose", "annotation"},
-    "preserve_monospace": {"code_comment", "fortran_comment", "explanatory_label", "annotation"},
+    "standard_translation": {"prose", "annotation", "option_description"},
+    "preserve_monospace": {"code_comment", "fortran_comment", "explanatory_label", "annotation", "option_description"},
 }
 FORTRAN_SENTINEL = re.compile(r"^[ \t]*(?:[!c*]\$|![a-z][a-z0-9_]*[$*])", re.I | re.ASCII)
 LINE_BREAK = re.compile(r"(\r\n|[\r\n\v])")
@@ -70,12 +71,12 @@ def lexemes(text):
     return Counter((match.lastgroup, match.group().strip()) for match in LEXEMES.finditer(text))
 
 
-def protected_material(source, target):
+def protected_material(source, target, *, literal_text=None):
     require(lexemes(source) == lexemes(target), "Exact replacement changed a technical token")
-    for pattern, label in ((COMMAND, "command"), (QUOTES, "quoted literal")):
-        before = Counter(m.group() for m in pattern.finditer(source))
-        after = Counter(m.group() for m in pattern.finditer(target))
-        require(before == after, "Exact replacement changed a " + label)
+    require(COMMAND.findall(source) == COMMAND.findall(target), "Exact replacement changed a command")
+    before, after = (source, target) if literal_text is None else literal_text
+    require(before.count('"') == after.count('"') and QUOTES.findall(before) == QUOTES.findall(after),
+            "Exact replacement changed a quoted literal")
 
 
 def outside_comments(text):
@@ -226,35 +227,44 @@ def source_lines(pkg, row, ranges_by_xpath):
     return lines
 
 
-def check_rule(spec, row, edit):
+def check_rule(spec, row, edit, pkg):
     loc = location(row)
     require(all(type(spec[k]) is type(v) and spec[k] == v for k, v in loc.items()), "Exact location mismatch")
     target = spec["target_text"]
+    require(isinstance(spec["reason"], str) and spec["reason"].strip(), "Missing exact approval reason")
+    if spec["source_role"] == "format_only":
+        context.check_font_rule(pkg, row, edit, spec)
+        return
+    require(spec["source_role"] not in ("code", "command"), "Code and command units are immutable")
     fortran = spec["source_role"] == "fortran_comment"
     require(
         row["source"] == spec["source_text"] and isinstance(target, str) and target.strip()
-        and target == edit["target"] and (fortran or not JA.search(target)) and not edit.get("keep_reason")
-        and isinstance(spec["reason"], str) and spec["reason"].strip(),
+        and target == edit["target"] and (fortran or not JA.search(target)) and not edit.get("keep_reason"),
         "Exact source/target mismatch",
     )
     policy = spec["format_policy"]
     require(policy in POLICIES and spec["source_role"] in POLICIES[policy], "Invalid exact format policy or role")
     # The registration may add a term to translated prose. It cannot rewrite a
     # technical-only source run or remove an original literal from a mixed run.
-    require(JA.search(row["source"]) or not re.search(r"[A-Za-z0-9_]", row["source"]),
+    prose_delimiter = spec["source_role"] == "prose" and any(c in row["source"] for c in '「」『』“”"')
+    option_delimiter = spec["source_role"] == "option_description" and "：" in row["source"]
+    require(JA.search(row["source"]) or not re.search(r"[A-Za-z0-9_]", row["source"])
+            or prose_delimiter or option_delimiter,
             "Cannot translate an original identifier-only run")
     literal_check = fortran_literal_check if fortran else preserve_literals
     require(literal_check(row["source"], target), "Exact replacement changed an original identifier")
     if fortran:
         require(target != row["source"], "Fortran comment approval must translate Japanese text")
-    require(not (lexemes(row["source"]) - lexemes(target)), "Exact replacement lost a technical token")
+    # An option and its colon can share a run. Its bound span is checked on the whole unit.
+    if spec["source_role"] != "option_description":
+        require(not (lexemes(row["source"]) - lexemes(target)), "Exact replacement lost a technical token")
     mono = bool(MONO.search((row["format_before"] or {}).get("font") or ""))
     require(mono == (policy == "preserve_monospace"), "Exact format policy differs from the source font")
     if mono:
         require(not (set(edit["format_changes"]) - {"lang"}), "Monospace exact edit only permits language")
 
 
-def check_unit(spec, row, refs, lines, translations, pkg, fortran_ids):
+def check_unit(spec, row, refs, lines, translations, pkg, roles):
     require(len(refs) == 1, "Missing or ambiguous manuscript range")
     ref = refs[0]
     require(
@@ -265,13 +275,60 @@ def check_unit(spec, row, refs, lines, translations, pkg, fortran_ids):
     ids = ref["range_ids"]
     matches = [line for line in lines if [key for key, _ in line if key is not None] == ids]
     require(len(matches) == 1, "Manuscript must identify one complete source segment")
-    old = "".join(value for _, value in matches[0])
-    new = "".join(translations[key]["target"] if key in translations else value for key, value in matches[0])
+    line = matches[0]
+    after = [(key, translations[key]["target"] if key in translations else value) for key, value in line]
+    old = "".join(value for _, value in line)
+    new = "".join(value for _, value in after)
     require(old == ref["source"] and new == ref["translation"], "Exact text differs from bilingual manuscript")
-    protected_material(old, new)
+    role = ref.get("role")
+    if role is not None:
+        require(isinstance(role, str) and role in context.ROLES, "Unknown manuscript context")
+        allowed = {"prose": {"prose", "format_only"}, "code": {"code_comment", "fortran_comment"},
+                   "command": set()}.get(role, {role})
+        require(spec["source_role"] in allowed, "Wrong or immutable context")
+        if role == "code":
+            allowed = {spec["source_role"]}  # One comment syntax per code unit.
+        for (key, before_text), (_, after_text) in zip(line, after):
+            if before_text != after_text or translations.get(key, {}).get("format_changes"):
+                require(roles.get(key) in allowed, "Unregistered change in a context-bound unit")
+        require(not any(COMMAND.search(s) for s in (old, new)), "Protected command line changed")
+        if role != "code":
+            require(not any(context.CODE_LINE.search(s) for s in (old, new)),
+                    "Code line cannot use a presentation prose exception")
+        require(not xp(pkg.xml[row["part"]], row["paragraph"] + "/a:fld"),
+                "Dynamic field in a context-bound paragraph")
+        spans = context.checked_spans(ref, old, new, line, after)
+        if role == "code":
+            require(not ref.get("prose_quotes"), "Prose quotations cannot change code")
+            protected_material(old, new)
+        elif role == "option_description":
+            require(not ref.get("prose_quotes"), "Quote grants are only for prose")
+            protected_material(*context.option_suffixes(spans, old, new))
+        elif role == "prose":
+            literal_text = context.prose_literal_text(ref, old, new, line, after, roles)
+            protected_material(old, new, literal_text=literal_text)
+        else:
+            require(role == "format_only" and old == new and not ref.get("prose_quotes"),
+                    "Format-only must preserve the complete logical text")
+        if spec["source_role"] == "format_only":
+            context.check_font_context(spec, line, old, spans)
+            require(not any(k in ("identifier", "api", "filename", "path", "URL", "option")
+                            for k, _ in lexemes(row["source"])), "Format-only cannot restyle a technical token")
+        elif role == "prose" and not JA.search(row["source"]) and re.search("[A-Za-z0-9_]", row["source"]):
+            normalized = "".join('"' if ch in "「」『』“”" else ch for ch in row["source"])
+            require(ref.get("prose_quotes") and normalized == spec["target_text"]
+                    and (normalized != row["source"] or not translations[row["id"]].get("format_changes")),
+                    "Only registered quotation delimiters can change in an English-only run")
+    else:
+        require(spec["source_role"] not in ("option_description", "format_only")
+                and "prose_quotes" not in ref and "protected_spans" not in ref, "Missing explicit manuscript role")
+        require(JA.search(row["source"]) or not re.search(r"[A-Za-z0-9_]", row["source"]),
+                "Cannot translate an original identifier-only run")
+        protected_material(old, new)
     require(not (FORTRAN_SENTINEL.match(old) or FORTRAN_SENTINEL.match(new)),
             "Fortran directive or conditional sentinel is protected")
     if spec["source_role"] == "fortran_comment":
+        fortran_ids = {k for k in ids if roles.get(k) == "fortran_comment"}
         check_fortran_comment(pkg, row, matches[0], translations, fortran_ids)
         return old, new
     before = outside_comments(old)
@@ -279,7 +336,7 @@ def check_unit(spec, row, refs, lines, translations, pkg, fortran_ids):
     if spec["source_role"] == "code_comment":
         require(has_comment and before == outside_comments(new), "Executable bytes or comment delimiters changed")
         require(preserve_literals(old, new), "Code comment changed an identifier")
-    elif spec["format_policy"] == "preserve_monospace":
+    elif role is None and spec["format_policy"] == "preserve_monospace":
         bang, _, _ = scan_fortran_line(old, None)
         require(bang is None or not JA.search(old[bang + 1:]), "Use a Fortran comment approval")
         require(not re.search(r'[;={}#]|//|/\*|(?:^|\s)\$\s', old) and not COMMAND.search(old)
@@ -291,10 +348,53 @@ def check_unit(spec, row, refs, lines, translations, pkg, fortran_ids):
     return old, new
 
 
+def guard_other_units(pkg, allow, manifest, approved, manuscript):
+    """A change without a grant must not acquire one by falling through to ordinary translation."""
+    rows = allow["ranges"]
+    edits = {e["id"]: e for e in manifest["translations"]}
+    touched = {k for k, e in edits.items() if k in rows and isinstance(e.get("target"), str)
+               and (rows[k]["source"] != e["target"] or e.get("format_changes"))}
+    paragraphs = {}
+    for k in touched:
+        r = rows[k]
+        if r["paragraph"] and r["slot"] == "text":
+            paragraphs[r["part"], r["paragraph"]] = r
+    by_path = {(r["part"], r["xpath"]): k for k, r in rows.items() if r["slot"] == "text"}
+    for u in manuscript:
+        if "role" not in u:
+            continue
+        changed = touched.intersection(u["range_ids"])
+        if changed:
+            require(isinstance(u["role"], str) and u["role"] in context.ROLES and u["role"] != "command",
+                    "Protected code or command unit changed")
+            require(changed <= approved.keys(), "Context-bound unit lacks exact approval")
+            if u["role"] == "code":
+                require(all(approved[k]["source_role"] in ("code_comment", "fortran_comment") for k in changed),
+                        "Only registered comments may change in code")
+    for row in paragraphs.values():
+        for line in source_lines(pkg, row, by_path):
+            keys = tuple(k for k, _ in line if k is not None)
+            if not touched.intersection(keys):
+                continue
+            old = "".join(s for _, s in line)
+            new = "".join(edits[k]["target"] if k in touched else s for k, s in line)
+            require(not (COMMAND.search(old) or COMMAND.search(new)), "Protected command unit changed")
+            if any(k in approved for k in keys):
+                continue  # check_unit already checked the complete logical segment against the manuscript.
+            require(old.count('"') == new.count('"') and QUOTES.findall(old) == QUOTES.findall(new),
+                    "Unregistered quotation or changed quoted literal")
+            label = context.LABEL.match(old)
+            if label:
+                target_label = context.LABEL.match(new)
+                require(target_label and label.group() == target_label.group(),
+                        "Option delimiter requires option_description")
+
+
 def validate(pkg, allow, manifest, inputs):
     """Check all permissions before editing or comparing. Only returned keys receive an exception."""
     if inputs is None:
         require(not manifest.get("exact_approvals_sha256"), "Missing bound exact approvals")
+        guard_other_units(pkg, allow, manifest, {}, [])
         return {}, []
     doc, approval_hash, manuscript, manuscript_hash = inputs
     require(
@@ -321,25 +421,35 @@ def validate(pkg, allow, manifest, inputs):
     lines = {}
     rules = doc["approved_exact_replacements"]
     for spec in rules:
-        require(isinstance(spec, dict) and set(spec) == RULE_KEYS
+        require(isinstance(spec, dict), "Invalid exact replacement fields")
+        keys = RULE_KEYS | {"expected_before", "target_format"} if spec.get("source_role") == "format_only" else RULE_KEYS
+        require(set(spec) == keys
                 and isinstance(spec["range_id"], str), "Invalid exact replacement fields")
-    fortran_ids = {spec["range_id"] for spec in rules if spec["source_role"] == "fortran_comment"}
+    roles = {spec["range_id"]: spec["source_role"] for spec in rules}
     for spec in rules:
         key = spec["range_id"]
         require(isinstance(key, str) and re.fullmatch(r"[a-f0-9]{24}", key) and key in sources
                 and key in edits and key not in exact, "Unknown, duplicate or unlisted exact range")
         row = sources[key]
-        check_rule(spec, row, edits[key])
+        check_rule(spec, row, edits[key], pkg)
         paragraph = (row["part"], row["paragraph"])
         if paragraph not in lines:
             lines[paragraph] = source_lines(pkg, row, by_path)
-        old, new = check_unit(spec, row, by_id[key], lines[paragraph], edits, pkg, fortran_ids)
+        ref = by_id[key]
+        old, new = check_unit(spec, row, ref, lines[paragraph], edits, pkg, roles)
         exact[key] = spec
+        tokens = lexemes(old)
+        if ref[0].get("role") == "option_description":
+            tail, _ = context.option_suffixes(ref[0]["protected_spans"], old, new)
+            tokens = lexemes(old[:len(old)-len(tail)-1]) + lexemes(tail)
         trail.append(dict(
             **spec, source_ascii=re.findall(r"[\x20-\x7e]+", row["source"]),
             target_ascii=re.findall(r"[\x20-\x7e]+", spec["target_text"]), unit_source=old, unit_target=new,
-            technical_tokens=[list(t) for t in sorted(lexemes(old).elements())],
+            technical_tokens=[list(t) for t in sorted(tokens.elements())],
             commands=COMMAND.findall(old), quoted_literals=QUOTES.findall(old),
             source_operators=re.findall(r"[<>=*/&|^~+#]", old), target_operators=re.findall(r"[<>=*/&|^~+#]", new),
+            context=ref[0].get("role"), protected_spans=ref[0].get("protected_spans", []),
+            prose_quotes=ref[0].get("prose_quotes", []),
         ))
+    guard_other_units(pkg, allow, manifest, exact, manuscript)
     return exact, trail

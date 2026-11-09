@@ -121,6 +121,8 @@ def expected(pkg, allow, manifest, exceptions=None, exact_inputs=None):
                 and not entry.get("format_changes"),
                 "Retention needs an independent owner exception for this exact range",
             )
+        elif val == r["source"] and entry.get("format_changes"):
+            require(exact.get(key, {}).get("source_role") == "format_only", "Unregistered format-only change")
         elif key not in exact:
             require(r["editable"], "Protected code/English-only range: " + key)
         # A checked Fortran comment run can also contain immutable Japanese in a code literal.
@@ -159,7 +161,7 @@ def expected(pkg, allow, manifest, exceptions=None, exact_inputs=None):
         for k in translated
     }
     fixed_shapes = {
-        (r["part"], r["shape_id"]) for r in exact.values() if r["format_policy"] == "preserve_monospace"
+        (r["part"], r["shape_id"]) for r in exact.values() if r["format_policy"] in ("preserve_monospace", "format_only")
     }
     for adj in manifest["adjustments"]:
         k = adj["id"]
@@ -168,7 +170,7 @@ def expected(pkg, allow, manifest, exceptions=None, exact_inputs=None):
         r = authority["geometry"][k]
         require(
             (r["part"], r["shape"].get("id")) not in fixed_shapes,
-            "Monospace exact shape geometry must be preserved",
+            "Monospace and format-only shape geometry must be preserved",
         )
         require(
             (r["part"], r["shape"]["id"]) in editable_shapes

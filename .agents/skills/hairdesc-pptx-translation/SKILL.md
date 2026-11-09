@@ -47,6 +47,14 @@ en="$QA_WORK/en/render_check.pptx"
 
 Fortran自由形式の通常コメントには `source_role: fortran_comment` と `format_policy: preserve_monospace` を指定し、日本語を含む各ランの位置・原文・訳文を個別に登録する。C/C++コメントは従来どおり `code_comment` を使う。PowerPointのランをコード行ごにつなぎ、文字列の外にある最初の `!` から行末までを判定する。単一・二重引用符の内側の `!`、二重化した引用符、継続した文字列を保護する。コード本体、インデント、`!` の前後の空白、継続記号 `&` は保持する。行頭の `!$acc`、`!$omp`、`!$ompx`、`!$cuf`、その他の `!$` 行、固定形式の `c$acc`・`*$omp` 等の指示行は行全体を保護する。例えば `! FFT` と `長` が別ランなら、後者だけを ` length` にする。登録位置の一致に加え、同じコード行の未登録ランが元のままであることを編集と比較の両方で検査する。
 
+**本文・オプション説明・書式のみの変更**では、和英対応表の単位に `role` と `protected_spans` を明記し、変更する各ランを同じ単位の `approved_exact_replacements` に個別登録する。位置は段落のランを表示順につないだ原文と訳文で数え、手動改行をまたがない。オフセットは0始まりのUnicodeコードポイント。各保護範囲は `{"source_start":0,"target_start":0,"text":"-acc"}` のように記録し、文字列と元のランの対応を保つ。保護範囲がない場合は空配列を指定する。
+
+- `prose`（通常本文）。`「…」` などの一対を英語の `"..."` に変える場合は、和英対応表の `prose_quotes` に `source_start, source_end, target_start, target_end` を登録する。両側の約物を含み、終了位置は範囲外。例えば `「Introduction」` → `"Introduction"` は日英ともに `[0,14)`。両端が別ランならそれぞれを `source_role: prose` で承認する。既存のコード文字列、引用されたパス、オプション値は保持する。`code`・`command` と指定した単位は全体を保護する。コードコメントの翻訳には上記の専用roleを使う。
+- `option_description`（オプションの説明）。先頭のオプションを値まで含めて保護範囲に登録し、各変更ランの `source_role` も `option_description` とする。`-gpu=cc90：説明` の場合は `-gpu=cc90` 全体を固定し、直後の区切りを `: `、続く説明を英語にする。コマンド行や別の値への変更には使用しない。
+- `format_only`。表示用の既存英字ランに限り、`source_role` と `format_policy` の両方を `format_only`、`source_text` と `target_text` を同じ値にする。承認ランの `expected_before` に変更対象の元属性、`target_format` に編集manifestの `format_changes` と同じ属性を指定する。例えば `{"latin":"BIZ UDPGothic","lang":"en-US"}` → `{"latin":"Segoe UI","lang":"en-US"}`。元の `latin` はOOXMLの有効なLatin書体、`lang` はランの明示値（属性なしは `null`）。PDFの代替フォントは別に記録する。Latin書体・言語の片方だけも指定できる。本文の翻訳と混在する単位は `role: prose`、全テキストを保持する単位は `role: format_only` とする。コード、東アジア書体、サイズ、色、強調、図形位置は保つ。
+
+原文のASCII引用符についても、明示した一対が日本語の説明文中にあると確認できる場合に限り、その内容を訳せる。単独のASCII文字列やコード・パスの引用と区別できない箇所は保護する。書式のみの変更ではランの文字列全体が自動的に保護され、`protected_spans` に指定した技術要素の書式も保持する。
+
 ## 書式と部分編集
 
 英文プロポーショナル書体は **Segoe UI**。本文は原文の適合サイズを尊重し、原則12 pt以上の整数。フッターは例外。コード等の等幅書体とサイズを保つ。原文に明示値がなければ、段落・プレースホルダー・マスター・テーマの継承と自動調整を確認し、未確定の描画値を推測で埋めない。
@@ -117,6 +125,7 @@ cp -R "$c/openxml-validator" "$QA_WORK/validator"
 "$DOTNET_BIN" build "$QA_WORK/validator/Validator.csproj" -c Release --no-restore
 VALIDATOR_DLL="$QA_WORK/validator/bin/Release/net10.0/Validator.dll"
 DOTNET_BIN="$DOTNET_BIN" VALIDATOR_DLL="$VALIDATOR_DLL" "$QA_PYTHON" -B "$c/test_fortran_comments.py"
+DOTNET_BIN="$DOTNET_BIN" VALIDATOR_DLL="$VALIDATOR_DLL" "$QA_PYTHON" -B "$c/test_approval_context.py"
 "$QA_PYTHON" -B "$c/verify_fixture.py" --platform static --dotnet "$DOTNET_BIN" --work "$QA_WORK/static"
 # 合成fixtureのmacOS描画は停止中。既知正常な資料には上のrender.pyを使用する。
 ```
