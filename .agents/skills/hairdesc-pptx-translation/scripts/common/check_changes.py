@@ -13,6 +13,7 @@ def masked_equal(original, candidate, part, allow, manifest):
         require(len(orig) == len(edited) == 1, "Non-unique audit XPath " + path)
         return orig[0], edited[0]
 
+    sizes = {entry["id"]: entry["after"] for entry in manifest.get("layout_sizes", [])}
     for row in manifest["translations"]:
         if row["part"] != part:
             continue
@@ -24,7 +25,9 @@ def masked_equal(original, candidate, part, allow, manifest):
         else:
             require(edited.get(slot) == row["target"], "Wrong translated attribute")
             edited.set(slot, orig.get(slot))
-        changes = row["format_changes"]
+        changes = dict(row["format_changes"])
+        if row["id"] in sizes:
+            changes["size_pt"] = sizes[row["id"]]
         if not changes:
             continue
         oldrp = orig.getparent().find(q("a:rPr"))
@@ -56,4 +59,15 @@ def masked_equal(original, candidate, part, allow, manifest):
         attr = item["attribute"]
         require(edited.get(attr) == str(adj["after"]), "Wrong requested geometry")
         edited.set(attr, orig.get(attr))
+    for item in manifest.get("frame_layout", []):
+        if item["part"] != part:
+            continue
+        orig, edited = pair(item["xpath"])
+        attr = item["attribute"]
+        require(orig.get(attr) == item["before"] and edited.get(attr) == str(item["after"]),
+                "Wrong requested text-frame layout")
+        if item["before"] is None:
+            edited.attrib.pop(attr)
+        else:
+            edited.set(attr, item["before"])
     require(canonical(a) == canonical(b), "Unlisted XPath change: " + part)

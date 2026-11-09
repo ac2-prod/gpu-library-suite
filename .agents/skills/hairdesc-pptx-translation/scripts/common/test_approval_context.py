@@ -269,6 +269,78 @@ class ApprovalContextTests(unittest.TestCase):
         c=self.case(["教材","NVIDIA GPU"],["Materials: ","NVIDIA GPU"],"prose",format_at={1:{"latin":"Segoe UI"}})
         self.check(c)
 
+    def test_option_translation_and_font_from_same_source(self):
+        c = self.case(["-flag", "：", "Runtime", "を有効化"], ["-flag", ": Enable ", "Runtime", " support"],
+                      "option_description", spans=[dict(source_start=0,target_start=0,text="-flag")],
+                      format_at={2:{"latin":"Segoe UI","lang":"en-US"}})
+        self.check(c)
+        self.assertEqual(xp(c[0].xml[c[0].slides[0]], ".//a:t")[0].text, "-flag")
+        c[3].append(deepcopy(c[3][0]))
+        out = self.work / "conflict.pptx"
+        with self.assertRaises(AuditError):
+            apply(c[0].path, out, c[1], c[2], exact_inputs=self.inputs(c))
+        self.assertFalse(out.exists())
+
+    def test_prose_punctuation_and_digits_keep_their_text(self):
+        for token in (" (", ")", " / ", "12", ","):
+            with self.subTest(token=token):
+                self.check(self.case(["解説", token],["Example ", token],"prose",format_at={1:{"latin":"Segoe UI"}}))
+        for parts in (["x", "/", "y"], ["callfn", "(", "n", ")"], ["\"","12","\""]):
+            with self.subTest(parts=parts), self.assertRaises(AuditError):
+                self.check(self.case(parts,parts,"format_only",format_at={1:{"latin":"Segoe UI"}}))
+
+    def formatted_case(self, pkg, allow, row, role):
+        ref=dict(unit="example",page=1,part=row["part"],kind="slide",shape=row["shape"]["id"],
+                 paragraph=row["paragraph"],range_ids=[row["id"]],source=row["source"],
+                 translation=row["source"],role=role,protected_spans=[])
+        edit=dict(**row,target=row["source"],format_changes={"latin":"Segoe UI"},reason="Source-bound example")
+        rule=dict(**exact.location(row),unit="example",source_text=row["source"],target_text=row["source"],
+                  source_role="format_only",format_policy="format_only",expected_before={"latin":"Yu Gothic"},
+                  target_format=edit["format_changes"],reason=edit["reason"])
+        man=template(allow);man["translations"]=[edit]
+        return pkg,allow,man,[rule],[ref]
+
+    def test_source_cell_address_and_product_spelling(self):
+        deck=Presentation();slide=deck.slides.add_slide(deck.slide_layouts[6])
+        table=slide.shapes.add_table(1,2,Inches(1),Inches(1),Inches(4),Inches(1)).table
+        for cell in table.rows[0].cells:
+            cell.text="hipExample"
+            cell.text_frame.paragraphs[0].runs[0].font.name="Yu Gothic"
+        path=self.work/"cells.pptx";deck.save(path);pkg=Package(path)
+        _,allow=inventory(pkg,[1]);r,s=list(allow["ranges"].values())
+        self.assertNotEqual(r["cell"],s["cell"])
+        c=self.formatted_case(pkg,allow,r,"format_only")
+        part=self.check(c)[r["part"]];masked_equal(pkg.data[r["part"]],part,r["part"],allow,c[2])
+        c[3][0]["xpath"]=s["xpath"]
+        with self.assertRaises(AuditError):
+            self.check(c)
+
+    def test_named_display_range_keeps_technical_spelling(self):
+        c=self.case(["対応する","sample_api","を呼ぶ"],["Use ","sample_api"," here."],"prose",
+                    format_at={1:{"latin":"Segoe UI"}})
+        name=c[1]["ranges"][c[3][1]["range_id"]]["id"]
+        c[4][0]["protected_spans"]=[span(c[4][0]["source"], c[4][0]["translation"], "sample_api")]
+        c[4][0]["display_font_ranges"]=[name]
+        self.check(c)
+        c[4][0]["display_font_ranges"]=[name,name]
+        with self.assertRaises(AuditError):
+            self.check(c)
+        code=self.case(["call ","sample_api","()"],["call ","sample_api","()"],"format_only",
+                       format_at={1:{"latin":"Segoe UI"}})
+        code[4][0]["display_font_ranges"]=[code[3][0]["range_id"]]
+        with self.assertRaises(AuditError):
+            self.check(code)
+
+    def test_command_continuation_in_original_text_body(self):
+        deck=Presentation();slide=deck.slides.add_slide(deck.slide_layouts[6])
+        box=slide.shapes.add_textbox(Inches(1), Inches(1), Inches(7), Inches(1))
+        box.text_frame.paragraphs[0].text="$ compiler -x \\"
+        p=box.text_frame.add_paragraph();p.text="  example"
+        p.runs[0].font.name="Yu Gothic";path=self.work/"cmd.pptx";deck.save(path);pkg=Package(path)
+        _,allow=inventory(pkg,[1]);r=list(allow["ranges"].values())[-1]
+        with self.assertRaisesRegex(AuditError,"continuation"):
+            self.check(self.formatted_case(pkg,allow,r,"format_only"))
+
     def test_unregistered_and_wrong_shape_format(self):
         for wrong in ("unregistered","wrong shape","wrong source","stale font"):
             c=self.case(["English"],["English"],"format_only",format_at={0:{"latin":"Segoe UI"}})
@@ -309,6 +381,42 @@ class ApprovalContextTests(unittest.TestCase):
         with self.assertRaisesRegex(AuditError,"geometry"):
             self.check(c)
 
+    def test_layout_changes_have_their_own_source_bound_grants(self):
+        c=self.case(["英文","Product"],["English ","Product"],"prose",format_at={1:{"latin":"Segoe UI"}})
+        r=c[1]["ranges"][c[3][-1]["range_id"]]; part=r["part"]
+        c[2]["layout_sizes"]=[dict(id=r["id"],before=17,after=15,reason="Measured overflow at 17 pt")]
+        node,=xp(c[0].xml[part],r["xpath"])
+        body=node.getparent().getparent().getparent()
+        from office_package import address
+        bp=body.find(q("a:bodyPr"))
+        c[2]["frame_layout"]=[dict(part=part,shape_id=r["shape"]["id"],xpath=address(bp),attribute="rIns",
+                                   before=bp.get("rIns"),after=12700,reason="Keep the label clear of adjacent artwork")]
+        data=self.check(c)[part];masked_equal(c[0].data[part],data,part,c[1],c[2])
+        c[2]["layout_sizes"][0]["before"]=16
+        with self.assertRaises(AuditError):
+            self.check(c)
+
+    def test_unchanged_command_protects_shared_frame_from_movement(self):
+        deck = Presentation()
+        slide = deck.slides.add_slide(deck.slide_layouts[6])
+        shape = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(7), Inches(1))
+        shape.text_frame.paragraphs[0].text = "$ compiler input.o"
+        caption = shape.text_frame.add_paragraph()
+        caption.text = "Caption"
+        caption.runs[0].font.name = "Yu Gothic"
+        path = self.work / "command-frame.pptx"
+        deck.save(path)
+        pkg = Package(path)
+        _, allow = inventory(pkg, [1])
+        row = next(x for x in allow["ranges"].values() if x["source"] == "Caption")
+        case = self.formatted_case(pkg, allow, row, "format_only")
+        geom = next(iter(allow["geometry"].values()))
+        case[2]["adjustments"].append(dict(id=geom["id"], before=geom["source"],
+                                         after=int(geom["source"]) + 12700, purpose="text_layout",
+                                         reason="Move the caption"))
+        with self.assertRaisesRegex(AuditError, "geometry"):
+            self.check(case)
+
     def test_audit_detects_collateral_change(self):
         c=self.case(["English"],["English"],"format_only",format_at={0:{"latin":"Segoe UI"}})
         part=c[0].slides[0]; tree=parse_xml(self.check(c)[part]); path=c[3][0]["xpath"]
@@ -347,10 +455,17 @@ class ApprovalContextTests(unittest.TestCase):
 
     @unittest.skipUnless(os.environ.get("DOTNET_BIN") and os.environ.get("VALIDATOR_DLL"), "Provide the official SDK validator")
     def test_official_openxml_and_shared_edit_compare_paths(self):
+        mixed = self.case(["構造","最適化"],["the structure ","and the optimization"],"prose")
+        mixed[3].pop()
+        mixed[4][0].pop("role")
+        mixed[4][0].pop("protected_spans")
         for c in [
+            mixed,
             self.case(["「Introduction」"],['"Introduction"'],"prose",pairs=[quotation("「Introduction」",'"Introduction"')]),
             self.case(["-acc","：","説明"],["-acc",": ","Description"],"option_description",
                       spans=[dict(source_start=0,target_start=0,text="-acc")]),
+            self.case(["-flag","：","Runtime","を利用"],["-flag",": ","Runtime"," support"],"option_description",
+                      spans=[dict(source_start=0,target_start=0,text="-flag")],format_at={2:{"latin":"Segoe UI"}}),
             self.case(["NVIDIA GPU, Fortran"],["NVIDIA GPU, Fortran"],"format_only",
                       format_at={0:{"latin":"Segoe UI","lang":"en-US"}})
         ]:

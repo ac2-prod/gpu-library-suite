@@ -51,11 +51,17 @@ Fortran自由形式の通常コメントには `source_role: fortran_comment` �
 
 - `prose`（通常本文）。`「…」` などの一対を英語の `"..."` に変える場合は、和英対応表の `prose_quotes` に `source_start, source_end, target_start, target_end` を登録する。両側の約物を含み、終了位置は範囲外。例えば `「Introduction」` → `"Introduction"` は日英ともに `[0,14)`。両端が別ランならそれぞれを `source_role: prose` で承認する。既存のコード文字列、引用されたパス、オプション値は保持する。`code`・`command` と指定した単位は全体を保護する。コードコメントの翻訳には上記の専用roleを使う。
 - `option_description`（オプションの説明）。先頭のオプションを値まで含めて保護範囲に登録し、各変更ランの `source_role` も `option_description` とする。`-gpu=cc90：説明` の場合は `-gpu=cc90` 全体を固定し、直後の区切りを `: `、続く説明を英語にする。コマンド行や別の値への変更には使用しない。
-- `format_only`。表示用の既存英字ランに限り、`source_role` と `format_policy` の両方を `format_only`、`source_text` と `target_text` を同じ値にする。承認ランの `expected_before` に変更対象の元属性、`target_format` に編集manifestの `format_changes` と同じ属性を指定する。例えば `{"latin":"BIZ UDPGothic","lang":"en-US"}` → `{"latin":"Segoe UI","lang":"en-US"}`。元の `latin` はOOXMLの有効なLatin書体、`lang` はランの明示値（属性なしは `null`）。PDFの代替フォントは別に記録する。Latin書体・言語の片方だけも指定できる。本文の翻訳と混在する単位は `role: prose`、全テキストを保持する単位は `role: format_only` とする。コード、東アジア書体、サイズ、色、強調、図形位置は保つ。
+- `format_only`。表示用の英字・数字・ASCII約物の綴りを保持して書体を統一する場合、`source_role` と `format_policy` の両方を `format_only`、`source_text` と `target_text` を同じ値にする。承認ランの `expected_before` に変更対象の元属性、`target_format` に編集manifestの `format_changes` と同じ属性を指定する。例えば `{"latin":"BIZ UDPGothic","lang":"en-US"}` → `{"latin":"Segoe UI","lang":"en-US"}`。元の `latin` はOOXMLの有効なLatin書体、`lang` はランの明示値（属性なしは `null`）。PDFの代替フォントは別に記録する。Latin書体・言語の片方だけも指定できる。本文の翻訳と混在する単位は `role: prose`、全テキストを保持する単位は `role: format_only` とする。コード、東アジア書体、サイズ、色、強調、図形位置は保つ。
 
 原文のASCII引用符についても、明示した一対が日本語の説明文中にあると確認できる場合に限り、その内容を訳せる。単独のASCII文字列やコード・パスの引用と区別できない箇所は保護する。書式のみの変更ではランの文字列全体が自動的に保護され、`protected_spans` に指定した技術要素の書式も保持する。
 
+同じオプション説明の中では、区切りと説明訳を `option_description`、文字列を維持する表示ランの書体・言語を `format_only` として、元の部品・完全XPath・range IDごとに登録する。両方を未変更の正本に対して検査してから一緒に適用する。通常の英文中の数字・ASCII約物だけのランや、表・本文に表示する製品名も位置を限定して書体を指定できる。表はセルを含むXPathで特定する。コード、指示行、シェルコマンドの継続行、数式、固定フィールドと文字列リテラルの書式を保つ。
+
 ## 書式と部分編集
+
+本文中のAPI名など、綴りを保護したまま表示書体だけを統一する場合は、元の文脈を確認し、該当する完全一致ランIDを和英対応表の `display_font_ranges` に指定する。コード中の使用、オプション、パス、文字列リテラルはこの指定の対象外。
+
+実描画で必要になった文字サイズは、書体だけの承認とは別に `layout_sizes` にランID、元サイズ `before`、整数ptの `after`、`reason` を登録する。説明枠の幅・位置は従来の `adjustments` で `purpose: text_layout` を明示する。枠内の折返し・余白は `frame_layout` に部品、shape ID、元の `a:bodyPr` の完全XPath、属性名、元値・新値、理由を登録する。余白の単位はEMU。コード枠やコマンド枠は元位置に保つ。
 
 英文プロポーショナル書体は **Segoe UI**。本文は原文の適合サイズを尊重し、原則12 pt以上の整数。フッターは例外。コード等の等幅書体とサイズを保つ。原文に明示値がなければ、段落・プレースホルダー・マスター・テーマの継承と自動調整を確認し、未確定の描画値を推測で埋めない。
 

@@ -22,6 +22,7 @@ from office_package import (
 from pptx_audit import inventory
 from text_ranges import MONO, protected, preserve_literals
 import exact_replacements
+from approval_context import command_continuations
 
 
 def change_format(n, row, changes, reason):
@@ -163,13 +164,45 @@ def expected(pkg, allow, manifest, exceptions=None, exact_inputs=None):
     fixed_shapes = {
         (r["part"], r["shape_id"]) for r in exact.values() if r["format_policy"] in ("preserve_monospace", "format_only")
     }
+    mono_shapes = {(r["part"], r["shape_id"]) for r in exact.values() if r["format_policy"] == "preserve_monospace"}
+    protected_frames = mono_shapes | {
+        (u["part"], u["shape"]) for u in (exact_inputs[2] if exact_inputs else [])
+        if u.get("role") in ("code", "command")
+    }
+    # A translated caption can share a frame with a command which has no entry
+    # in the translation manuscript. Inspect the original shape as well.
+    for page in pages:
+        part = pkg.slides[page - 1]
+        for shape in xp(pkg.xml[part], ".//p:sp[p:txBody]"):
+            sid = shape.find(q("p:nvSpPr")).find(q("p:cNvPr")).get("id")
+            if (part, sid) in editable_shapes and command_continuations(shape.find(q("p:txBody"))):
+                protected_frames.add((part, sid))
+    # A size correction is a separate, addressed layout decision, never an
+    # attribute that can be smuggled into the immutable font-only grant.
+    entries = {entry["id"]: entry for entry in manifest["translations"]}
+    resized = set()
+    for item in manifest.get("layout_sizes", []):
+        key = item["id"]
+        require(set(item) == {"id", "before", "after", "reason"} and key in translated and key not in resized,
+                "Unlisted or duplicate text-size correction")
+        row = authority["ranges"][key]
+        require(row["kind"] == "slide" and row["slot"] == "text" and item["reason"].strip()
+                and isinstance(item["before"], (int, float)) and item["before"] == row["format_before"]["size_pt"]
+                and type(item["after"]) is int and 12 <= item["after"] <= item["before"]
+                and "size_pt" not in entries[key]["format_changes"]
+                and not MONO.search(row["format_before"].get("font") or "")
+                and exact.get(key, {}).get("format_policy") != "preserve_monospace",
+                "Size correction must refer to displayed proportional text at its original size")
+        change_format(target(row), row, {"size_pt": item["after"]}, item["reason"])
+        resized.add(key)
     for adj in manifest["adjustments"]:
         k = adj["id"]
         require(k not in positions and k in authority["geometry"], "Unlisted geometry")
         positions.add(k)
         r = authority["geometry"][k]
         require(
-            (r["part"], r["shape"].get("id")) not in fixed_shapes,
+            (r["part"], r["shape"].get("id")) not in protected_frames and
+            ((r["part"], r["shape"].get("id")) not in fixed_shapes or adj.get("purpose") == "text_layout"),
             "Monospace and format-only shape geometry must be preserved",
         )
         require(
@@ -184,6 +217,23 @@ def expected(pkg, allow, manifest, exceptions=None, exact_inputs=None):
             "Invalid DrawingML dimension",
         )
         target(r).set(r["attribute"], str(val))
+    seen_frame_attrs = set()
+    for item in manifest.get("frame_layout", []):
+        part, sid, path, attr = (item[k] for k in ("part", "shape_id", "xpath", "attribute"))
+        identity = (part, path, attr)
+        require(part in pkg.slides and (part, sid) in editable_shapes and (part, sid) not in protected_frames
+                and identity not in seen_frame_attrs and item["reason"].strip(), "Unapproved text frame")
+        n = target({"part":part, "xpath":path})
+        shape = n.getparent().getparent()
+        require(n.tag == q("a:bodyPr") and shape.tag == q("p:sp")
+                and xp(shape, "./p:nvSpPr/p:cNvPr")[0].get("id") == sid
+                and n.get(attr) == item["before"], "Wrong source frame or old value")
+        val = item["after"]
+        require((attr == "wrap" and val == "square") or
+                (attr in ("rIns", "lIns", "tIns", "bIns") and type(val) is int and val >= 0),
+                "Unsupported text-frame adjustment")
+        n.set(attr, str(val))
+        seen_frame_attrs.add(identity)
     if len(manifest["visual_reviews"]) != len(authority["manual"]):
         raise AuditError("Incomplete visual review")
     reviews = {t["id"]: t for t in manifest["visual_reviews"]}

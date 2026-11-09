@@ -106,26 +106,69 @@ def option_suffixes(spans, old, new):
     return old[end+1:], new[end+1:]
 
 
-def check_font_context(spec, line, old, spans):
+def command_continuations(body):
+    """Use the original lines of this shape (or table cell), including soft breaks."""
+    nodes = set()
+    continued = False
+    for para in body.findall(q("a:p")):
+        lines = [[]]
+        for item in para:
+            if item.tag in (q("a:br"), q("a:fld")):
+                lines.append([])
+            elif item.tag == q("a:r"):
+                lines[-1].extend(item.findall(q("a:t")))
+        for line in lines:
+            text = "".join(node.text or "" for node in line).rstrip()
+            command = continued or bool(COMMAND.search(text))
+            if command:
+                nodes.update(line)
+            continued = command and (len(text) - len(text.rstrip("\\"))) % 2 == 1
+    return nodes
+
+
+def check_font_context(spec, line, old, spans, ref, row):
     start = 0
     for key, text in line:
         if key == spec["range_id"]:
             break
         start += len(text)
     end = start + len(spec["source_text"])
+    named = spec["range_id"] in ref.get("display_font_ranges", [])
+    text = spec["source_text"]
+    title_relation = (row["shape"].get("placeholder") in ("title","ctrTitle") and
+                      re.fullmatch(r"\s*=\s*[A-Za-z][A-Za-z0-9 ]*", text))
+    quoted_title = re.fullmatch(r"-[A-Za-z]+", text) and any(
+        p["source_start"] < start and end < p["source_end"] for p in ref.get("prose_quotes", []))
+    prose_name = re.fullmatch(r"\s*(?:[A-Za-z_]\w*|\(\))(?:\s*/\s*[A-Za-z_]\w*)*\s*", text, re.ASCII)
+    if named:
+        require(ref.get("role") in ("prose","format_only") and (title_relation or quoted_title or prose_name)
+                and (row["cell"] or JA.search(old) or title_relation or quoted_title)
+                and not CODE_LINE.search(old) and not re.search(r'^\s*(?:#|[!][$]|return\b|import\b|use\s+\w+,)', old, re.I),
+                "Named display run lacks a prose or table context")
     protected = [(m.start(), m.end()) for m in QUOTES.finditer(old)]
-    protected += [(s["source_start"], s["source_start"] + len(s["text"])) for s in spans]
+    protected += [(s["source_start"], s["source_start"] + len(s["text"])) for s in spans
+                  if not named or s["source_start"] < start or s["source_start"] + len(s["text"]) > end]
+    # Bare expressions in a normal text box still have code/math semantics.
+    for m in re.finditer(r"\b[A-Za-z_]\w*\([^()\n]*\)|(?<!\w)[a-z0-9]\s*[/^*]\s*[a-z0-9](?!\w)", old, re.ASCII):
+        if not (named and prose_name and m.group().endswith("()")):
+            protected.append(m.span())
+    if re.fullmatch(r"\s*[A-Za-z0-9]\s*[/^*]\s*[A-Za-z0-9]\s*", old, re.ASCII):
+        protected.append((0, len(old)))
     require(not any(start < stop and pos < end for pos, stop in protected)
-            and not re.search(r'::|[;={}#]|!\$|(?:^|\s)--?[\w+]|(?:bind\s*\(\s*C\b|extern\s*")',
-                              spec["source_text"], re.I | re.ASCII),
+            and (named and (title_relation or quoted_title) or not re.search(
+                r'::|[;={}#]|!\$|(?:^|\s)--?[\w+]|(?:bind\s*\(\s*C\b|extern\s*")', text, re.I | re.ASCII)),
             "Format-only cannot restyle protected code, options or string literals")
+    return named
 
 
 def check_font_rule(pkg, row, edit, spec):
     changes = spec["target_format"]
+    source = row["source"]
+    display_text = re.search("[A-Za-z]", source) or re.fullmatch(r"[ \t0-9.,:;!?()/]+", source, re.ASCII)
     require(spec["format_policy"] == "format_only" and row["kind"] == "slide"
             and row["slide"] not in pkg.hidden and row["source"] == spec["source_text"] == spec["target_text"] == edit["target"]
-            and not JA.search(row["source"]) and re.search("[A-Za-z]", row["source"])
+            and row["shape"].get("placeholder") not in ("dt", "sldNum", "hdr")
+            and not JA.search(source) and source.strip() and display_text
             and not edit.get("keep_reason"), "Format-only requires unchanged visible English text")
     require(isinstance(changes, dict) and changes and changes == edit["format_changes"]
             and set(changes) <= {"latin", "lang"}

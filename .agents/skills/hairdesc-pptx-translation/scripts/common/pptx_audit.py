@@ -433,24 +433,30 @@ def compare(original, candidate, allow, manifest, dotnet, dll, exceptions=None, 
     ]
     require(not left, "Residual Japanese: " + str(left[:3]))
 
-    # Explicit paragraph reconstruction also detects tokens spanning multiple formatted runs.
-    def paragraphs(data, exact_before=None):
-        groups = defaultdict(list)
-        for r in data["ranges"].values():
-            if r["paragraph"] and r["slot"] == "text":
-                value = (exact_before or {}).get(r["id"], {}).get("target_text", r["source"])
-                groups[(r["part"], r["paragraph"])].append(value)
-        return {k: "".join(v) for k, v in groups.items()}
+    # Compare complete logical lines, including their original whitespace. A
+    # signed line is checked against its approved final text. Substituting only
+    # its approved runs in the source would form a mixture of two languages.
+    def lines(package, data):
+        by_path = {(r["part"], r["xpath"]): k for k, r in data["ranges"].items() if r["slot"] == "text"}
+        pars = {(r["part"], r["paragraph"]): r for r in data["ranges"].values()
+                if r["paragraph"] and r["slot"] == "text"}
+        return {(part, para, i): line for (part, para), row in pars.items()
+                for i, line in enumerate(exact_replacements.source_lines(package, row, by_path))}
 
-    originals, edits = paragraphs(allow, approved), paragraphs(new_allow)
-    require(
-        originals.keys() == edits.keys()
-        and all(
-            protected(v) == protected(edits[k]) and preserve_literals(v, edits[k])
-            for k, v in originals.items()
-        ),
-        "Protected tokens changed across runs",
-    )
+    originals, edits = lines(a, allow), lines(b, new_allow)
+    require(originals.keys() == edits.keys(), "Logical text lines changed")
+    signed = {item["range_id"]: item for item in trail}
+    for key, old_line in originals.items():
+        new_line = edits[key]
+        require([k for k, _ in old_line] == [k for k, _ in new_line], "Text run addresses changed")
+        old, new = ("".join(v for _, v in line) for line in (old_line, new_line))
+        grants = [signed[k] for k, _ in old_line if k in signed]
+        if grants:
+            require(all((g["unit_source"], g["unit_target"]) == (old, new) for g in grants),
+                    "Output differs from the source-bound logical translation")
+        else:
+            require(protected(old) == protected(new) and preserve_literals(old, new),
+                    "Protected tokens changed across runs: " + str(key))
     before_sdk = sdk_report(dotnet, dll, original)
     after_sdk = sdk_report(dotnet, dll, candidate)
     require(

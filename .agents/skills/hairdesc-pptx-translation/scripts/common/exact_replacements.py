@@ -283,8 +283,8 @@ def check_unit(spec, row, refs, lines, translations, pkg, roles):
     role = ref.get("role")
     if role is not None:
         require(isinstance(role, str) and role in context.ROLES, "Unknown manuscript context")
-        allowed = {"prose": {"prose", "format_only"}, "code": {"code_comment", "fortran_comment"},
-                   "command": set()}.get(role, {role})
+        allowed = {"prose": {"prose", "format_only"}, "option_description": {"option_description", "format_only"},
+                   "code": {"code_comment", "fortran_comment"}, "command": set()}.get(role, {role})
         require(spec["source_role"] in allowed, "Wrong or immutable context")
         if role == "code":
             allowed = {spec["source_role"]}  # One comment syntax per code unit.
@@ -311,8 +311,12 @@ def check_unit(spec, row, refs, lines, translations, pkg, roles):
             require(role == "format_only" and old == new and not ref.get("prose_quotes"),
                     "Format-only must preserve the complete logical text")
         if spec["source_role"] == "format_only":
-            context.check_font_context(spec, line, old, spans)
-            require(not any(k in ("identifier", "api", "filename", "path", "URL", "option")
+            named = context.check_font_context(spec, line, old, spans, ref, row)
+            # A product name in a prose cell may resemble an API name. Its entire
+            # spelling is already fixed by check_font_rule; invocations stay protected.
+            display_name = bool(row["cell"] or (role == "prose" and len(line) > 1))
+            require(not any(k in ("filename", "path", "URL") or (k in ("identifier","option") and not named)
+                            or (k == "api" and not (display_name or named))
                             for k, _ in lexemes(row["source"])), "Format-only cannot restyle a technical token")
         elif role == "prose" and not JA.search(row["source"]) and re.search("[A-Za-z0-9_]", row["source"]):
             normalized = "".join('"' if ch in "「」『』“”" else ch for ch in row["source"])
@@ -360,7 +364,20 @@ def guard_other_units(pkg, allow, manifest, approved, manuscript):
         if r["paragraph"] and r["slot"] == "text":
             paragraphs[r["part"], r["paragraph"]] = r
     by_path = {(r["part"], r["xpath"]): k for k, r in rows.items() if r["slot"] == "text"}
+    command_nodes = {}
+    for k in touched:
+        row = rows[k]
+        if row["paragraph"] and row["slot"] == "text":
+            node, = xp(pkg.xml[row["part"]], row["xpath"])
+            body = node.getparent().getparent().getparent()
+            if body not in command_nodes:
+                command_nodes[body] = context.command_continuations(body)
+            require(node not in command_nodes[body], "Protected command line or continuation changed")
     for u in manuscript:
+        names = u.get("display_font_ranges", [])
+        require(isinstance(names, list) and all(isinstance(k, str) and k in u["range_ids"] and
+                approved.get(k, {}).get("source_role") == "format_only" for k in names)
+                and len(names) == len(set(names)), "Unbound or repeated named display run")
         if "role" not in u:
             continue
         changed = touched.intersection(u["range_ids"])
